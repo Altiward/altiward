@@ -1,0 +1,13 @@
+# Only the console, backend and integrations go into the image.
+*
+!go.mod
+!go.sum
+!LICENSE
+!NOTICE
+!THIRD_PARTY_NOTICES.md
+!backend/
+!integrations/
+!console/
+console/node_modules/
+console/dist/
+**/*_test.go

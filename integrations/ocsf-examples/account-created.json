@@ -1,0 +1,126 @@
+[
+  {
+    "activity_id": 1,
+    "activity_name": "Create",
+    "category_name": "Findings",
+    "category_uid": 2,
+    "class_name": "Detection Finding",
+    "class_uid": 2004,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "evidences": [
+      {
+        "user": {
+          "name": "support",
+          "uid": "502"
+        }
+      }
+    ],
+    "finding_info": {
+      "analytic": {
+        "name": "altiward.account_created",
+        "type": "Rule",
+        "type_id": 1
+      },
+      "attacks": [
+        {
+          "sub_technique": {
+            "name": "Local Account",
+            "uid": "T1136.001"
+          },
+          "tactic": {
+            "name": "Persistence",
+            "uid": "TA0003"
+          },
+          "technique": {
+            "name": "Create Account",
+            "uid": "T1136"
+          }
+        }
+      ],
+      "created_time": 1792143107004,
+      "desc": "New admin account support appeared on C02XK0AAJGH5 while jane.doe@example.com held admin rights",
+      "first_seen_time": 1792143107004,
+      "title": "Admin account created",
+      "types": [
+        "Persistence"
+      ],
+      "uid": "9b4e2f61-3c7a-4d8e-a5f2-1e6b7c8d9a04/account/support"
+    },
+    "is_alert": true,
+    "message": "New admin account support appeared on C02XK0AAJGH5 while jane.doe@example.com held admin rights",
+    "metadata": {
+      "correlation_uid": "5d1c2b7a-8e4f-4a6b-9c3d-2e1f0a9b8c7d",
+      "logged_time": 1792143107004,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.1.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "9b4e2f61-3c7a-4d8e-a5f2-1e6b7c8d9a04/account/support",
+      "version": "1.9.0"
+    },
+    "observables": [
+      {
+        "name": "evidences.user.name",
+        "type": "User Name",
+        "type_id": 4,
+        "value": "support"
+      },
+      {
+        "name": "user.name",
+        "type": "User Name",
+        "type_id": 4,
+        "value": "jdoe"
+      }
+    ],
+    "severity": "High",
+    "severity_id": 4,
+    "status": "New",
+    "status_id": 1,
+    "time": 1792143107004,
+    "type_name": "Detection Finding: Create",
+    "type_uid": 200401,
+    "unmapped": {
+      "altiward": {
+        "account": {
+          "admin": true,
+          "change": "added",
+          "kind": "local_account",
+          "name": "support",
+          "uid": 502
+        },
+        "detail": {
+          "findings": [
+            {
+              "admin": true,
+              "change": "added",
+              "kind": "local_account",
+              "name": "support",
+              "uid": 502
+            }
+          ],
+          "since": "2026-10-16T09:14:03.120Z",
+          "truncated": 0
+        },
+        "event_type": "persistence.detected",
+        "source": "privileges"
+      }
+    },
+    "user": {
+      "email_addr": "jane.doe@example.com",
+      "name": "jdoe"
+    }
+  }
+]

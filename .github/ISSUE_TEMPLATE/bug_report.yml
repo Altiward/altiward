@@ -1,0 +1,65 @@
+name: Bug report
+description: Something doesn't work as it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. For a security problem, please don't open an issue:
+        use [private vulnerability reporting](https://github.com/Altiward/altiward/security/advisories/new).
+        For questions, use [Discussions](https://github.com/Altiward/altiward/discussions).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      description: Of the Mac involved, if there is one, for example 15.1. The console's Fleet view lists it. Say "not Mac-specific" if it doesn't apply.
+    validations:
+      required: true
+  - type: input
+    id: privileges-version
+    attributes:
+      label: SAP Privileges version
+      description: The console's Fleet view lists it. Say "not installed" if it isn't, or "not Mac-specific" if no Mac is involved.
+    validations:
+      required: true
+  - type: input
+    id: server-version
+    attributes:
+      label: Altiward server version
+      description: In the `version` field of the diagnostics report below. Admins with the update check on can also see it in the console's Settings.
+    validations:
+      required: true
+  - type: input
+    id: agent-version
+    attributes:
+      label: Altiward agent version
+      description: Shown for each Mac in the console's Fleet view. Say "not applicable" if no Mac is involved.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics output
+      description: |
+        From the directory with your `compose.yaml`, run:
+
+        `docker compose exec altiward /usr/local/bin/altiward-api diagnose > altiward-diagnose.json`
+
+        Read it before you paste it. Secrets are already hidden, and it holds no events,
+        user names or Mac details, but remove your hostnames and anything else you don't
+        want public, for example by replacing them with `redacted`.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Steps to reproduce, screenshots, or logs. Redact names and hostnames first.

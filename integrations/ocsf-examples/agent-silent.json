@@ -1,0 +1,67 @@
+[
+  {
+    "activity_id": 1,
+    "activity_name": "Create",
+    "category_name": "Findings",
+    "category_uid": 2,
+    "class_name": "Detection Finding",
+    "class_uid": 2004,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "finding_info": {
+      "analytic": {
+        "name": "altiward.agent_silent",
+        "type": "Rule",
+        "type_id": 1
+      },
+      "created_time": 1792148400000,
+      "desc": "C02XK0AAJGH5 has not checked in since 2026-10-13T09:00:00Z (the limit is 72 hours); the agent may have been removed, the Mac is off, or it can't reach the agent hostname (check the hostname is reachable from outside your network)",
+      "first_seen_time": 1792148400000,
+      "title": "Altiward agent stopped checking in",
+      "types": [
+        "Defense Evasion"
+      ],
+      "uid": "3f6d1c2a-8b4e-5a7f-9c0d-1e2f3a4b5c6d"
+    },
+    "is_alert": true,
+    "message": "C02XK0AAJGH5 has not checked in since 2026-10-13T09:00:00Z (the limit is 72 hours); the agent may have been removed, the Mac is off, or it can't reach the agent hostname (check the hostname is reachable from outside your network)",
+    "metadata": {
+      "logged_time": 1792148400000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.1.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "3f6d1c2a-8b4e-5a7f-9c0d-1e2f3a4b5c6d",
+      "version": "1.9.0"
+    },
+    "severity": "Medium",
+    "severity_id": 3,
+    "status": "New",
+    "status_id": 1,
+    "time": 1792148400000,
+    "type_name": "Detection Finding: Create",
+    "type_uid": 200401,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "last_seen_at": "2026-10-13T09:00:00Z",
+          "silent_after_seconds": 259200,
+          "state": "silent"
+        },
+        "event_type": "agent.silent"
+      }
+    }
+  }
+]

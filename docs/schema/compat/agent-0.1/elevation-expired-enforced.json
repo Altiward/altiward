@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "event_id": "9a7c5e3b-1d2f-4b8a-9c6e-0f4d2b8a6c35",
+  "type": "elevation.expired_enforced",
+  "session_id": "5d1c2b7a-8e4f-4a6b-9c3d-2e1f0a9b8c7d",
+  "timestamp": "2026-10-16T09:44:03.120Z",
+  "device": {
+    "serial": "C02XK0AAJGH5",
+    "hardware_uuid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+    "os_version": "26.1.0",
+    "agent_version": "0.1.0",
+    "privileges_version": "2.5.3"
+  },
+  "user": {
+    "local_name": "jdoe",
+    "upn": "jane.doe@example.com"
+  },
+  "elevation": {
+    "reason": null,
+    "expires": "2026-10-16T09:34:03.120Z",
+    "source": "privileges"
+  },
+  "delayed": false,
+  "detail": {
+    "trigger": "heartbeat",
+    "expired_at": "2026-10-16T09:34:03.120Z",
+    "grace_seconds": 300,
+    "observed_admin": false,
+    "verified": true
+  }
+}

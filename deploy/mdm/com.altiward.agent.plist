@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Agent settings (domain com.altiward.agent), delivered by MDM. Example values.
+
+  ServerURL            Altiward API base URL.
+  EnrollmentToken      Tenant enrollment token. Used once to register this Mac's own key;
+                       every later request is signed with that key. Managed preferences
+                       are readable by local users, so treat the token as a fleet-wide
+                       secret.
+  HeartbeatInterval    Seconds between admin-group readings (default 300, minimum 30).
+  FlushInterval        Seconds between delivery retries (default 60, minimum 10).
+  PermanentAdmins      Accounts expected to hold standing admin rights (IT, break-glass);
+                       never reported as out-of-band, never demoted by ExpiryEnforcement.
+  UserPrincipalNames   Local short name → corporate UPN. Use your MDM's user variables.
+  HookCodeRequirement  Code-signing requirement the hook must meet to reach the daemon.
+                       Replace TEAMID with the Developer ID team that signs the agent.
+  ExpiryEnforcement    What to do when rights from a SAP Privileges grant outlive the expiry
+                       Privileges set, plus the grace period:
+                       "alert" (default) reports elevation.overdue once per session;
+                       "enforce" removes the user from the admin group; "off" does nothing.
+                       Checked on each heartbeat, so it acts up to HeartbeatInterval late.
+  ExpiryGraceMinutes   Minutes past expiry before ExpiryEnforcement acts (default 5).
+  CommandPollInterval  Seconds to wait before checking for console commands again after an
+                       error, or with a server that can't hold the request until one is
+                       queued (default 60, minimum 15). Otherwise commands arrive within
+                       about a second.
+-->
+<plist version="1.0">
+<dict>
+    <key>ServerURL</key>
+    <string>https://api.altiward.example</string>
+    <key>EnrollmentToken</key>
+    <string>REPLACE_WITH_TENANT_AGENT_TOKEN</string>
+    <key>HeartbeatInterval</key>
+    <integer>300</integer>
+    <key>PermanentAdmins</key>
+    <array>
+        <string>itadmin</string>
+    </array>
+    <key>UserPrincipalNames</key>
+    <dict>
+        <key>$SHORTNAME</key>
+        <string>$EMAIL</string>
+    </dict>
+    <key>ExpiryEnforcement</key>
+    <string>alert</string>
+    <key>ExpiryGraceMinutes</key>
+    <integer>5</integer>
+    <key>CommandPollInterval</key>
+    <integer>60</integer>
+    <key>HookCodeRequirement</key>
+    <string>identifier "com.altiward.hook" and anchor apple generic and certificate leaf[subject.OU] = "TEAMID"</string>
+</dict>
+</plist>

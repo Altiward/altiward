@@ -1,0 +1,71 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "altiward-agent (debug)",
+      "type": "swift",
+      "request": "launch",
+      "program": "${env:HOME}/Library/Caches/altiward/agent-build/debug/altiward-agent",
+      "cwd": "${workspaceFolder}/agent",
+      "args": [
+        "status"
+      ],
+      "env": {
+        "ALTIWARD_DATA_DIR": "${env:HOME}/Library/Caches/altiward/agent-build/dev-agent-data",
+        "ALTIWARD_SERVER_URL": "http://127.0.0.1:8080",
+        "ALTIWARD_TOKEN": "dev-agent-token-0001"
+      },
+      "preLaunchTask": "altiward: build Swift (debug)"
+    },
+    {
+      "name": "altiward-hook (debug)",
+      "type": "swift",
+      "request": "launch",
+      "program": "${env:HOME}/Library/Caches/altiward/agent-build/debug/altiward-hook",
+      "cwd": "${workspaceFolder}/agent",
+      "args": [
+        "${env:USER}",
+        "user"
+      ],
+      "env": {
+        "ALTIWARD_DATA_DIR": "${env:HOME}/Library/Caches/altiward/agent-build/dev-agent-data",
+        "ALTIWARD_SERVER_URL": "http://127.0.0.1:8080",
+        "ALTIWARD_TOKEN": "dev-agent-token-0001"
+      },
+      "preLaunchTask": "altiward: build Swift (debug)"
+    },
+    {
+      "name": "altiward-agent (release)",
+      "type": "swift",
+      "request": "launch",
+      "program": "${env:HOME}/Library/Caches/altiward/agent-build/release/altiward-agent",
+      "cwd": "${workspaceFolder}/agent",
+      "args": [
+        "status"
+      ],
+      "env": {
+        "ALTIWARD_DATA_DIR": "${env:HOME}/Library/Caches/altiward/agent-build/dev-agent-data",
+        "ALTIWARD_SERVER_URL": "http://127.0.0.1:8080",
+        "ALTIWARD_TOKEN": "dev-agent-token-0001"
+      },
+      "preLaunchTask": "altiward: build Swift (release)"
+    },
+    {
+      "name": "altiward-hook (release)",
+      "type": "swift",
+      "request": "launch",
+      "program": "${env:HOME}/Library/Caches/altiward/agent-build/release/altiward-hook",
+      "cwd": "${workspaceFolder}/agent",
+      "args": [
+        "${env:USER}",
+        "user"
+      ],
+      "env": {
+        "ALTIWARD_DATA_DIR": "${env:HOME}/Library/Caches/altiward/agent-build/dev-agent-data",
+        "ALTIWARD_SERVER_URL": "http://127.0.0.1:8080",
+        "ALTIWARD_TOKEN": "dev-agent-token-0001"
+      },
+      "preLaunchTask": "altiward: build Swift (release)"
+    }
+  ]
+}

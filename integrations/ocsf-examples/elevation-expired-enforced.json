@@ -1,0 +1,145 @@
+[
+  {
+    "activity_id": 2,
+    "activity_name": "Revoke Privileges",
+    "category_name": "Identity \u0026 Access Management",
+    "category_uid": 3,
+    "class_name": "User Access Management",
+    "class_uid": 3005,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "message": "Altiward removed jane.doe@example.com's admin rights on C02XK0AAJGH5 after they outlived their expiry",
+    "metadata": {
+      "correlation_uid": "5d1c2b7a-8e4f-4a6b-9c3d-2e1f0a9b8c7d",
+      "logged_time": 1792143843120,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.1.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "9a7c5e3b-1d2f-4b8a-9c6e-0f4d2b8a6c35",
+      "version": "1.9.0"
+    },
+    "privileges": [
+      "admin"
+    ],
+    "severity": "Low",
+    "severity_id": 2,
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792143843120,
+    "type_name": "User Access Management: Revoke Privileges",
+    "type_uid": 300502,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "expired_at": "2026-10-16T09:34:03.120Z",
+          "grace_seconds": 300,
+          "observed_admin": false,
+          "trigger": "heartbeat",
+          "verified": true
+        },
+        "event_type": "elevation.expired_enforced",
+        "expires_time": 1792143243120,
+        "source": "privileges"
+      }
+    },
+    "user": {
+      "email_addr": "jane.doe@example.com",
+      "name": "jdoe"
+    }
+  },
+  {
+    "activity_id": 1,
+    "activity_name": "Create",
+    "category_name": "Findings",
+    "category_uid": 2,
+    "class_name": "Detection Finding",
+    "class_uid": 2004,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "finding_info": {
+      "analytic": {
+        "name": "altiward.rights_after_expiry",
+        "type": "Rule",
+        "type_id": 1
+      },
+      "created_time": 1792143843120,
+      "desc": "jane.doe@example.com held admin rights on C02XK0AAJGH5 after they expired; Altiward removed them",
+      "first_seen_time": 1792143843120,
+      "title": "Admin rights outlived their expiry",
+      "types": [
+        "Privilege Escalation"
+      ],
+      "uid": "9a7c5e3b-1d2f-4b8a-9c6e-0f4d2b8a6c35/finding"
+    },
+    "is_alert": true,
+    "message": "jane.doe@example.com held admin rights on C02XK0AAJGH5 after they expired; Altiward removed them",
+    "metadata": {
+      "correlation_uid": "5d1c2b7a-8e4f-4a6b-9c3d-2e1f0a9b8c7d",
+      "logged_time": 1792143843120,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.1.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "9a7c5e3b-1d2f-4b8a-9c6e-0f4d2b8a6c35/finding",
+      "version": "1.9.0"
+    },
+    "observables": [
+      {
+        "name": "user.name",
+        "type": "User Name",
+        "type_id": 4,
+        "value": "jdoe"
+      }
+    ],
+    "severity": "Medium",
+    "severity_id": 3,
+    "status": "New",
+    "status_id": 1,
+    "time": 1792143843120,
+    "type_name": "Detection Finding: Create",
+    "type_uid": 200401,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "expired_at": "2026-10-16T09:34:03.120Z",
+          "grace_seconds": 300,
+          "observed_admin": false,
+          "trigger": "heartbeat",
+          "verified": true
+        },
+        "event_type": "elevation.expired_enforced",
+        "expires_time": 1792143243120,
+        "source": "privileges"
+      }
+    },
+    "user": {
+      "email_addr": "jane.doe@example.com",
+      "name": "jdoe"
+    }
+  }
+]

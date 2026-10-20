@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchDaemon for altiward-agent. Ships in the bundle at Contents/Resources/; the
+  package's postinstall copies it to /Library/LaunchDaemons and bootstraps it.
+  AssociatedBundleIdentifiers attributes it to Altiward in Login Items.
+  MachServices: com.altiward.agent.xpc is what the hook helper connects to
+  (altiwardMachServiceName).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.altiward.agent</string>
+    <key>Program</key>
+    <string>/Library/Application Support/Altiward/Altiward.app/Contents/MacOS/altiward-agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>altiward-agent</string>
+        <string>run</string>
+    </array>
+    <key>MachServices</key>
+    <dict>
+        <key>com.altiward.agent.xpc</key>
+        <true/>
+    </dict>
+    <key>AssociatedBundleIdentifiers</key>
+    <array>
+        <string>com.altiward.agent</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

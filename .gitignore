@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+
+# Swift (agent)
+.build/
+.swiftpm/
+*.xcodeproj/xcuserdata/
+DerivedData/
+
+# Go
+/bin/
+/dist/
+*.test
+coverage.out
+go.work.sum
+
+# Node (console)
+node_modules/
+console/dist/
+
+# Local configuration and secrets — signing material never lives in the repo
+.env
+.env.*
+signing.key
+*.lic
+*.p12
+*.cer
+*.p8
+*.mobileprovision
+*.provisionprofile

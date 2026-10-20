@@ -1,0 +1,362 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "defaultValue": "[resourceGroup().location]",
+      "type": "string"
+    },
+    "workbookName": {
+      "defaultValue": "Altiward overview",
+      "type": "string"
+    },
+    "workspaceName": {
+      "metadata": {
+        "description": "The Log Analytics workspace Altiward sends events to (the one with the AltiwardOCSF_CL table)."
+      },
+      "type": "string"
+    }
+  },
+  "resources": [
+    {
+      "apiVersion": "2022-04-01",
+      "kind": "shared",
+      "location": "[parameters('location')]",
+      "name": "[guid(variables('workspaceId'), 'altiward-overview')]",
+      "properties": {
+        "category": "sentinel",
+        "displayName": "[parameters('workbookName')]",
+        "serializedData": "[string(variables('workbookContent'))]",
+        "sourceId": "[variables('workspaceId')]",
+        "version": "Notebook/1.0"
+      },
+      "type": "Microsoft.Insights/workbooks"
+    }
+  ],
+  "variables": {
+    "workbookContent": {
+      "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json",
+      "fallbackResourceIds": [],
+      "fromTemplateId": "altiward-overview",
+      "items": [
+        {
+          "content": {
+            "json": "## Altiward overview\nWho holds admin rights on your Macs, how elevations went over the period, and what needs a look, from the events Altiward sends to the `AltiwardOCSF_CL` table. The same figures are on the Altiward console's Overview.\n\n**Without a grant** means admin rights that nobody granted through SAP Privileges: someone was added to the admin group directly, or an account was created as an admin."
+          },
+          "name": "intro",
+          "type": 1
+        },
+        {
+          "content": {
+            "parameters": [
+              {
+                "id": "8f7b4c1e-2d3a-4b5c-9e6f-1a2b3c4d5e6f",
+                "isRequired": true,
+                "label": "Period",
+                "name": "TimeRange",
+                "type": 4,
+                "typeSettings": {
+                  "allowCustom": false,
+                  "selectableValues": [
+                    {
+                      "durationMs": 604800000
+                    },
+                    {
+                      "durationMs": 2592000000
+                    },
+                    {
+                      "durationMs": 7776000000
+                    }
+                  ]
+                },
+                "value": {
+                  "durationMs": 2592000000
+                },
+                "version": "KqlParameterItem/1.0"
+              }
+            ],
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "style": "pills",
+            "version": "KqlParameterItem/1.0"
+          },
+          "name": "parameters",
+          "type": 9
+        },
+        {
+          "content": {
+            "json": "### Now\nFrom the last 90 days of events, whatever the period."
+          },
+          "name": "now-heading",
+          "type": 1
+        },
+        {
+          "content": {
+            "query": "let Sessions = AltiwardOCSF_CL\n| where isnotempty(SessionUid)\n| extend Ev = tostring(Ocsf.unmapped.altiward.event_type)\n| where Ev in (\"elevation.granted\", \"admin.out_of_band\", \"elevation.revoked\", \"elevation.expired_enforced\")\n| extend IsStart = Ev in (\"elevation.granted\", \"admin.out_of_band\"), Src = tostring(Ocsf.unmapped.altiward.source),\n    Exp = unixtime_milliseconds_todatetime(tolong(Ocsf.unmapped.altiward.expires_time)), Email = tostring(Ocsf.user.email_addr)\n| summarize Started = minif(TimeGenerated, IsStart), Ended = maxif(TimeGenerated, not(IsStart)),\n    Expires = maxif(Exp, Ev == \"elevation.granted\"), Src = take_anyif(Src, IsStart and isnotempty(Src)),\n    Email = take_anyif(Email, isnotempty(Email)), UserName = take_anyif(UserName, isnotempty(UserName)),\n    DeviceSerial = take_any(DeviceSerial) by SessionUid\n| where isnotnull(Started)\n| extend Source = case(Src == \"privileges\", \"Privileges\", Src == \"out_of_band\", \"Without a grant\", \"\"),\n    Person = iff(isnotempty(Email), Email, strcat(UserName, \" on \", DeviceSerial));\nSessions\n| where isnull(Ended)\n| summarize People = count() by Source\n| union (datatable(Source: string, People: long)[\"Privileges\", 0, \"Without a grant\", 0])\n| summarize People = sum(People) by Source\n| order by case(Source == \"Privileges\", 1, 2) asc",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "size": 0,
+            "tileSettings": {
+              "leftContent": {
+                "columnMatch": "People",
+                "formatter": 1,
+                "numberFormat": {
+                  "options": {
+                    "maximumFractionDigits": 0,
+                    "style": "decimal"
+                  },
+                  "unit": 17
+                }
+              },
+              "showBorder": true,
+              "titleContent": {
+                "columnMatch": "Source",
+                "formatter": 1
+              }
+            },
+            "timeContext": {
+              "durationMs": 7776000000
+            },
+            "title": "Admins now, by where the rights came from",
+            "version": "KqlItem/1.0",
+            "visualization": "tiles"
+          },
+          "customWidth": "50",
+          "name": "admins-now",
+          "type": 3
+        },
+        {
+          "content": {
+            "query": "let Sessions = AltiwardOCSF_CL\n| where isnotempty(SessionUid)\n| extend Ev = tostring(Ocsf.unmapped.altiward.event_type)\n| where Ev in (\"elevation.granted\", \"admin.out_of_band\", \"elevation.revoked\", \"elevation.expired_enforced\")\n| extend IsStart = Ev in (\"elevation.granted\", \"admin.out_of_band\"), Src = tostring(Ocsf.unmapped.altiward.source),\n    Exp = unixtime_milliseconds_todatetime(tolong(Ocsf.unmapped.altiward.expires_time)), Email = tostring(Ocsf.user.email_addr)\n| summarize Started = minif(TimeGenerated, IsStart), Ended = maxif(TimeGenerated, not(IsStart)),\n    Expires = maxif(Exp, Ev == \"elevation.granted\"), Src = take_anyif(Src, IsStart and isnotempty(Src)),\n    Email = take_anyif(Email, isnotempty(Email)), UserName = take_anyif(UserName, isnotempty(UserName)),\n    DeviceSerial = take_any(DeviceSerial) by SessionUid\n| where isnotnull(Started)\n| extend Source = case(Src == \"privileges\", \"Privileges\", Src == \"out_of_band\", \"Without a grant\", \"\"),\n    Person = iff(isnotempty(Email), Email, strcat(UserName, \" on \", DeviceSerial));\nlet PastExpiry = toscalar(Sessions | where isnull(Ended) and isnotnull(Expires) and Expires < now() | count);\nlet Open = (analytic: string) {\n    AltiwardOCSF_CL\n    | where ClassUid == 2004 and tostring(Ocsf.finding_info.analytic.name) startswith analytic\n        and tostring(Ocsf.unmapped.altiward.detail.state) != \"detected\"\n    | summarize arg_max(TimeGenerated, ActivityId) by Uid = tostring(Ocsf.finding_info.uid), DeviceSerial\n    | where ActivityId == 1\n};\nlet Failing = toscalar(Open(\"altiward.tamper.\") | summarize dcount(DeviceSerial));\nlet Silent = toscalar(Open(\"altiward.agent_silent\") | summarize dcount(DeviceSerial));\ndatatable(Alert: string, Order: int)[\"Rights past their expiry\", 1, \"Macs failing an integrity check\", 2, \"Macs not checking in\", 3]\n| extend Count = case(Order == 1, PastExpiry, Order == 2, Failing, Silent)\n| order by Order asc\n| project Alert, Count",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "size": 0,
+            "tileSettings": {
+              "leftContent": {
+                "columnMatch": "Count",
+                "formatOptions": {
+                  "thresholdsGrid": [
+                    {
+                      "operator": ">",
+                      "representation": "redBright",
+                      "text": "{0}{1}",
+                      "thresholdValue": "0"
+                    },
+                    {
+                      "operator": "Default",
+                      "representation": "green",
+                      "text": "{0}{1}",
+                      "thresholdValue": null
+                    }
+                  ],
+                  "thresholdsOptions": "colors"
+                },
+                "formatter": 18,
+                "numberFormat": {
+                  "options": {
+                    "maximumFractionDigits": 0,
+                    "style": "decimal"
+                  },
+                  "unit": 17
+                }
+              },
+              "showBorder": true,
+              "titleContent": {
+                "columnMatch": "Alert",
+                "formatter": 1
+              }
+            },
+            "timeContext": {
+              "durationMs": 7776000000
+            },
+            "title": "Needs a look",
+            "version": "KqlItem/1.0",
+            "visualization": "tiles"
+          },
+          "customWidth": "50",
+          "name": "needs-a-look",
+          "type": 3
+        },
+        {
+          "content": {
+            "json": "### Elevations\nSessions that started in the period. Extending rights doesn't count as a new elevation."
+          },
+          "name": "period-heading",
+          "type": 1
+        },
+        {
+          "content": {
+            "query": "let Sessions = AltiwardOCSF_CL\n| where isnotempty(SessionUid)\n| extend Ev = tostring(Ocsf.unmapped.altiward.event_type)\n| where Ev in (\"elevation.granted\", \"admin.out_of_band\", \"elevation.revoked\", \"elevation.expired_enforced\")\n| extend IsStart = Ev in (\"elevation.granted\", \"admin.out_of_band\"), Src = tostring(Ocsf.unmapped.altiward.source),\n    Exp = unixtime_milliseconds_todatetime(tolong(Ocsf.unmapped.altiward.expires_time)), Email = tostring(Ocsf.user.email_addr)\n| summarize Started = minif(TimeGenerated, IsStart), Ended = maxif(TimeGenerated, not(IsStart)),\n    Expires = maxif(Exp, Ev == \"elevation.granted\"), Src = take_anyif(Src, IsStart and isnotempty(Src)),\n    Email = take_anyif(Email, isnotempty(Email)), UserName = take_anyif(UserName, isnotempty(UserName)),\n    DeviceSerial = take_any(DeviceSerial) by SessionUid\n| where isnotnull(Started)\n| extend Source = case(Src == \"privileges\", \"Privileges\", Src == \"out_of_band\", \"Without a grant\", \"\"),\n    Person = iff(isnotempty(Email), Email, strcat(UserName, \" on \", DeviceSerial));\nSessions\n| summarize Value = count()\n| extend Metric = \"Elevations\", Order = 1\n| union (Sessions | summarize Value = countif(Source == \"Without a grant\") | extend Metric = \"Without a grant\", Order = 2)\n| order by Order asc\n| project Metric, Value",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "size": 0,
+            "tileSettings": {
+              "leftContent": {
+                "columnMatch": "Value",
+                "formatter": 1,
+                "numberFormat": {
+                  "options": {
+                    "maximumFractionDigits": 0,
+                    "style": "decimal"
+                  },
+                  "unit": 17
+                }
+              },
+              "showBorder": true,
+              "titleContent": {
+                "columnMatch": "Metric",
+                "formatter": 1
+              }
+            },
+            "timeContextFromParameter": "TimeRange",
+            "title": "Elevations in the period",
+            "version": "KqlItem/1.0",
+            "visualization": "tiles"
+          },
+          "name": "period-totals",
+          "type": 3
+        },
+        {
+          "content": {
+            "chartSettings": {
+              "createOtherGroup": 0,
+              "group": "Source",
+              "seriesLabelSettings": [
+                {
+                  "color": "gray",
+                  "seriesName": "Privileges"
+                },
+                {
+                  "color": "redBright",
+                  "seriesName": "Without a grant"
+                }
+              ],
+              "xAxis": "Day",
+              "yAxis": [
+                "Elevations"
+              ]
+            },
+            "noDataMessage": "No elevations in this period.",
+            "query": "let Sessions = AltiwardOCSF_CL\n| where isnotempty(SessionUid)\n| extend Ev = tostring(Ocsf.unmapped.altiward.event_type)\n| where Ev in (\"elevation.granted\", \"admin.out_of_band\", \"elevation.revoked\", \"elevation.expired_enforced\")\n| extend IsStart = Ev in (\"elevation.granted\", \"admin.out_of_band\"), Src = tostring(Ocsf.unmapped.altiward.source),\n    Exp = unixtime_milliseconds_todatetime(tolong(Ocsf.unmapped.altiward.expires_time)), Email = tostring(Ocsf.user.email_addr)\n| summarize Started = minif(TimeGenerated, IsStart), Ended = maxif(TimeGenerated, not(IsStart)),\n    Expires = maxif(Exp, Ev == \"elevation.granted\"), Src = take_anyif(Src, IsStart and isnotempty(Src)),\n    Email = take_anyif(Email, isnotempty(Email)), UserName = take_anyif(UserName, isnotempty(UserName)),\n    DeviceSerial = take_any(DeviceSerial) by SessionUid\n| where isnotnull(Started)\n| extend Source = case(Src == \"privileges\", \"Privileges\", Src == \"out_of_band\", \"Without a grant\", \"\"),\n    Person = iff(isnotempty(Email), Email, strcat(UserName, \" on \", DeviceSerial));\nSessions\n| where isnotempty(Source)\n| summarize Elevations = count() by Day = bin(Started, 1d), Source\n| order by Day asc",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "size": 0,
+            "timeContextFromParameter": "TimeRange",
+            "title": "Elevations per day",
+            "version": "KqlItem/1.0",
+            "visualization": "barchart"
+          },
+          "name": "elevations-per-day",
+          "type": 3
+        },
+        {
+          "content": {
+            "noDataMessage": "No elevations with an expiry ended in this period.",
+            "query": "let Sessions = AltiwardOCSF_CL\n| where isnotempty(SessionUid)\n| extend Ev = tostring(Ocsf.unmapped.altiward.event_type)\n| where Ev in (\"elevation.granted\", \"admin.out_of_band\", \"elevation.revoked\", \"elevation.expired_enforced\")\n| extend IsStart = Ev in (\"elevation.granted\", \"admin.out_of_band\"), Src = tostring(Ocsf.unmapped.altiward.source),\n    Exp = unixtime_milliseconds_todatetime(tolong(Ocsf.unmapped.altiward.expires_time)), Email = tostring(Ocsf.user.email_addr)\n| summarize Started = minif(TimeGenerated, IsStart), Ended = maxif(TimeGenerated, not(IsStart)),\n    Expires = maxif(Exp, Ev == \"elevation.granted\"), Src = take_anyif(Src, IsStart and isnotempty(Src)),\n    Email = take_anyif(Email, isnotempty(Email)), UserName = take_anyif(UserName, isnotempty(UserName)),\n    DeviceSerial = take_any(DeviceSerial) by SessionUid\n| where isnotnull(Started)\n| extend Source = case(Src == \"privileges\", \"Privileges\", Src == \"out_of_band\", \"Without a grant\", \"\"),\n    Person = iff(isnotempty(Email), Email, strcat(UserName, \" on \", DeviceSerial));\nSessions\n| where Source == \"Privileges\" and isnotnull(Ended) and isnotnull(Expires)\n| extend HeldMin = (Ended - Started) / 1m, AllowedMin = (Expires - Started) / 1m\n| summarize Elevations = count(), [\"Median held (min)\"] = round(percentile(HeldMin, 50), 1),\n    [\"Median allowed (min)\"] = round(percentile(AllowedMin, 50), 1),\n    [\"Gave back early (%)\"] = round(100.0 * countif(Ended <= Expires - 1m) / count(), 0) by Source",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "size": 0,
+            "timeContextFromParameter": "TimeRange",
+            "title": "Time held against time allowed (median per elevation that ended)",
+            "version": "KqlItem/1.0",
+            "visualization": "table"
+          },
+          "customWidth": "50",
+          "name": "time-held",
+          "type": 3
+        },
+        {
+          "content": {
+            "noDataMessage": "No elevations in this period.",
+            "query": "let Sessions = AltiwardOCSF_CL\n| where isnotempty(SessionUid)\n| extend Ev = tostring(Ocsf.unmapped.altiward.event_type)\n| where Ev in (\"elevation.granted\", \"admin.out_of_band\", \"elevation.revoked\", \"elevation.expired_enforced\")\n| extend IsStart = Ev in (\"elevation.granted\", \"admin.out_of_band\"), Src = tostring(Ocsf.unmapped.altiward.source),\n    Exp = unixtime_milliseconds_todatetime(tolong(Ocsf.unmapped.altiward.expires_time)), Email = tostring(Ocsf.user.email_addr)\n| summarize Started = minif(TimeGenerated, IsStart), Ended = maxif(TimeGenerated, not(IsStart)),\n    Expires = maxif(Exp, Ev == \"elevation.granted\"), Src = take_anyif(Src, IsStart and isnotempty(Src)),\n    Email = take_anyif(Email, isnotempty(Email)), UserName = take_anyif(UserName, isnotempty(UserName)),\n    DeviceSerial = take_any(DeviceSerial) by SessionUid\n| where isnotnull(Started)\n| extend Source = case(Src == \"privileges\", \"Privileges\", Src == \"out_of_band\", \"Without a grant\", \"\"),\n    Person = iff(isnotempty(Email), Email, strcat(UserName, \" on \", DeviceSerial));\nSessions\n| summarize Elevations = count(), Macs = dcount(DeviceSerial) by Person\n| top 5 by Elevations desc",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "size": 0,
+            "timeContextFromParameter": "TimeRange",
+            "title": "People who elevate most",
+            "version": "KqlItem/1.0",
+            "visualization": "table"
+          },
+          "customWidth": "50",
+          "name": "top-people",
+          "type": 3
+        },
+        {
+          "content": {
+            "noDataMessage": "No elevations in this period.",
+            "query": "let Sessions = AltiwardOCSF_CL\n| where isnotempty(SessionUid)\n| extend Ev = tostring(Ocsf.unmapped.altiward.event_type)\n| where Ev in (\"elevation.granted\", \"admin.out_of_band\", \"elevation.revoked\", \"elevation.expired_enforced\")\n| extend IsStart = Ev in (\"elevation.granted\", \"admin.out_of_band\"), Src = tostring(Ocsf.unmapped.altiward.source),\n    Exp = unixtime_milliseconds_todatetime(tolong(Ocsf.unmapped.altiward.expires_time)), Email = tostring(Ocsf.user.email_addr)\n| summarize Started = minif(TimeGenerated, IsStart), Ended = maxif(TimeGenerated, not(IsStart)),\n    Expires = maxif(Exp, Ev == \"elevation.granted\"), Src = take_anyif(Src, IsStart and isnotempty(Src)),\n    Email = take_anyif(Email, isnotempty(Email)), UserName = take_anyif(UserName, isnotempty(UserName)),\n    DeviceSerial = take_any(DeviceSerial) by SessionUid\n| where isnotnull(Started)\n| extend Source = case(Src == \"privileges\", \"Privileges\", Src == \"out_of_band\", \"Without a grant\", \"\"),\n    Person = iff(isnotempty(Email), Email, strcat(UserName, \" on \", DeviceSerial));\nSessions\n| summarize Elevations = count(), People = dcount(Person) by Mac = DeviceSerial\n| top 5 by Elevations desc",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "size": 0,
+            "timeContextFromParameter": "TimeRange",
+            "title": "Macs with the most elevations",
+            "version": "KqlItem/1.0",
+            "visualization": "table"
+          },
+          "customWidth": "50",
+          "name": "top-macs",
+          "type": 3
+        },
+        {
+          "content": {
+            "noDataMessage": "No findings in this period.",
+            "query": "AltiwardOCSF_CL\n| where ClassUid == 2004 and ActivityId == 1\n| summarize Findings = count(), Macs = dcount(DeviceSerial) by Finding = tostring(Ocsf.finding_info[\"title\"]), Severity = tostring(Ocsf.severity)\n| order by Findings desc",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "size": 0,
+            "timeContextFromParameter": "TimeRange",
+            "title": "Findings raised in the period",
+            "version": "KqlItem/1.0",
+            "visualization": "table"
+          },
+          "customWidth": "50",
+          "name": "findings",
+          "type": 3
+        },
+        {
+          "content": {
+            "json": "### Health"
+          },
+          "name": "health-heading",
+          "type": 1
+        },
+        {
+          "content": {
+            "noDataMessage": "No integrity check is failing.",
+            "query": "AltiwardOCSF_CL\n| where ClassUid == 2004 and tostring(Ocsf.finding_info.analytic.name) startswith \"altiward.tamper.\"\n    and tostring(Ocsf.unmapped.altiward.detail.state) != \"detected\"\n| summarize arg_max(TimeGenerated, ActivityId, Check = tostring(Ocsf.finding_info[\"title\"]), Severity = tostring(Ocsf.severity))\n    by Uid = tostring(Ocsf.finding_info.uid), DeviceSerial\n| where ActivityId == 1\n| summarize Macs = dcount(DeviceSerial), Since = min(TimeGenerated) by Check, Severity\n| order by Macs desc",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "size": 0,
+            "timeContext": {
+              "durationMs": 7776000000
+            },
+            "title": "Integrity checks failing now",
+            "version": "KqlItem/1.0",
+            "visualization": "table"
+          },
+          "customWidth": "50",
+          "name": "failing-checks",
+          "type": 3
+        },
+        {
+          "content": {
+            "noDataMessage": "No Mac sent an event in this period.",
+            "query": "AltiwardOCSF_CL\n| where isnotempty(DeviceSerial) and not(tostring(Ocsf.unmapped.altiward.event_type) startswith \"console.\")\n| summarize arg_max(TimeGenerated, Version = tostring(Ocsf.metadata.product.version)) by DeviceSerial\n| summarize Macs = count() by Version\n| order by Version desc",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "size": 0,
+            "timeContextFromParameter": "TimeRange",
+            "title": "Agent versions (Macs that sent an event in the period)",
+            "version": "KqlItem/1.0",
+            "visualization": "table"
+          },
+          "customWidth": "50",
+          "name": "agent-versions",
+          "type": 3
+        }
+      ],
+      "version": "Notebook/1.0"
+    },
+    "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName'))]"
+  }
+}

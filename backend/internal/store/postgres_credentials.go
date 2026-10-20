@@ -1,0 +1,211 @@
+package store
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+const credentialColumns = `device_id::text, tenant_id, serial, hardware_uuid, public_key, status, created_at, activated_at, revoked_at`
+
+func scanCredential(row pgx.Row) (DeviceCredential, error) {
+	var c DeviceCredential
+	var status string
+	err := row.Scan(&c.DeviceID, &c.TenantID, &c.Serial, &c.HardwareUUID, &c.PublicKey, &status,
+		&c.CreatedAt, &c.ActivatedAt, &c.RevokedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DeviceCredential{}, ErrNotFound
+	}
+	c.Status = CredentialStatus(status)
+	return c, err
+}
+
+// lockSerial serialises enrollment and approval for one Mac so two requests cannot
+// both see "no active credential" and race on the unique index.
+func lockSerial(ctx context.Context, tx pgx.Tx, tenantID, serial string) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 7243100002))`, tenantID+"/"+serial)
+	return err
+}
+
+func (p *Postgres) Enroll(ctx context.Context, c DeviceCredential) (EnrollResult, error) {
+	var res EnrollResult
+	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+		res = EnrollResult{}
+		if err := lockSerial(ctx, tx, c.TenantID, c.Serial); err != nil {
+			return err
+		}
+		existing, err := scanCredential(tx.QueryRow(ctx,
+			`SELECT `+credentialColumns+` FROM device_credentials WHERE key_digest = $1`, keyDigest(c.PublicKey)))
+		switch {
+		case err == nil && existing.TenantID != c.TenantID:
+			return ErrConflict
+		case err == nil:
+			res.Credential = existing
+			return nil
+		case !errors.Is(err, ErrNotFound):
+			return err
+		}
+
+		active, err := scanCredential(tx.QueryRow(ctx,
+			`SELECT `+credentialColumns+` FROM device_credentials WHERE tenant_id = $1 AND serial = $2 AND status = 'active'`,
+			c.TenantID, c.Serial))
+		hasActive := err == nil
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		settings, err := tenantSettings(ctx, tx, c.TenantID)
+		if err != nil {
+			return err
+		}
+		var enrolledBefore bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM device_credentials WHERE tenant_id = $1 AND serial = $2)`,
+			c.TenantID, c.Serial).Scan(&enrolledBefore); err != nil {
+			return err
+		}
+		if settings.ReenrollmentRequiresApproval && enrolledBefore {
+			c.Status = CredentialPending
+		} else {
+			c.Status, c.ActivatedAt = CredentialActive, ptr(c.CreatedAt)
+			if hasActive {
+				if _, err := tx.Exec(ctx, `UPDATE device_credentials SET status = 'revoked', revoked_at = $2 WHERE device_id = $1`,
+					active.DeviceID, c.CreatedAt); err != nil {
+					return err
+				}
+				res.Replaced = active.DeviceID
+			}
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO device_credentials (device_id, tenant_id, serial, hardware_uuid, public_key, key_digest, status, created_at, activated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			c.DeviceID, c.TenantID, c.Serial, c.HardwareUUID, c.PublicKey, keyDigest(c.PublicKey), string(c.Status),
+			c.CreatedAt, c.ActivatedAt); err != nil {
+			return fmt.Errorf("insert credential: %w", err)
+		}
+		res.Credential = c
+		return nil
+	})
+	return res, err
+}
+
+func (p *Postgres) Credential(ctx context.Context, deviceID string) (DeviceCredential, error) {
+	if !isUUID(deviceID) {
+		return DeviceCredential{}, ErrNotFound
+	}
+	return scanCredential(p.pool.QueryRow(ctx, `SELECT `+credentialColumns+` FROM device_credentials WHERE device_id = $1`, deviceID))
+}
+
+func (p *Postgres) ApproveCredential(ctx context.Context, tenantID, deviceID string, now time.Time, a AuditEntry) (DeviceCredential, error) {
+	if !isUUID(deviceID) {
+		return DeviceCredential{}, ErrNotFound
+	}
+	var out DeviceCredential
+	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+		c, err := scanCredential(tx.QueryRow(ctx,
+			`SELECT `+credentialColumns+` FROM device_credentials WHERE device_id = $1 AND tenant_id = $2`, deviceID, tenantID))
+		if err != nil {
+			return err
+		}
+		if err := lockSerial(ctx, tx, tenantID, c.Serial); err != nil {
+			return err
+		}
+		// Re-read under the lock: a concurrent approval may have got there first.
+		if c, err = scanCredential(tx.QueryRow(ctx,
+			`SELECT `+credentialColumns+` FROM device_credentials WHERE device_id = $1`, deviceID)); err != nil {
+			return err
+		}
+		if c.Status != CredentialPending {
+			return ErrInvalidState
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE device_credentials SET status = 'revoked', revoked_at = $3
+			WHERE tenant_id = $1 AND serial = $2 AND status = 'active'`, tenantID, c.Serial, now); err != nil {
+			return err
+		}
+		if out, err = scanCredential(tx.QueryRow(ctx, `
+			UPDATE device_credentials SET status = 'active', activated_at = $2 WHERE device_id = $1
+			RETURNING `+credentialColumns, deviceID, now)); err != nil {
+			return err
+		}
+		return p.insertAudit(ctx, tx, a)
+	})
+	return out, err
+}
+
+func (p *Postgres) RevokeCredential(ctx context.Context, tenantID, deviceID string, now time.Time, a AuditEntry) (DeviceCredential, error) {
+	if !isUUID(deviceID) {
+		return DeviceCredential{}, ErrNotFound
+	}
+	var out DeviceCredential
+	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+		var err error
+		if out, err = scanCredential(tx.QueryRow(ctx, `
+			UPDATE device_credentials
+			SET status = 'revoked', revoked_at = COALESCE(revoked_at, $3)
+			WHERE device_id = $1 AND tenant_id = $2
+			RETURNING `+credentialColumns, deviceID, tenantID, now)); err != nil {
+			return err
+		}
+		return p.insertAudit(ctx, tx, a)
+	})
+	return out, err
+}
+
+func (p *Postgres) ListCredentials(ctx context.Context, tenantID string, f CredentialFilter) ([]DeviceCredential, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT `+credentialColumns+` FROM device_credentials
+		WHERE tenant_id = $1 AND ($2 = '' OR status = $2) AND ($3 = '' OR serial = $3)
+		ORDER BY created_at DESC, device_id`, tenantID, string(f.Status), f.Serial)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []DeviceCredential{}
+	for rows.Next() {
+		c, err := scanCredential(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) TenantSettings(ctx context.Context, tenantID string) (TenantSettings, error) {
+	return tenantSettings(ctx, p.pool, tenantID)
+}
+
+func (p *Postgres) PutTenantSettings(ctx context.Context, tenantID string, s TenantSettings, a AuditEntry) error {
+	body, err := json.Marshal(s)
+	if err != nil {
+		return err
+	}
+	return pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO tenant_settings (tenant_id, settings, updated_at) VALUES ($1, $2, now())
+			ON CONFLICT (tenant_id) DO UPDATE SET settings = excluded.settings, updated_at = now()`, tenantID, body); err != nil {
+			return err
+		}
+		return p.insertAudit(ctx, tx, a)
+	})
+}
+
+type querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func tenantSettings(ctx context.Context, q querier, tenantID string) (TenantSettings, error) {
+	var body []byte
+	err := q.QueryRow(ctx, `SELECT settings FROM tenant_settings WHERE tenant_id = $1`, tenantID).Scan(&body)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return TenantSettings{}, nil
+	}
+	if err != nil {
+		return TenantSettings{}, err
+	}
+	var s TenantSettings
+	return s, json.Unmarshal(body, &s)
+}

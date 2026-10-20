@@ -1,0 +1,64 @@
+[
+  {
+    "activity_id": 2,
+    "activity_name": "Revoke Privileges",
+    "category_name": "Identity \u0026 Access Management",
+    "category_uid": 3,
+    "class_name": "User Access Management",
+    "class_uid": 3005,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "message": "jane.doe@example.com's admin rights on C02XK0AAJGH5 were revoked",
+    "metadata": {
+      "correlation_uid": "5d1c2b7a-8e4f-4a6b-9c3d-2e1f0a9b8c7d",
+      "labels": [
+        "delayed"
+      ],
+      "logged_time": 1792143107004,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.1.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "1c7a7b63-7b1f-4e4f-8a6f-4a3b2d0e8f12",
+      "version": "1.9.0"
+    },
+    "privileges": [
+      "admin"
+    ],
+    "severity": "Informational",
+    "severity_id": 1,
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792143107004,
+    "type_name": "User Access Management: Revoke Privileges",
+    "type_uid": 300502,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "claimed_state": "user",
+          "observed_admin": false,
+          "trigger": "hook",
+          "verified": true
+        },
+        "event_type": "elevation.revoked",
+        "source": "privileges"
+      }
+    },
+    "user": {
+      "email_addr": "jane.doe@example.com",
+      "name": "jdoe"
+    }
+  }
+]

@@ -1,0 +1,41 @@
+name: Feature request
+description: Suggest an improvement or a new capability
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. For anything big, a [Discussion](https://github.com/Altiward/altiward/discussions)
+        is a good place to talk it through first.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you'd like
+      description: How could Altiward help? A rough idea is fine.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've tried
+      description: Workarounds, or other tools you use for this.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Where it would go
+      options:
+        - Server
+        - Agent
+        - Console
+        - SIEM integrations
+        - Documentation
+        - Not sure
+    validations:
+      required: true

@@ -1,0 +1,18 @@
+{
+  "commands": [
+    {
+      "command_id": "8c1d2e3f-4a5b-4c6d-9e7f-0a1b2c3d4e5f",
+      "type": "revoke_admin",
+      "user": "jdoe",
+      "session_id": "5d1c2b7a-8e4f-4a6b-9c3d-2e1f0a9b8c7d",
+      "expires_at": "2026-10-17T09:20:00Z"
+    },
+    {
+      "command_id": "9d2e3f4a-5b6c-4d7e-8f90-1a2b3c4d5e6f",
+      "type": "revoke_admin",
+      "user": null,
+      "session_id": null,
+      "expires_at": "2026-10-17T09:25:00Z"
+    }
+  ]
+}

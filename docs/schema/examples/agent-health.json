@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "event_id": "3e9c9d85-9d3b-4a6b-8c8b-6c5d4f2a0b34",
+  "type": "agent.health",
+  "session_id": null,
+  "timestamp": "2026-10-16T10:05:00Z",
+  "device": {
+    "serial": "C02XK0AAJGH5",
+    "hardware_uuid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+    "os_version": "26.1.0",
+    "agent_version": "0.1.0",
+    "privileges_version": "2.5.3"
+  },
+  "user": null,
+  "elevation": null,
+  "delayed": false,
+  "detail": {
+    "admin_members": ["backdoor", "itadmin"],
+    "permanent_admins": ["itadmin"],
+    "open_sessions": [],
+    "queue_depth": 0,
+    "privileges": {
+      "installed": true,
+      "post_change_hook_configured": true,
+      "pass_reason_to_executable": true,
+      "enforce_privileges": null,
+      "system_extension_enabled": true,
+      "expiration_interval_minutes": 20,
+      "expiration_interval_max_minutes": null
+    },
+    "integrity": {
+      "code_signature": true,
+      "launch_daemon": true,
+      "privileges_hook": true,
+      "privileges_timer": true,
+      "privileges_tamper_protection": true,
+      "settings_managed": false
+    },
+    "persistence_unreadable": []
+  }
+}

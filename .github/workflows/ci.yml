@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend and integrations (Go)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: altiward
+          POSTGRES_PASSWORD: altiward
+          POSTGRES_DB: altiward
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U altiward"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l backend integrations deploy/sentinel)" || (gofmt -l backend integrations deploy/sentinel; exit 1)
+      - name: go vet
+        run: |
+          go vet ./...
+          cd integrations && go vet ./...
+      - name: go test (with Postgres)
+        env:
+          ALTIWARD_TEST_DATABASE_URL: postgres://altiward:altiward@localhost:5432/altiward?sslmode=disable
+        run: |
+          go test -race -count=1 ./...
+          cd integrations && go test -race -count=1 ./...
+      - name: build
+        run: go build -o bin/altiward-api ./backend/cmd/altiward-api
+
+  agent:
+    name: Mac agent (Swift)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Toolchain
+        run: swift --version
+      - name: Build
+        run: swift build --package-path agent
+      - name: Test
+        run: swift test --package-path agent
+      - name: Package (ad hoc) and verify
+        run: make package package-verify
+
+  console:
+    name: Console (TypeScript)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      - name: Console brand assets match their sources
+        run: make brand-check
+      - run: npm --prefix console ci
+      - run: npm --prefix console run typecheck
+      - run: npm --prefix console test
+      - run: npm --prefix console run build
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Third-party notices are up to date
+        run: make notices-check
+
+  image:
+    name: Server image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - name: Build the image (not pushed)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          push: false
+          load: true
+          tags: altiward-api:ci
+      - name: The image starts and reports healthy
+        run: |
+          docker run -d --name api -e ALTIWARD_AGENT_TOKENS=ci=agent-token-0000000001 altiward-api:ci
+          # The first health check runs after the 30-second interval.
+          for _ in $(seq 1 45); do
+            if [ "$(docker inspect -f '{{.State.Health.Status}}' api)" = healthy ]; then
+              docker rm -f api >/dev/null # later steps remove the image
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs api
+          exit 1
+      - name: The deployment bundle builds
+        run: |
+          scripts/server-bundle.sh 0.0.0 altiward-api:ci "$RUNNER_TEMP/bundle"
+          tar -tvzf "$RUNNER_TEMP/bundle/altiward-server-0.0.0.tar.gz" |
+            grep -E '^-rwxr-xr-x .*/integrations/sentinel/setup\.sh$'
+      - name: A release installs and upgrades with upgrade.sh
+        run: scripts/test-upgrade.sh altiward-api:ci
+      - name: Saved image loads and runs, as admins do it
+        run: |
+          docker save altiward-api:ci | gzip > "$RUNNER_TEMP/image.tar.gz"
+          docker rmi altiward-api:ci
+          docker load -i "$RUNNER_TEMP/image.tar.gz"
+          docker run --rm altiward-api:ci version
+
+  # Signing and notarization run in a separate release workflow that reads the
+  # Developer ID certificate and notary credentials from repository secrets.
+  # Nothing signing-related is committed to this repository.

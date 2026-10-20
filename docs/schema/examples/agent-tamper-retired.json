@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "event_id": "9d4e1f2a-3b5c-4d6e-8f7a-1b2c3d4e5f60",
+  "type": "agent.tamper",
+  "session_id": null,
+  "timestamp": "2026-10-16T11:05:00Z",
+  "device": {
+    "serial": "C02XK0AAJGH5",
+    "hardware_uuid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+    "os_version": "26.1.0",
+    "agent_version": "0.1.0",
+    "privileges_version": null
+  },
+  "user": null,
+  "elevation": null,
+  "delayed": false,
+  "detail": {
+    "check": "privileges_tamper_protection",
+    "state": "retired",
+    "problem": "SAP Privileges isn't installed now"
+  }
+}

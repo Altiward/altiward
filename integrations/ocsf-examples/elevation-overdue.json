@@ -1,0 +1,85 @@
+[
+  {
+    "activity_id": 1,
+    "activity_name": "Create",
+    "category_name": "Findings",
+    "category_uid": 2,
+    "class_name": "Detection Finding",
+    "class_uid": 2004,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "finding_info": {
+      "analytic": {
+        "name": "altiward.rights_after_expiry",
+        "type": "Rule",
+        "type_id": 1
+      },
+      "created_time": 1792143543120,
+      "desc": "jane.doe@example.com still holds admin rights on C02XK0AAJGH5 after they expired",
+      "first_seen_time": 1792143543120,
+      "title": "Admin rights outlived their expiry",
+      "types": [
+        "Privilege Escalation"
+      ],
+      "uid": "4f2e9a1c-3b7d-4c6e-8a5f-1d0b9e8c7a64"
+    },
+    "is_alert": true,
+    "message": "jane.doe@example.com still holds admin rights on C02XK0AAJGH5 after they expired",
+    "metadata": {
+      "correlation_uid": "5d1c2b7a-8e4f-4a6b-9c3d-2e1f0a9b8c7d",
+      "logged_time": 1792143543120,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.1.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "4f2e9a1c-3b7d-4c6e-8a5f-1d0b9e8c7a64",
+      "version": "1.9.0"
+    },
+    "observables": [
+      {
+        "name": "user.name",
+        "type": "User Name",
+        "type_id": 4,
+        "value": "jdoe"
+      }
+    ],
+    "severity": "Medium",
+    "severity_id": 3,
+    "status": "New",
+    "status_id": 1,
+    "time": 1792143543120,
+    "type_name": "Detection Finding: Create",
+    "type_uid": 200401,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "enforcement": "alert",
+          "enforcement_failed": false,
+          "expired_at": "2026-10-16T09:34:03.120Z",
+          "grace_seconds": 300,
+          "observed_admin": true,
+          "trigger": "heartbeat"
+        },
+        "event_type": "elevation.overdue",
+        "expires_time": 1792143243120,
+        "source": "privileges"
+      }
+    },
+    "user": {
+      "email_addr": "jane.doe@example.com",
+      "name": "jdoe"
+    }
+  }
+]

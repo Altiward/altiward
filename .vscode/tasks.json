@@ -1,0 +1,45 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "altiward: build Swift (debug)",
+      "type": "process",
+      "command": "swift",
+      "args": [
+        "build",
+        "--package-path",
+        "agent",
+        "--scratch-path",
+        "${env:HOME}/Library/Caches/altiward/agent-build",
+        "--configuration",
+        "debug"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$swiftc"
+      ]
+    },
+    {
+      "label": "altiward: build Swift (release)",
+      "type": "process",
+      "command": "swift",
+      "args": [
+        "build",
+        "--package-path",
+        "agent",
+        "--scratch-path",
+        "${env:HOME}/Library/Caches/altiward/agent-build",
+        "--configuration",
+        "release"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$swiftc"
+      ]
+    }
+  ]
+}

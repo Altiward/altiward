@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Managed login items (com.apple.servicemanagement): marks the Altiward LaunchDaemon as
+  managed so users can't turn it off in System Settings > General > Login Items, and
+  macOS doesn't show a "background item added" notification. Deploy it before or
+  with the package, through an MDM: macOS refuses this payload in a profile installed by
+  hand ("must originate from a user-approved MDM server"), and with it the whole profile.
+  Replace TEAMID with the Developer ID team that signs the agent.
+-->
+<plist version="1.0">
+<dict>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+    <key>PayloadIdentifier</key>
+    <string>com.altiward.profile.login-items</string>
+    <key>PayloadUUID</key>
+    <string>C9406952-1D49-4497-8030-F73FEE130DD2</string>
+    <key>PayloadDisplayName</key>
+    <string>Altiward agent (managed background item)</string>
+    <key>PayloadScope</key>
+    <string>System</string>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadType</key>
+            <string>com.apple.servicemanagement</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>PayloadIdentifier</key>
+            <string>com.altiward.profile.login-items.rules</string>
+            <key>PayloadUUID</key>
+            <string>C35DC88D-C628-4434-8DD8-3C5BAB6C84A5</string>
+            <key>Rules</key>
+            <array>
+                <dict>
+                    <key>RuleType</key>
+                    <string>Label</string>
+                    <key>RuleValue</key>
+                    <string>com.altiward.agent</string>
+                    <key>Comment</key>
+                    <string>altiward-agent LaunchDaemon</string>
+                </dict>
+                <dict>
+                    <key>RuleType</key>
+                    <string>TeamIdentifier</string>
+                    <key>RuleValue</key>
+                    <string>TEAMID</string>
+                    <key>Comment</key>
+                    <string>Everything Altiward signs</string>
+                </dict>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

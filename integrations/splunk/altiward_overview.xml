@@ -1,0 +1,242 @@
+<form version="1.1" theme="light">
+  <label>Altiward overview</label>
+  <description>Who holds admin rights on your Macs, how elevations went over the period, and what needs a look, from the events Altiward sends (sourcetype altiward:ocsf). The same figures are on the Altiward console's Overview. "Without a grant" means admin rights that nobody granted through SAP Privileges.</description>
+  <fieldset submitButton="false" autoRun="true">
+    <input type="text" token="index" searchWhenChanged="true">
+      <label>Index</label>
+      <default>main</default>
+    </input>
+    <input type="dropdown" token="period" searchWhenChanged="true">
+      <label>Period</label>
+      <choice value="-7d">7 days</choice>
+      <choice value="-30d">30 days</choice>
+      <choice value="-90d">90 days</choice>
+      <default>-30d</default>
+    </input>
+  </fieldset>
+
+  <!-- Every elevation session from the last 90 days, rebuilt from its grant and its end
+       (metadata.correlation_uid ties them). "Now" panels use all of it; period panels
+       keep the sessions that started in the period. -->
+  <search id="sessions">
+    <query>index="$index$" sourcetype="altiward:ocsf" metadata.correlation_uid=*
+  (unmapped.altiward.event_type="elevation.granted" OR unmapped.altiward.event_type="admin.out_of_band"
+   OR unmapped.altiward.event_type="elevation.revoked" OR unmapped.altiward.event_type="elevation.expired_enforced")
+| eval ev='unmapped.altiward.event_type', is_start=if(ev="elevation.granted" OR ev="admin.out_of_band", 1, 0)
+| eval start_time=if(is_start=1, _time, null()), end_time=if(is_start=0, _time, null()),
+    exp=if(ev="elevation.granted", 'unmapped.altiward.expires_time' / 1000, null()),
+    src=if(is_start=1, 'unmapped.altiward.source', null()), email='user.email_addr', uname='user.name'
+| stats min(start_time) as started max(end_time) as ended max(exp) as expires values(src) as src
+    values(email) as email values(uname) as uname values(host) as mac by metadata.correlation_uid
+| where isnotnull(started)
+| eval src=mvindex(src, 0), mac=mvindex(mac, 0),
+    source=case(src="privileges", "Privileges", src="out_of_band", "Without a grant"),
+    person=if(isnotnull(email), mvindex(email, 0), mvindex(uname, 0)." on ".mac)
+| fields metadata.correlation_uid started ended expires source person mac</query>
+    <earliest>-90d</earliest>
+    <latest>now</latest>
+  </search>
+
+  <row>
+    <panel>
+      <title>Admins now, by where the rights came from</title>
+      <table>
+        <search base="sessions">
+          <query>where isnull(ended)
+| stats count as People by source
+| append [| makeresults | eval source=split("Privileges,Without a grant", ","), People=0 | mvexpand source | fields source People]
+| stats sum(People) as People by source
+| eval order=case(source="Privileges", 1, source="Without a grant", 2)
+| sort order | fields - order | rename source as Source</query>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+    <panel>
+      <title>Rights past their expiry</title>
+      <single>
+        <search base="sessions">
+          <query>where isnull(ended) AND isnotnull(expires) AND expires &lt; now() | stats count</query>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x53a051","0xdc4e41"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+        <option name="underLabel">people</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Macs failing an integrity check</title>
+      <single>
+        <search>
+          <query>index="$index$" sourcetype="altiward:ocsf" class_uid=2004 finding_info.analytic.name="altiward.tamper.*"
+  unmapped.altiward.detail.state!="detected"
+| stats latest(activity_id) as last by finding_info.uid host
+| where last=1
+| stats dc(host) as Macs</query>
+          <earliest>-90d</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x53a051","0xdc4e41"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+        <option name="underLabel">Macs</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Macs not checking in</title>
+      <single>
+        <search>
+          <query>index="$index$" sourcetype="altiward:ocsf" class_uid=2004 finding_info.analytic.name="altiward.agent_silent"
+| stats latest(activity_id) as last by finding_info.uid host
+| where last=1
+| stats dc(host) as Macs</query>
+          <earliest>-90d</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x53a051","0xdc4e41"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+        <option name="underLabel">Macs</option>
+      </single>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Elevations in the period</title>
+      <single>
+        <search base="sessions">
+          <query>where started &gt;= relative_time(now(), "$period$") | stats count</query>
+        </search>
+        <option name="underLabel">elevations</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Without a grant in the period</title>
+      <single>
+        <search base="sessions">
+          <query>where started &gt;= relative_time(now(), "$period$") AND source="Without a grant" | stats count</query>
+        </search>
+        <option name="colorMode">none</option>
+        <option name="rangeColors">["0x53a051","0xdc4e41"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+        <option name="underLabel">elevations without a grant</option>
+      </single>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Elevations per day</title>
+      <chart>
+        <search base="sessions">
+          <query>where started &gt;= relative_time(now(), "$period$")
+| where isnotnull(source)
+| eval _time=started
+| timechart span=1d count by source
+| where _time &gt;= relative_time(now(), "$period$@d")</query>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.axisTitleX.visibility">collapsed</option>
+        <option name="charting.axisTitleY.text">Elevations</option>
+        <option name="charting.fieldColors">{"Privileges": 0x857a6c, "Without a grant": 0xb0213f}</option>
+        <option name="charting.legend.placement">bottom</option>
+      </chart>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Time held against time allowed (median per elevation that ended)</title>
+      <table>
+        <search base="sessions">
+          <query>where started &gt;= relative_time(now(), "$period$") AND source="Privileges" AND isnotnull(ended) AND isnotnull(expires)
+| eval held=(ended - started) / 60, allowed=(expires - started) / 60, early=if(ended &lt;= expires - 60, 1, 0)
+| stats count as Elevations median(held) as held median(allowed) as allowed avg(early) as early by source
+| eval "Median held (min)"=round(held, 1), "Median allowed (min)"=round(allowed, 1), "Gave back early (%)"=round(early * 100, 0)
+| fields source Elevations "Median held (min)" "Median allowed (min)" "Gave back early (%)"
+| rename source as Source</query>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+    <panel>
+      <title>People who elevate most</title>
+      <table>
+        <search base="sessions">
+          <query>where started &gt;= relative_time(now(), "$period$")
+| stats count as Elevations dc(mac) as Macs by person
+| sort - Elevations | head 5
+| rename person as Person</query>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+    <panel>
+      <title>Macs with the most elevations</title>
+      <table>
+        <search base="sessions">
+          <query>where started &gt;= relative_time(now(), "$period$")
+| stats count as Elevations dc(person) as People by mac
+| sort - Elevations | head 5
+| rename mac as Mac</query>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Findings raised in the period</title>
+      <table>
+        <search>
+          <query>index="$index$" sourcetype="altiward:ocsf" class_uid=2004 activity_id=1
+| stats count as Findings dc(host) as Macs by finding_info.title severity
+| sort - Findings
+| rename finding_info.title as Finding, severity as Severity</query>
+          <earliest>$period$</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+    <panel>
+      <title>Integrity checks failing now</title>
+      <table>
+        <search>
+          <query>index="$index$" sourcetype="altiward:ocsf" class_uid=2004 finding_info.analytic.name="altiward.tamper.*"
+  unmapped.altiward.detail.state!="detected"
+| stats latest(activity_id) as last latest(finding_info.title) as check latest(severity) as severity min(_time) as since by finding_info.uid host
+| where last=1
+| stats dc(host) as Macs min(since) as since by check severity
+| eval Since=strftime(since, "%Y-%m-%d %H:%M")
+| fields check severity Macs Since
+| rename check as Check, severity as Severity</query>
+          <earliest>-90d</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+    <panel>
+      <title>Agent versions (Macs that sent an event in the period)</title>
+      <table>
+        <search>
+          <query>index="$index$" sourcetype="altiward:ocsf" host!="altiward" metadata.product.version=*
+| stats latest(metadata.product.version) as Version by host
+| stats count as Macs by Version
+| sort - Version</query>
+          <earliest>$period$</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+</form>

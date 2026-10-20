@@ -1,0 +1,78 @@
+[
+  {
+    "activity_id": 1,
+    "activity_name": "Create",
+    "category_name": "Findings",
+    "category_uid": 2,
+    "class_name": "Detection Finding",
+    "class_uid": 2004,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "finding_info": {
+      "analytic": {
+        "name": "altiward.admin_out_of_band",
+        "type": "Rule",
+        "type_id": 1
+      },
+      "created_time": 1792144800000,
+      "desc": "backdoor holds admin rights on C02XK0AAJGH5 that nobody granted through SAP Privileges",
+      "first_seen_time": 1792144800000,
+      "title": "Admin rights without a grant",
+      "types": [
+        "Privilege Escalation"
+      ],
+      "uid": "7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f"
+    },
+    "is_alert": true,
+    "message": "backdoor holds admin rights on C02XK0AAJGH5 that nobody granted through SAP Privileges",
+    "metadata": {
+      "correlation_uid": "7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f",
+      "logged_time": 1792144800000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.1.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "2d8b8c74-8c2a-4f5a-9b7a-5b4c3e1f9a23",
+      "version": "1.9.0"
+    },
+    "observables": [
+      {
+        "name": "user.name",
+        "type": "User Name",
+        "type_id": 4,
+        "value": "backdoor"
+      }
+    ],
+    "severity": "High",
+    "severity_id": 4,
+    "status": "New",
+    "status_id": 1,
+    "time": 1792144800000,
+    "type_name": "Detection Finding: Create",
+    "type_uid": 200401,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "first_observed": "2026-10-16T10:00:00Z"
+        },
+        "event_type": "admin.out_of_band",
+        "source": "out_of_band"
+      }
+    },
+    "user": {
+      "name": "backdoor"
+    }
+  }
+]

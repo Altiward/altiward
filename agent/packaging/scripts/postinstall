@@ -1,0 +1,20 @@
+#!/bin/bash
+# Installs the LaunchDaemon from the bundle and starts it. Installer passes the target
+# volume as $3; launchd is only touched when installing onto the running system.
+set -euo pipefail
+LABEL=com.altiward.agent
+VOLUME="${3:-/}"
+VOLUME="${VOLUME%/}"
+APP="$VOLUME/Library/Application Support/Altiward/Altiward.app"
+DEST="$VOLUME/Library/LaunchDaemons/$LABEL.plist"
+
+mkdir -p "$VOLUME/Library/LaunchDaemons"
+install -m 0644 "$APP/Contents/Resources/$LABEL.plist" "$DEST"
+if [ "$(id -u)" = 0 ]; then chown root:wheel "$DEST"; fi
+
+if [ -z "$VOLUME" ]; then # the running system
+  launchctl bootout "system/$LABEL" 2>/dev/null || true
+  launchctl bootstrap system "$DEST"
+  launchctl kickstart "system/$LABEL" || true
+fi
+exit 0

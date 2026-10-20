@@ -1,0 +1,66 @@
+[
+  {
+    "activity_id": 1,
+    "activity_name": "Assign Privileges",
+    "category_name": "Identity \u0026 Access Management",
+    "category_uid": 3,
+    "class_name": "User Access Management",
+    "class_uid": 3005,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "message": "jane.doe@example.com was granted admin rights on C02XK0AAJGH5 via SAP Privileges: Installing Xcode command line tools",
+    "metadata": {
+      "correlation_uid": "5d1c2b7a-8e4f-4a6b-9c3d-2e1f0a9b8c7d",
+      "logged_time": 1792142043120,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.1.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "0b6f6a52-6a0e-4d3e-9f5e-3f2a1c9d7e01",
+      "version": "1.9.0"
+    },
+    "privileges": [
+      "admin"
+    ],
+    "severity": "Informational",
+    "severity_id": 1,
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792142043120,
+    "type_name": "User Access Management: Assign Privileges",
+    "type_uid": 300501,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "caller_uid": 501,
+          "claimed_state": "admin",
+          "expires_basis": "ExpirationInterval",
+          "observed_admin": true,
+          "renewed": false,
+          "trigger": "hook",
+          "verified": true
+        },
+        "event_type": "elevation.granted",
+        "expires_time": 1792143243120,
+        "reason": "Installing Xcode command line tools",
+        "source": "privileges"
+      }
+    },
+    "user": {
+      "email_addr": "jane.doe@example.com",
+      "name": "jdoe"
+    }
+  }
+]

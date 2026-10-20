@@ -1,0 +1,67 @@
+[
+  {
+    "activity_id": 3,
+    "activity_name": "Close",
+    "category_name": "Findings",
+    "category_uid": 2,
+    "class_name": "Detection Finding",
+    "class_uid": 2004,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "finding_info": {
+      "analytic": {
+        "name": "altiward.tamper.privileges_tamper_protection",
+        "type": "Rule",
+        "type_id": 1
+      },
+      "created_time": 1792148700000,
+      "desc": "No longer checked on C02XK0AAJGH5 (SAP Privileges isn't installed now): SAP Privileges tamper protection is off",
+      "first_seen_time": 1792148700000,
+      "title": "SAP Privileges tamper protection is off",
+      "types": [
+        "Defense Evasion"
+      ],
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D/privileges_tamper_protection"
+    },
+    "message": "No longer checked on C02XK0AAJGH5 (SAP Privileges isn't installed now): SAP Privileges tamper protection is off",
+    "metadata": {
+      "logged_time": 1792148700000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.1.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "9d4e1f2a-3b5c-4d6e-8f7a-1b2c3d4e5f60",
+      "version": "1.9.0"
+    },
+    "severity": "Informational",
+    "severity_id": 1,
+    "status": "No longer checked",
+    "status_detail": "SAP Privileges isn't installed now",
+    "status_id": 99,
+    "time": 1792148700000,
+    "type_name": "Detection Finding: Close",
+    "type_uid": 200403,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "check": "privileges_tamper_protection",
+          "problem": "SAP Privileges isn't installed now",
+          "state": "retired"
+        },
+        "event_type": "agent.tamper"
+      }
+    }
+  }
+]

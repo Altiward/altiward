@@ -1,0 +1,132 @@
+name: Release server
+
+# Builds a server release when a server-vX.Y.Z tag is pushed: the image
+# for amd64 and arm64 with provenance and an SBOM, pushed to the public ghcr.io package
+# and signed; the same image saved per platform for docker load; the deployment bundle;
+# the release notes from CHANGELOG.md; and SHA256SUMS over all of it, signed so anyone
+# can check the files without registry access. The last job publishes the files on
+# GitHub Releases (docs/releasing.md); a release candidate is marked a pre-release.
+#
+# No secrets: the registry login uses GITHUB_TOKEN, and signing is keyless, using this
+# workflow's GitHub identity. Keyless signatures are recorded in Sigstore's public
+# transparency log, which names this repository and workflow.
+
+on:
+  push:
+    tags: ["server-v*"]
+
+permissions:
+  contents: read
+  packages: write # push to ghcr.io
+  id-token: write # keyless signing
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    environment: release # a maintainer approves before anything is pushed or signed
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Version from the tag
+        id: version
+        run: |
+          v="${GITHUB_REF_NAME#server-v}"
+          # X.Y.Z, or X.Y.Z-rc.N for a release candidate.
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || { echo "tag must be server-vX.Y.Z or server-vX.Y.Z-rc.N, got $GITHUB_REF_NAME"; exit 1; }
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/altiward-api"
+          out="$RUNNER_TEMP/release"
+          # Run steps read the environment; action inputs read the step outputs.
+          { echo "VERSION=$v"; echo "IMAGE=$image"; echo "OUT=$out"; } >> "$GITHUB_ENV"
+          { echo "version=$v"; echo "image=$image"; echo "out=$out"; } >> "$GITHUB_OUTPUT"
+
+      - name: Release notes (refuses a version without a dated CHANGELOG section)
+        run: |
+          mkdir -p "$OUT"
+          scripts/release-notes.sh server "$VERSION" > "$OUT/RELEASE_NOTES.md"
+
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Users pin a version; there is deliberately no "latest" tag.
+      - id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          build-args: VERSION=${{ steps.version.outputs.version }}
+          tags: ${{ steps.version.outputs.image }}:${{ steps.version.outputs.version }}
+          push: true
+          provenance: mode=max
+          sbom: true
+
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+      - name: Sign the image and check the signature
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign sign --yes "$IMAGE@$DIGEST"
+          cosign verify "$IMAGE@$DIGEST" \
+            --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release-server.yml@$GITHUB_REF" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+
+      # Pulled back from the registry, so the files are the signed image, bit for bit.
+      - name: Image files for docker load
+        run: |
+          for arch in amd64 arm64; do
+            docker pull --platform "linux/$arch" "$IMAGE:$VERSION"
+            docker save "$IMAGE:$VERSION" | gzip -9 > "$OUT/altiward-api-$VERSION-linux-$arch.tar.gz"
+            docker rmi "$IMAGE:$VERSION"
+          done
+
+      - name: Deployment bundle
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: scripts/server-bundle.sh "$VERSION" "$IMAGE@$DIGEST" "$OUT" "$OUT/RELEASE_NOTES.md"
+
+      - name: Sign the checksums and check the signature
+        working-directory: ${{ steps.version.outputs.out }}
+        run: |
+          sha256sum -- *.tar.gz RELEASE_NOTES.md > SHA256SUMS
+          cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
+          cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+            --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release-server.yml@$GITHUB_REF" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: altiward-server-${{ steps.version.outputs.version }}
+          path: ${{ steps.version.outputs.out }}/*
+          retention-days: 90
+
+  # Publishes the signed files. The only job that can write to the repository.
+  publish:
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: altiward-server-${{ needs.image.outputs.version }}
+          path: files
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # The bundle, one image tarball per platform, RELEASE_NOTES.md, SHA256SUMS and
+          # its sigstore bundle. A release candidate is a pre-release, never "latest".
+          flags=()
+          if [[ "$TAG" == *-rc.* ]]; then flags+=(--prerelease); fi
+          gh release create "$TAG" files/* \
+            --verify-tag --title "$TAG" --notes-file files/RELEASE_NOTES.md "${flags[@]}"

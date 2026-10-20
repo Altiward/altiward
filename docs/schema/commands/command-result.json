@@ -1,0 +1,8 @@
+{
+  "status": "failed",
+  "error": null,
+  "revoked": ["jdoe"],
+  "failed": [{ "user": "contractor", "error": "still an admin after removal from the admin group (nested group membership?)" }],
+  "skipped": [{ "user": "itadmin", "reason": "permanent_admin" }],
+  "completed_at": "2026-10-16T09:20:31.250Z"
+}

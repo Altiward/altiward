@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://altiward.com/schema/event/v1",
+  "title": "Altiward core event (schema_version 1)",
+  "description": "Every record the Mac agent sends to the Altiward API, plus agent.silent, which only the backend raises. A superset of the SAP Privileges webhook payload; mapped to OCSF on export. Contract fixtures live in ./examples and are decoded by both the Swift agent tests and the Go backend tests.",
+  "type": "object",
+  "required": ["schema_version", "event_id", "type", "timestamp", "device", "delayed", "detail"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": { "$ref": "#/$defs/uuid" },
+    "type": {
+      "enum": [
+        "elevation.granted",
+        "elevation.revoked",
+        "elevation.expired_enforced",
+        "elevation.overdue",
+        "admin.out_of_band",
+        "activity",
+        "persistence.detected",
+        "agent.health",
+        "agent.tamper",
+        "agent.silent"
+      ]
+    },
+    "session_id": {
+      "description": "Elevation session this event belongs to. Required for elevation.* and admin.out_of_band; absent for agent.health, agent.tamper and agent.silent.",
+      "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }]
+    },
+    "timestamp": { "type": "string", "format": "date-time", "description": "When the event happened on the device (RFC 3339, UTC); for agent.silent, when the backend raised it." },
+    "device": {
+      "type": "object",
+      "required": ["serial", "hardware_uuid"],
+      "additionalProperties": false,
+      "properties": {
+        "serial": { "type": "string", "minLength": 1 },
+        "hardware_uuid": { "type": "string", "minLength": 1 },
+        "os_version": { "type": "string" },
+        "agent_version": { "type": "string" },
+        "privileges_version": { "type": ["string", "null"] }
+      }
+    },
+    "user": {
+      "type": ["object", "null"],
+      "required": ["local_name"],
+      "additionalProperties": false,
+      "properties": {
+        "local_name": { "type": "string", "minLength": 1 },
+        "upn": { "type": ["string", "null"] }
+      }
+    },
+    "elevation": {
+      "type": ["object", "null"],
+      "required": ["source"],
+      "additionalProperties": false,
+      "properties": {
+        "reason": { "type": ["string", "null"] },
+        "expires": { "type": ["string", "null"], "format": "date-time" },
+        "source": { "enum": ["privileges", "out_of_band"] }
+      }
+    },
+    "delayed": { "type": "boolean", "description": "True when the agent sent the event well after it happened (queued while offline)." },
+    "detail": { "type": "object", "description": "Type-specific fields. See docs/schema/README.md." }
+  },
+  "$defs": {
+    "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" }
+  }
+}

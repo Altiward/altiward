@@ -1,0 +1,11 @@
+{
+  "description": "Request-signing contract. Both test suites rebuild 'canonical' from the other fields and verify 'signature' with 'public_key_spki'. The private key was discarded.",
+  "device_id": "3f6c2a9e-7b4d-4e1a-9c8f-5d2b1a0e9f47",
+  "method": "POST",
+  "path": "/v1/agent/events",
+  "timestamp": 1792152000,
+  "body": "{\"events\":[]}",
+  "canonical": "ALTIWARD-SIG-V1\nPOST\n/v1/agent/events\n1792152000\n24de1c4a19c43ad41b013f13dcd858c17b0daa7f33a53f19913e5b11366d1c2e",
+  "public_key_spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE0ZtLYuPX1jNGoy9SD0mb7WtG6Bu0rronuDy+J3X9ua5nn3CxT6iUQOCwrbrvNgh828bzaNkyVvCHcGFl+r+leA==",
+  "signature": "MEUCIQD400NYU4zeBxJ8z9ySohPe+Oj44Pl+JK/hSkV4ZpNRQAIgR37tvE9TQsX9b9nPlWWVNZTyDjM6CmsWpWNr9GbePac="
+}

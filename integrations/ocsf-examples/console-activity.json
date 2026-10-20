@@ -1,0 +1,163 @@
+[
+  {
+    "activity_id": 1,
+    "activity_name": "Logon",
+    "auth_protocol": "OpenID",
+    "auth_protocol_id": 4,
+    "category_name": "Identity \u0026 Access Management",
+    "category_uid": 3,
+    "class_name": "Authentication",
+    "class_uid": 3002,
+    "message": "jane.doe@example.com signed in to the Altiward console as admin",
+    "metadata": {
+      "logged_time": 1792144920000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward"
+      },
+      "tenant_uid": "acme",
+      "uid": "6f1d2c3b-4a59-4e8f-9d0c-1b2a3c4d5e6f",
+      "version": "1.9.0"
+    },
+    "service": {
+      "name": "Altiward console"
+    },
+    "severity": "Informational",
+    "severity_id": 1,
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792144920000,
+    "type_name": "Authentication: Logon",
+    "type_uid": 300201,
+    "unmapped": {
+      "altiward": {
+        "action": "sign_in",
+        "detail": {
+          "role": "admin"
+        },
+        "event_type": "console.sign_in",
+        "target": "jane.doe@example.com"
+      }
+    },
+    "user": {
+      "email_addr": "jane.doe@example.com",
+      "name": "jane.doe@example.com"
+    }
+  },
+  {
+    "activity_id": 1,
+    "activity_name": "Create",
+    "actor": {
+      "user": {
+        "name": "jane.doe@example.com"
+      }
+    },
+    "api": {
+      "operation": "revoke_device",
+      "service": {
+        "name": "Altiward console"
+      }
+    },
+    "category_name": "Application Activity",
+    "category_uid": 6,
+    "class_name": "API Activity",
+    "class_uid": 6003,
+    "message": "jane.doe@example.com revoked admin rights for jdoe on C02XK0AAJGH5 from the Altiward console",
+    "metadata": {
+      "logged_time": 1792144920000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward"
+      },
+      "tenant_uid": "acme",
+      "uid": "7a2e3d4c-5b6a-4f90-8e1d-2c3b4d5e6f70",
+      "version": "1.9.0"
+    },
+    "resources": [
+      {
+        "name": "C02XK0AAJGH5",
+        "type": "Mac",
+        "uid": "C02XK0AAJGH5"
+      }
+    ],
+    "severity": "Informational",
+    "severity_id": 1,
+    "src_endpoint": {
+      "name": "Altiward console"
+    },
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792144920000,
+    "type_name": "API Activity: Create",
+    "type_uid": 600301,
+    "unmapped": {
+      "altiward": {
+        "action": "revoke_device",
+        "detail": {
+          "command_id": "3b4c5d6e-7f80-4a91-b2c3-d4e5f6a7b8c9",
+          "serial": "C02XK0AAJGH5",
+          "user": "jdoe"
+        },
+        "event_type": "console.revoke_device",
+        "target": "C02XK0AAJGH5"
+      }
+    }
+  },
+  {
+    "activity_id": 3,
+    "activity_name": "Update",
+    "actor": {
+      "user": {
+        "name": "break-glass:3f2a9c1b"
+      }
+    },
+    "api": {
+      "operation": "approve_enrollment",
+      "service": {
+        "name": "Altiward console"
+      }
+    },
+    "category_name": "Application Activity",
+    "category_uid": 6,
+    "class_name": "API Activity",
+    "class_uid": 6003,
+    "message": "break-glass:3f2a9c1b approved the enrollment of C02XK0AAJGH5",
+    "metadata": {
+      "logged_time": 1792144920000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward"
+      },
+      "tenant_uid": "acme",
+      "uid": "8b3f4e5d-6c7b-4a01-9f2e-3d4c5e6f7081",
+      "version": "1.9.0"
+    },
+    "resources": [
+      {
+        "name": "C02XK0AAJGH5",
+        "type": "Enrollment",
+        "uid": "C02XK0AAJGH5"
+      }
+    ],
+    "severity": "Informational",
+    "severity_id": 1,
+    "src_endpoint": {
+      "name": "Altiward console"
+    },
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792144920000,
+    "type_name": "API Activity: Update",
+    "type_uid": 600303,
+    "unmapped": {
+      "altiward": {
+        "action": "approve_enrollment",
+        "detail": {
+          "serial": "C02XK0AAJGH5"
+        },
+        "event_type": "console.approve_enrollment",
+        "target": "C02XK0AAJGH5"
+      }
+    }
+  }
+]

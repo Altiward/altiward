@@ -1,0 +1,291 @@
+import { useEffect, useState } from "react";
+import type { ConsoleSignIn, ExportSink, Settings } from "../api";
+import { Banner, RoleNote, Segmented, Toolbar } from "../components/Chrome";
+import { StateBadge } from "../components/StateBadge";
+import { UpdatesGroup } from "../components/Updates";
+import { useApi, useCan } from "../context";
+import { dateTime, sinkName } from "../format";
+import { appearances, setLook, themes, useLook } from "../theme";
+import { useLoad } from "../useLoad";
+
+/** The server's default when silent_after_hours is 0 (store.DefaultSilentAfterHours). */
+const DEFAULT_SILENT_HOURS = 72;
+const MAX_SILENT_HOURS = 720;
+
+export function SettingsView() {
+  const api = useApi();
+  const { data, error, reload } = useLoad(() => api.settings(), []);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [hours, setHours] = useState("");
+
+  useEffect(() => {
+    if (data) setHours(String(data.silent_after_hours || DEFAULT_SILENT_HOURS));
+  }, [data]);
+
+  // PUT replaces every setting, so each change sends the rest as loaded.
+  async function save(change: Partial<Settings>) {
+    if (!data) return;
+    setSaving(true);
+    try {
+      await api.putSettings({ ...data, ...change });
+      setSaveError(null);
+      await reload();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const canChange = useCan("admin");
+  const parsed = Number(hours);
+  const hoursValid = /^\d+$/.test(hours) && parsed >= 1 && parsed <= MAX_SILENT_HOURS;
+  const hoursChanged = !!data && hoursValid && parsed !== (data.silent_after_hours || DEFAULT_SILENT_HOURS);
+
+  return (
+    <>
+      <Toolbar title="Settings" />
+      <div className="pane">
+        {(error || saveError) && <Banner>{saveError ?? error}</Banner>}
+        <div className="form">
+          {!canChange && <RoleNote>Changing settings needs the admin role.</RoleNote>}
+          <div className="group" style={{ marginTop: 0 }}>
+            <h3>Enrollment</h3>
+            <div className="box">
+              <label className="row">
+                <span>
+                  <span>Approve Macs that enroll again</span>
+                  <p className="hint">
+                    When a Mac that already enrolled shows up with a new key, for example after a reinstall, its
+                    reports wait until you approve it in Enrollments. Off: the new key replaces the old one at once.
+                  </p>
+                </span>
+                <input type="checkbox" role="switch" disabled={!data || saving || !canChange}
+                  checked={data?.reenrollment_requires_approval ?? false}
+                  onChange={(e) => save({ reenrollment_requires_approval: e.target.checked })} />
+              </label>
+            </div>
+          </div>
+          <div className="group">
+            <h3>Alerts</h3>
+            <div className="box">
+              <label className="row">
+                <span>
+                  <span>Alert when a Mac stops checking in</span>
+                  <p className="hint">
+                    Off: no new alerts, for example if your SIEM already watches for quiet Macs. A Mac already
+                    reported still sends a resolved alert when it checks in again.
+                  </p>
+                </span>
+                <input type="checkbox" role="switch" disabled={!data || saving || !canChange}
+                  checked={!(data?.silent_alerts_off ?? false)}
+                  onChange={(e) => save({ silent_alerts_off: !e.target.checked })} />
+              </label>
+              <form className="row" onSubmit={(e) => { e.preventDefault(); if (hoursChanged) save({ silent_after_hours: parsed }); }}>
+                <label htmlFor="silent-hours">
+                  <span>Raise it after</span>
+                  <p className="hint">
+                    Hours without a check-in before Altiward raises an alert and sends it to your SIEM. Laptops that are
+                    closed stop checking in too, so the default of {DEFAULT_SILENT_HOURS} hours rides out a weekend.
+                    Macs whose enrollments you revoked never alert.
+                  </p>
+                </label>
+                <span className="inline-field">
+                  <input id="silent-hours" type="number" inputMode="numeric" min={1} max={MAX_SILENT_HOURS}
+                    disabled={!data || saving || !canChange || data.silent_alerts_off} value={hours} aria-invalid={!hoursValid}
+                    onChange={(e) => setHours(e.target.value)} />
+                  <span className="secondary">hours</span>
+                  <button type="submit" className="button" disabled={!hoursChanged || saving || !canChange || data?.silent_alerts_off}>Save</button>
+                </span>
+              </form>
+              {!hoursValid && <p className="hint" role="alert">Enter a whole number of hours from 1 to {MAX_SILENT_HOURS}.</p>}
+            </div>
+          </div>
+          <SiemExport />
+          {canChange && <ConsoleSignIns />}
+          {canChange && <Updates />}
+          <AppearanceGroup />
+          <p className="hint">
+            Altiward includes open-source software. <a href="/third-party-notices.txt">Third-party notices</a>
+          </p>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** The console's theme and light or dark, for this browser only, so any role can change it. */
+function AppearanceGroup() {
+  const look = useLook();
+  return (
+    <div className="group" role="group" aria-labelledby="appearance-title">
+      <h3 id="appearance-title">Appearance</h3>
+      <div className="box">
+        <div className="row">
+          <span>
+            <span>Theme</span>
+            <p className="hint">Status colours mean the same in every theme.</p>
+          </span>
+          <Segmented label="Theme" options={themes} value={look.theme} onChange={(theme) => setLook({ theme })} />
+        </div>
+        <div className="row">
+          <span>
+            <span>Light or dark</span>
+            <p className="hint">System follows your Mac.</p>
+          </span>
+          <Segmented label="Light or dark" options={appearances} value={look.appearance}
+            onChange={(appearance) => setLook({ appearance })} />
+        </div>
+      </div>
+      <p className="hint">Saved in this browser, for you only.</p>
+    </div>
+  );
+}
+
+/** Each SIEM's queue, with a test event and a retry for after a fix. The SIEMs themselves
+ *  are set in the server's .env, so nothing here changes their settings. */
+function SiemExport() {
+  const api = useApi();
+  const canAct = useCan("admin");
+  const { data, error, reload } = useLoad(() => api.exports(), []);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  async function act(action: () => Promise<string>) {
+    setBusy(true);
+    try {
+      setResult(await action());
+      setActionError(null);
+      await reload();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const sendTest = () => act(async () => {
+    const r = await api.testExport();
+    return `Test event queued for ${r.queued_for.map(sinkName).join(" and ")}. It shows up there as console.test_export, usually within a few minutes.`;
+  });
+  const retry = (sink: string) => act(async () => {
+    const r = await api.retryExports(sink);
+    return `Retrying ${r.retried} waiting for ${sinkName(sink)} now.`;
+  });
+
+  return (
+    <div className="group" role="group" aria-labelledby="siem-title">
+      <h3 id="siem-title">SIEM export</h3>
+      {(error || actionError) && <Banner>{actionError ?? error}</Banner>}
+      {data && data.length === 0 && (
+        <p className="hint">
+          No SIEM is connected. Set one up in the server’s .env: see “Connect your SIEM” in the install guide.
+        </p>
+      )}
+      {data && data.length > 0 && (
+        <div className="box">
+          {data.map((s) => <SinkRow key={s.sink} sink={s} canAct={canAct} busy={busy}
+            onRetry={() => retry(s.sink)} />)}
+          <div className="row">
+            <span>
+              <span>Send a test event</span>
+              <p className="hint">Sends a console action to every SIEM above, through the same queue as real events.</p>
+            </span>
+            <button type="button" className="button" disabled={busy || !canAct} onClick={sendTest}>Send test event</button>
+          </div>
+        </div>
+      )}
+      {result && <p className="hint" role="status">{result}</p>}
+    </div>
+  );
+}
+
+function SinkRow({ sink, canAct, busy, onRetry }: {
+  sink: ExportSink; canAct: boolean; busy: boolean; onRetry: () => void;
+}) {
+  const failing = sink.failing > 0;
+  const since = sink.oldest_queued_at ? ` The oldest has waited since ${dateTime(sink.oldest_queued_at)}.` : "";
+  const status = failing
+    ? `${sink.pending} waiting, ${sink.failing} of them failed.${since}`
+    : sink.pending > 0 ? `${sink.pending} waiting to be sent.` : "Nothing waiting.";
+  const delivered = sink.last_delivered_at ? `Last delivered ${dateTime(sink.last_delivered_at)}.` : "Nothing delivered yet.";
+  return (
+    <div className="row" role="group" aria-label={sinkName(sink.sink)}>
+      <span>
+        <span>{sinkName(sink.sink)}</span>
+        <p className="hint">{status} {delivered}</p>
+        {failing && sink.last_error && <p className="hint"><code>{sink.last_error}</code></p>}
+      </span>
+      <span className="inline-field">
+        {failing
+          ? <StateBadge state="not-granted" label="Failing" />
+          : sink.pending > 0 ? <StateBadge state="claimed" label="Sending" /> : <StateBadge state="verified" label="Up to date" />}
+        {failing && <button type="button" className="button" disabled={busy || !canAct} onClick={onRetry}>Retry now</button>}
+      </span>
+    </div>
+  );
+}
+
+/** Whether a newer server or agent is out, against the agents in the fleet. Admins only. */
+function Updates() {
+  const api = useApi();
+  const { data } = useLoad(() => api.devices(), []);
+  return <UpdatesGroup fleetAgents={data ? data.map((d) => d.agent_version) : null} />;
+}
+
+/** Who is signed in to the console, for an admin to end a sign-in early. Admins only. */
+function ConsoleSignIns() {
+  const api = useApi();
+  const { data, error, reload } = useLoad(() => api.consoleSessions(), []);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  async function end(s: ConsoleSignIn) {
+    setBusy(true);
+    try {
+      await api.endConsoleSession(s.id);
+      setResult(`${s.name} is signed out. They can sign in again unless you remove them at your identity provider.`);
+      setActionError(null);
+      await reload();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="group" role="group" aria-labelledby="signins-title">
+      <h3 id="signins-title">Signed in to the console</h3>
+      {(error || actionError) && <Banner>{actionError ?? error}</Banner>}
+      {data && data.length === 0 && <p className="hint">Nobody is signed in through single sign-on.</p>}
+      {data && data.length > 0 && (
+        <div className="box">
+          {data.map((s) => {
+            const name = s.current ? `${s.name} (you)` : s.name;
+            return (
+              <div key={s.id} className="row" role="group" aria-label={name}>
+                <span>
+                  <span>{name}</span>
+                  <p className="hint">
+                    {s.actor} · {s.role} · signed in {dateTime(s.created_at)}, ends by {dateTime(s.ends_at)}
+                  </p>
+                </span>
+                {!s.current && (
+                  <button type="button" className="button" disabled={busy} onClick={() => end(s)}>End sign-in</button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <p className="hint">
+        After a role change at your identity provider, end the person’s sign-in so the new role applies now.
+        Break-glass tokens don’t sign in, so they aren’t listed.
+      </p>
+      {result && <p className="hint" role="status">{result}</p>}
+    </div>
+  );
+}

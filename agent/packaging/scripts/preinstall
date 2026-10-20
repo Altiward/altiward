@@ -1,0 +1,12 @@
+#!/bin/bash
+# Stops a running agent before a reinstall or upgrade replaces its bundle. Installer passes
+# the target volume as $3; launchd is only touched when installing onto the running system.
+# Every step tolerates a Mac with nothing installed yet.
+set -euo pipefail
+LABEL=com.altiward.agent
+VOLUME="${3:-/}"
+VOLUME="${VOLUME%/}"
+if [ -z "$VOLUME" ] && launchctl print "system/$LABEL" >/dev/null 2>&1; then
+  launchctl bootout "system/$LABEL" || true
+fi
+exit 0

@@ -1,0 +1,105 @@
+# Altiward server for one organisation: the API and console, Postgres, and Caddy for TLS.
+# See docs/install.md. Copy env.example to .env, fill it in, then: docker compose up -d
+#
+# Caddy serves two hostnames:
+#   ALTIWARD_AGENT_HOST    public; only the agent endpoints (/v1/agent/*) reach Altiward,
+#                          so Macs can report from anywhere
+#   ALTIWARD_CONSOLE_HOST  the console and its API, only from ALTIWARD_CONSOLE_ALLOW
+name: altiward-server
+
+services:
+  altiward:
+    image: ${ALTIWARD_IMAGE:-ghcr.io/altiward/altiward-api}:${ALTIWARD_VERSION:?set ALTIWARD_VERSION in .env}
+    # Releases arrive as image files loaded with docker load (docs/install.md), so use the
+    # local image and only pull when it's missing.
+    pull_policy: missing
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ALTIWARD_DATABASE_URL: postgres://altiward:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/altiward?sslmode=disable
+      ALTIWARD_AGENT_TOKENS: ${ALTIWARD_AGENT_TOKENS:?set ALTIWARD_AGENT_TOKENS in .env}
+      ALTIWARD_CONSOLE_TOKENS: ${ALTIWARD_CONSOLE_TOKENS:?set ALTIWARD_CONSOLE_TOKENS in .env}
+      # Every other setting comes from .env, and is off while it's empty there: don't edit
+      # this file, so an upgrade can replace it (docs/install.md, "Releases and updates").
+      # Days to keep console activity (at least 365). Empty keeps it forever.
+      ALTIWARD_AUDIT_RETENTION_DAYS: ${ALTIWARD_AUDIT_RETENTION_DAYS:-}
+      # false: the console stops asking GitHub for newer releases. Empty keeps it on.
+      ALTIWARD_UPDATE_CHECK: ${ALTIWARD_UPDATE_CHECK:-}
+      # Single sign-on (docs/install.md, "Sign in with your identity provider").
+      ALTIWARD_CONSOLE_URL: https://${ALTIWARD_CONSOLE_HOST}
+      ALTIWARD_OIDC_ISSUER: ${ALTIWARD_OIDC_ISSUER:-}
+      ALTIWARD_OIDC_CLIENT_ID: ${ALTIWARD_OIDC_CLIENT_ID:-}
+      ALTIWARD_OIDC_CLIENT_SECRET: ${ALTIWARD_OIDC_CLIENT_SECRET:-}
+      ALTIWARD_OIDC_ADMIN_GROUPS: ${ALTIWARD_OIDC_ADMIN_GROUPS:-}
+      ALTIWARD_OIDC_OPERATOR_GROUPS: ${ALTIWARD_OIDC_OPERATOR_GROUPS:-}
+      ALTIWARD_OIDC_VIEWER_GROUPS: ${ALTIWARD_OIDC_VIEWER_GROUPS:-}
+      ALTIWARD_OIDC_SCOPES: ${ALTIWARD_OIDC_SCOPES:-}
+      ALTIWARD_OIDC_GROUPS_CLAIM: ${ALTIWARD_OIDC_GROUPS_CLAIM:-}
+      ALTIWARD_OIDC_TENANT: ${ALTIWARD_OIDC_TENANT:-}
+      # SIEM export (docs/install.md, "Connect your SIEM").
+      ALTIWARD_SPLUNK_HEC_URL: ${ALTIWARD_SPLUNK_HEC_URL:-}
+      ALTIWARD_SPLUNK_HEC_TOKEN: ${ALTIWARD_SPLUNK_HEC_TOKEN:-}
+      ALTIWARD_SPLUNK_INDEX: ${ALTIWARD_SPLUNK_INDEX:-}
+      ALTIWARD_SENTINEL_ENDPOINT: ${ALTIWARD_SENTINEL_ENDPOINT:-}
+      ALTIWARD_SENTINEL_DCR_ID: ${ALTIWARD_SENTINEL_DCR_ID:-}
+      ALTIWARD_SENTINEL_STREAM: ${ALTIWARD_SENTINEL_STREAM:-}
+      ALTIWARD_SENTINEL_AUTH: ${ALTIWARD_SENTINEL_AUTH:-}
+      ALTIWARD_SENTINEL_TENANT_ID: ${ALTIWARD_SENTINEL_TENANT_ID:-}
+      ALTIWARD_SENTINEL_CLIENT_ID: ${ALTIWARD_SENTINEL_CLIENT_ID:-}
+      ALTIWARD_SENTINEL_CLIENT_SECRET: ${ALTIWARD_SENTINEL_CLIENT_SECRET:-}
+      ALTIWARD_SYSLOG_ADDR: ${ALTIWARD_SYSLOG_ADDR:-}
+      ALTIWARD_SYSLOG_TLS: ${ALTIWARD_SYSLOG_TLS:-}
+      ALTIWARD_SYSLOG_CA_FILE: ${ALTIWARD_SYSLOG_CA_FILE:-}
+      ALTIWARD_SYSLOG_FORMAT: ${ALTIWARD_SYSLOG_FORMAT:-}
+      ALTIWARD_SYSLOG_FRAMING: ${ALTIWARD_SYSLOG_FRAMING:-}
+      # An internal CA to trust for the SIEM and the identity provider.
+      ALTIWARD_TRUSTED_CAS_FILE: ${ALTIWARD_TRUSTED_CAS_FILE:-}
+    volumes:
+      # CA files, such as your SIEM's: ALTIWARD_TRUSTED_CAS_FILE=/etc/altiward/certs/<file>
+      - ./certs:/etc/altiward/certs:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/altiward-api", "health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+    # No published ports: only Caddy reaches it.
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: altiward
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: altiward
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U altiward"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    depends_on:
+      altiward:
+        condition: service_healthy
+    ports:
+      - "80:80"   # certificate challenges and the redirect to HTTPS
+      - "443:443"
+    environment:
+      ALTIWARD_AGENT_HOST: ${ALTIWARD_AGENT_HOST:?set ALTIWARD_AGENT_HOST in .env}
+      ALTIWARD_CONSOLE_HOST: ${ALTIWARD_CONSOLE_HOST:?set ALTIWARD_CONSOLE_HOST in .env}
+      ALTIWARD_CONSOLE_ALLOW: ${ALTIWARD_CONSOLE_ALLOW:?set ALTIWARD_CONSOLE_ALLOW in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Your own TLS certificates, if you don't use Let's Encrypt: /certs/<file> in Caddyfile
+      - ./certs:/certs:ro
+      - caddy-data:/data
+
+volumes:
+  pgdata:
+  caddy-data:

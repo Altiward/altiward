@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Keys to ADD to your existing SAP Privileges profile (domain corp.sap.privileges).
+  Upload as custom settings (Jamf Pro: Application & Custom Settings; Intune: preference file).
+  Altiward never ships or modifies Privileges itself; it only asks for these keys.
+
+  PostChangeExecutableChecksum must be the SHA-256 of the signed hook binary
+  for the agent version being deployed:
+    shasum -a 256 "/Library/Application Support/Altiward/Altiward.app/Contents/MacOS/Altiward"
+  Privileges refuses to run the hook if it does not match, which pins the binary.
+  The hook is installed as "Altiward", the name Privileges shows in its settings.
+
+  EnableSystemExtension turns on Privileges' own tamper protection (Privileges 2.5.0 or
+  later, macOS 13 or later). Altiward raises a High alert while it is off. The extension
+  also needs, from your MDM: a system extension policy allowing SAP's team 7R5ZEU67FQ
+  (Endpoint Security extension) and Full Disk Access for corp.sap.privileges.extension.
+  SAP's Example_ApprovePrivileges.mobileconfig has both.
+-->
+<plist version="1.0">
+<dict>
+    <key>PostChangeExecutablePath</key>
+    <string>/Library/Application Support/Altiward/Altiward.app/Contents/MacOS/Altiward</string>
+    <key>PostChangeExecutableChecksum</key>
+    <string>REPLACE_WITH_SHA256_OF_SIGNED_HOOK</string>
+    <key>PassReasonToExecutable</key>
+    <true/>
+    <key>EnableSystemExtension</key>
+    <true/>
+    <!-- Leave PostChangeActionOnGrantOnly unset or false: Altiward needs revokes too. -->
+    <!-- Suggested, if your Privileges profile doesn't already set them: Privileges keeps a
+         reason only when it requires one, so without these Altiward records no reason.
+    <key>ReasonRequired</key>
+    <true/>
+    <key>ReasonMinLength</key>
+    <integer>10</integer>
+    -->
+</dict>
+</plist>
