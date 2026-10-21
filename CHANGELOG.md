@@ -9,6 +9,29 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Server 0.1.1 - unreleased
+
+### Upgrade order
+
+None.
+
+### Breaking changes
+
+None.
+
+### Security
+
+- The console moves to React Router 7.18.4, which fixes an open redirect through a
+  backslash in links (GHSA-wrjc-x8rr-h8h6) and a constructor injection in server-side
+  rendering, which the console doesn't use (GHSA-337j-9hxr-rhxg).
+- The server is built with Go 1.27.3. Go 1.25, which built 0.1.0, no longer gets security
+  fixes.
+
+### Changes
+
+- The console runs on React 19 and React Router 7, and builds with Vite 8 and
+  TypeScript 7. It looks and works as before.
+
 ## Server 0.1.0 - 2026-10-21
 
 ### Upgrade order

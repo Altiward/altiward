@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 import { Banner, Empty, SearchField, Segmented, Toolbar } from "../components/Chrome";
 import {
   flagsColumn, macColumn, startedColumn, stateColumn, usedColumn, userColumn,
