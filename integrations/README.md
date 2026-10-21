@@ -25,5 +25,5 @@ export as OCSF API Activity (`class_uid` 6003), with event type `console.<action
 `ocsf-examples/`: the server's OCSF output for sample events (and altiward-siem's
 fixtures), kept current by
 `TestGoldenExamples` (`go test ./backend/internal/ocsf -run Golden -update` rewrites it).
-Planned MDM and identity-provider integrations are tracked in the
-[backlog](../docs/backlog.md#integrations).
+Planned MDM and identity-provider integrations are on the
+[roadmap](https://github.com/orgs/Altiward/projects/1).

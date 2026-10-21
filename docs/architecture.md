@@ -75,5 +75,4 @@ Organisation profile and website copies belong to their own repositories.
 Use the [install guide](install.md) for operation, [data handling](data-handling.md) for
 collected data and destinations, [schema documentation](schema/README.md) for native
 contracts, and [releasing](releasing.md) for distribution. Each component README covers
-its own build and implementation details. Future integrations belong in the
-[backlog](backlog.md) until there is source to document.
+its own build and implementation details.
