@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 import type { Command, Device } from "../api";
 import { Banner, Details, Empty, Explain, RoleNote, SearchField, Toolbar } from "../components/Chrome";
 import { ClaimedGlyph, CloseIcon, NotGrantedGlyph, VerifiedGlyph } from "../components/Icons";

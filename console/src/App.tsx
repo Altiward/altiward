@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { BrowserRouter, NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, NavLink, Navigate, Route, Routes } from "react-router";
 import { type Me, createApi, probeSignIn } from "./api";
 import { ActivityIcon, CommandsIcon, ElevatedGlyph, EnrollIcon, FleetIcon, NotGrantedGlyph, OverviewIcon, SessionsIcon, SettingsIcon } from "./components/Icons";
 import { ApiContext, MeContext, useApi, useMe } from "./context";

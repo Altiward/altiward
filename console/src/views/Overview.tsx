@@ -1,5 +1,5 @@
 import { type ReactNode, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import type { Overview, OverviewDays } from "../api";
 import { Banner, Explain, Segmented, Toolbar } from "../components/Chrome";
 import { EndedGlyph, NotGrantedGlyph, VerifiedGlyph } from "../components/Icons";

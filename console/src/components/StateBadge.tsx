@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { stateTips } from "../explanations";
 import type { State } from "../format";
 import { Explain } from "./Chrome";
