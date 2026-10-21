@@ -42,6 +42,10 @@ jobs:
           cd integrations && go test -race -count=1 ./...
       - name: build
         run: go build -o bin/altiward-api ./backend/cmd/altiward-api
+      - name: govulncheck
+        run: |
+          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+          cd integrations && go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   agent:
     name: Mac agent (Swift)
