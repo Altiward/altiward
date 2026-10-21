@@ -14,7 +14,7 @@ explain the design. The [layout guide](README.md#repository-layout) and
 
 ## Build and test
 
-You need macOS with Xcode or the Command Line Tools, Go 1.25 or newer, Node 22 and Docker.
+You need macOS with Xcode or the Command Line Tools, Go 1.27 or newer, Node 22 and Docker.
 
 ```sh
 make console-install   # once: console dependencies

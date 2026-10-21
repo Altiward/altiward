@@ -255,7 +255,7 @@ Contributions are welcome under the Developer Certificate of Origin: sign off ea
 with `git commit -s`. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 To build and test from source you need macOS with Xcode or the Command Line Tools,
-Go 1.25+, Node 22 and Docker:
+Go 1.27+, Node 22 and Docker:
 
 ```sh
 make console-install   # once: console dependencies

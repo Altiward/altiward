@@ -560,7 +560,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### golang.org/x/oauth2 v0.36.0
+### golang.org/x/oauth2 v0.37.0
 
 ```
 Copyright 2009 The Go Authors.
