@@ -4,22 +4,26 @@
 #     -e ALTIWARD_CONSOLE_TOKENS=... altiward-api
 # Put TLS in front of it; the API speaks plain HTTP.
 
-FROM node:22-alpine AS console
+# The console and the binary build on the runner's own platform and the Go build
+# cross-compiles, so a multi-platform build runs nothing under emulation.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS console
 WORKDIR /src/console
 COPY console/package.json console/package-lock.json ./
 RUN npm ci
 COPY console/ ./
 RUN npm run build
 
-FROM golang:1.25-alpine AS api
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS api
 ARG VERSION=dev
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 COPY integrations/go.mod integrations/go.mod
 RUN go mod download
 COPY backend/ backend/
 COPY integrations/ integrations/
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/altiward-api ./backend/cmd/altiward-api
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/altiward-api ./backend/cmd/altiward-api
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=api /out/altiward-api /usr/local/bin/altiward-api
