@@ -85,11 +85,6 @@ enroll again** is on ([settings](docs/install.md#6-settings-worth-reviewing)). T
 
 The agent needs macOS 13 or later.
 
-Not yet tried outside tests and fakes:
-
-- **Single sign-on with Entra ID app roles, or with Okta,** is tested only against a fake
-  identity provider. Sign-in with Entra ID groups has run against a real tenant.
-
 Known limits:
 
 - Altiward needs SAP Privileges to grant admin rights; it has no way to grant them itself.
