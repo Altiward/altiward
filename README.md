@@ -83,7 +83,7 @@ enroll again** is on ([settings](docs/install.md#6-settings-worth-reviewing)). T
 
 ### Status
 
-Altiward is young: 0.1.0 is the first public release. The agent needs macOS 13 or later.
+The agent needs macOS 13 or later.
 
 Not yet tried outside tests and fakes:
 
