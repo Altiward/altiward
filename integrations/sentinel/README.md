@@ -119,7 +119,7 @@ also run `docker compose exec altiward /usr/local/bin/altiward-api diagnose` and
 
 Nothing is lost while it fails: events wait in Postgres and are retried with a backoff of
 30 seconds, doubling up to an hour. After a fix, choose *Retry now* in Settings to send
-the backlog straight away.
+what's queued straight away.
 
 ### Rotate the secret
 

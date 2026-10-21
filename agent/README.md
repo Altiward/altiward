@@ -170,4 +170,4 @@ It keeps undelivered events unless you pass `--purge`.
 
 Releases: pushing an `agent-v<version>` tag runs
 [`release-agent.yml`](../.github/workflows/release-agent.yml). It signs with Developer ID, notarizes,
-staples and verifies, using repository secrets only. It has not run yet.
+staples and verifies, using repository secrets only.

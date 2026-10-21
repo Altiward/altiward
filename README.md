@@ -85,13 +85,6 @@ enroll again** is on ([settings](docs/install.md#6-settings-worth-reviewing)). T
 
 The agent needs macOS 13 or later.
 
-Not yet tried outside tests and fakes:
-
-- **Single sign-on with Entra ID app roles, or with Okta,** is tested only against a fake
-  identity provider. Sign-in with Entra ID groups has run against a real tenant.
-- **Removing a user from `admin`** (expiry in `enforce` mode, and revoke) is unit tested
-  against a fake `admin` group and still needs a run on a real Mac.
-
 Known limits:
 
 - Altiward needs SAP Privileges to grant admin rights; it has no way to grant them itself.
@@ -105,8 +98,6 @@ Known limits:
   integrations beyond single sign-on. Settings come from the `com.altiward.agent` profile.
 - Altiward doesn't have Apple's Endpoint Security entitlement, so it shows what changed
   during an elevation rather than every process that ran; your EDR covers that.
-
-The [backlog](docs/backlog.md) has the detail and what each item waits on.
 
 ## Quick start
 
@@ -193,7 +184,7 @@ forwards SAP Privileges events without the Altiward agent.
 - [Agent](agent/README.md), [server](backend/README.md), [console](console/README.md)
   and [deployment files](deploy/compose/README.md)
 - [SIEM integrations](integrations/README.md)
-- [Releasing](docs/releasing.md) and the [backlog](docs/backlog.md)
+- [Releasing](docs/releasing.md) and the [roadmap](https://github.com/orgs/Altiward/projects/1)
 
 ### Repository layout
 
