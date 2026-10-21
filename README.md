@@ -89,8 +89,9 @@ Not yet tried outside tests and fakes:
 
 - **Single sign-on with Entra ID app roles, or with Okta,** is tested only against a fake
   identity provider. Sign-in with Entra ID groups has run against a real tenant.
-- **Removing a user from `admin`** (expiry in `enforce` mode, and revoke) is unit tested
-  against a fake `admin` group and still needs a run on a real Mac.
+- **Expiry in `enforce` mode** removes a user from `admin` in unit tests against a fake
+  `admin` group, and still needs a run on a real Mac. Revoke from the console has run on a
+  real Mac.
 
 Known limits:
 
