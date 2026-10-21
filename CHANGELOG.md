@@ -25,9 +25,6 @@ None.
 
 ### Changes
 
-- Source layout separates local development (`dev/`), deployment and MDM templates
-  (`deploy/`), and shared brand sources (`assets/brand/`). The README maps the
-  directories and contribution paths; release bundle installation paths stay the same.
 - Altiward is open source under Apache 2.0. Releases are public on GitHub, and the
   image is public at `ghcr.io/altiward/altiward-api`, pulled without a login.
 - The API and web console in one image, with Postgres for storage and an example Docker
@@ -89,9 +86,9 @@ None.
 - A revoke reaches the Mac within about a second: the server holds each Mac's request for
   commands until one is queued, for up to 50 seconds. Behind
   your own load balancer, allow at least 60 seconds of idle time on the agent listener.
-- Admin rights found without a grant stop showing as unexplained once the account is made a
-  permanent admin: the session ends as "Now a permanent admin", and the SIEM finding
-  closes as resolved under the same `finding_info.uid`, the session's ID.
+- When an account holding admin rights without a grant is made a permanent admin, its
+  session ends as "Now a permanent admin", and the SIEM finding closes as resolved under
+  the same `finding_info.uid`, the session's ID.
 - Rights that outlive their expiry raise the "Admin rights outlived their expiry" finding
   in your SIEM even when the agent removed them (`ExpiryEnforcement` set to `enforce`), as
   well as the revoke record. They usually mean SAP Privileges' timer was stopped.
@@ -133,7 +130,7 @@ None.
 - Session states, flags, sources and the fleet view's integrity checks explain themselves:
   hover over them in a list, or hover or tab to them in a session's or Mac's details.
 
-## Agent 0.1.0 - unreleased
+## Agent 0.1.0 - 2026-10-21
 
 ### Upgrade order
 
@@ -186,9 +183,8 @@ None.
 - A SAP Privileges grant shows the duration the person picked in Privileges, read from
   Privileges' own timer, when no profile fixes it. A managed `ExpirationIntervalMax`
   still caps it, so editing that timer can't put off the overdue alert.
-- An account found holding admin rights nobody granted, then added to `PermanentAdmins`,
-  doesn't stay in Admins now indefinitely: the agent ends that session at the next
-  heartbeat and leaves the rights alone.
+- When an account holding admin rights nobody granted is added to `PermanentAdmins`, the
+  agent ends its session at the next heartbeat and leaves the rights alone.
 - A revoke that macOS takes a moment to reflect in the `admin` group isn't reported as
   failed: the agent checks again for up to 3 seconds before giving up.
 - Console commands arrive within about a second: the agent keeps a request open that the
@@ -196,9 +192,9 @@ None.
   after an error, or with a server that can't hold requests.
 - A profile installed after the package, as MDMs often send them, or changed later,
   applies within about 15 seconds: the agent restarts itself when its settings change.
-- Admin rights nobody granted show in the console within a minute, not at the next
-  5-minute heartbeat. They are raised after 30 seconds without a grant, so a Privileges
-  grant whose report is still on its way isn't flagged.
+- Admin rights nobody granted show in the console within a minute. They are raised after
+  30 seconds without a grant, so a Privileges grant whose report is still on its way isn't
+  flagged.
 - The Installer names the package ("Install Altiward"), shows the Altiward mark under its
   steps in light and dark mode, installs only on the system volume, and refuses macOS
   older than 13.
