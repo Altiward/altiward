@@ -24,6 +24,8 @@ None.
 - The console moves to React Router 7.18.4, which fixes an open redirect through a
   backslash in links (GHSA-wrjc-x8rr-h8h6) and a constructor injection in server-side
   rendering, which the console doesn't use (GHSA-337j-9hxr-rhxg).
+- The server is built with Go 1.27.3. Go 1.25, which built 0.1.0, no longer gets security
+  fixes.
 
 ### Changes
 
