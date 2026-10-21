@@ -1,3 +1,3 @@
 module github.com/Altiward/altiward/integrations
 
-go 1.25.0
+go 1.26.0
