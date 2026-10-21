@@ -73,7 +73,7 @@ and `SHA256SUMS` signed keyless; agent releases carry notes and signed checksums
 migration history, with data in the old format, then upgrades it and reads and writes
 through today's code. `TestOlderAgentsStillReport` posts the frozen events of each
 supported agent release (`docs/schema/compat/`, starting with agent 0.1) and requires
-them all to be accepted. CLAUDE.md has the rules.
+them all to be accepted. AGENTS.md has the rules.
 
 Release notes now come from `CHANGELOG.md` with an "Upgrade order" heading in every
 entry. `GET /v1/about` gives the console the server's version and

@@ -80,7 +80,7 @@ Some things are contracts with people who already run Altiward. Please keep to t
   release workflows: the agent's from repository secrets, the server's keyless with
   cosign.
 - Console endpoints declare a role, and mutations write their audit entry in the same
-  transaction. `CLAUDE.md` has the details for the backend.
+  transaction. `AGENTS.md` has the details for the backend.
 
 ## Console UI
 
