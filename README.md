@@ -99,8 +99,6 @@ Known limits:
 - Altiward doesn't have Apple's Endpoint Security entitlement, so it shows what changed
   during an elevation rather than every process that ran; your EDR covers that.
 
-The [backlog](docs/backlog.md) has the detail and what each item waits on.
-
 ## Quick start
 
 You need a Linux server with Docker Compose, two DNS names (one for Macs, one for the
@@ -186,7 +184,7 @@ forwards SAP Privileges events without the Altiward agent.
 - [Agent](agent/README.md), [server](backend/README.md), [console](console/README.md)
   and [deployment files](deploy/compose/README.md)
 - [SIEM integrations](integrations/README.md)
-- [Releasing](docs/releasing.md) and the [backlog](docs/backlog.md)
+- [Releasing](docs/releasing.md) and the [roadmap](https://github.com/orgs/Altiward/projects/1)
 
 ### Repository layout
 
