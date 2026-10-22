@@ -101,7 +101,18 @@ Known limits:
 
 ## Quick start
 
-You need a Linux server with Docker Compose, two DNS names (one for Macs, one for the
+To look around first, run the console with demo data using only Docker:
+
+```sh
+git clone https://github.com/Altiward/altiward && cd altiward
+docker compose -f dev/compose.demo.yaml up --build
+```
+
+When it says `Demo ready`, open http://localhost:8080 and sign in with
+`dev-console-token-001`. [dev/README.md](dev/README.md) has the details and fixes for
+common errors.
+
+For a real deployment you need a Linux server with Docker Compose, two DNS names (one for Macs, one for the
 console), and an MDM. The [install guide](docs/install.md) covers each step, running on
 your own Postgres or load balancer, backups and troubleshooting.
 

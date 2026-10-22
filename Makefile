@@ -13,7 +13,7 @@ DEV_ENV := ALTIWARD_LISTEN_ADDR=127.0.0.1:8080 \
 	ALTIWARD_AGENT_TOKENS=dev=dev-agent-token-0001 \
 	ALTIWARD_CONSOLE_TOKENS=dev=dev-console-token-001
 
-.PHONY: help test lint agent-build agent-test backend-build backend-test test-db db db-down run-api run-api-console notices notices-check image test-upgrade dev-hook dev-heartbeat package package-verify app-icon console-install console-dev console-test console-build console-seed docs-screenshots brand-sync brand-check
+.PHONY: help test lint agent-build agent-test backend-build backend-test test-db docker-check db db-down demo demo-down run-api run-api-console notices notices-check image test-upgrade dev-hook dev-heartbeat package package-verify app-icon console-install console-dev console-test console-build console-seed docs-screenshots brand-sync brand-check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
@@ -42,11 +42,23 @@ test-db: db ## Run Go tests including the Postgres store suite
 	ALTIWARD_TEST_DATABASE_URL="$(DATABASE_URL)" go test -count=1 ./...
 	cd integrations && go test -count=1 ./...
 
-db: ## Start local Postgres (docker compose)
+# Docker Engine without the Compose v2 plugin fails on `docker compose -f` with
+# "unknown shorthand flag", which doesn't say what's missing.
+docker-check:
+	@command -v docker >/dev/null || { echo "Docker isn't installed: see https://docs.docker.com/get-started/get-docker/" >&2; exit 1; }
+	@docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 isn't installed: install Docker Desktop, or the docker-compose-plugin package (https://docs.docker.com/compose/install/linux/)" >&2; exit 1; }
+
+db: docker-check ## Start local Postgres (docker compose)
 	docker compose -f dev/compose.yaml up -d --wait postgres
 
 db-down: ## Stop local Postgres
 	docker compose -f dev/compose.yaml down
+
+demo: docker-check ## Run the console with demo data on :8080, needing only Docker
+	docker compose -f dev/compose.demo.yaml up --build
+
+demo-down: ## Stop the demo and delete its data
+	docker compose -f dev/compose.demo.yaml down -v
 
 run-api: db ## Run the API on :8080 against local Postgres with dev tokens
 	$(DEV_ENV) go run ./backend/cmd/altiward-api

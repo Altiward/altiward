@@ -28,6 +28,21 @@ async function request(method, path, { bearer, body, mac } = {}) {
   return text ? JSON.parse(text) : {};
 }
 
+/** Waits up to 30 seconds for the API, which may still be starting, then explains. */
+async function waitForAPI() {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      if ((await fetch(server + "/healthz")).ok) return;
+    } catch {}
+    if (attempt === 15) {
+      console.error(`Can't reach the API at ${server}. Start it with \`make run-api\` in another terminal, leave it running, and run this again.`);
+      process.exit(1);
+    }
+    if (attempt === 1) console.log(`Waiting for the API at ${server}...`);
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+}
+
 async function enroll(serial) {
   const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const spki = publicKey.export({ type: "spki", format: "der" }).toString("base64");
@@ -62,6 +77,8 @@ const send = (mac, events) => request("POST", "/v1/agent/events", { mac, body: {
 
 const jane = ["jdoe", "jane.doe@example.com"], anna = ["asmith", "anna.smith@example.com"],
   ben = ["bwong", "ben.wong@example.com"], mia = ["mlee", "mia.lee@example.com"];
+
+await waitForAPI();
 
 // Re-running enrolls the same serials again; without this they would all wait for approval.
 await request("PUT", "/v1/settings", { bearer: CONSOLE, body: { reenrollment_requires_approval: false } });
@@ -104,9 +121,10 @@ await send(e, [grant(e, mia, 1500, 60, "Configuring a VPN client", s5),
 
 // A Mac last heard from four days ago: within a minute the API's monitor raises agent.silent.
 // Check-ins are timed by the server's clock, so the API records this one as now; backdate
-// the stored device in `make db`'s Postgres to match.
+// the stored device in `make db`'s Postgres to match. SEED_BACKDATE=external leaves that to
+// the caller: compose.demo.yaml's seed container has no Docker CLI, so its ready service does it.
 await send(f, [health(f, 4 * 24 * 60, ["itadmin"])]);
-const silent = backdate(f.serial, ago(4 * 24 * 60));
+const silent = process.env.SEED_BACKDATE === "external" || backdate(f.serial, ago(4 * 24 * 60));
 
 /** Sets a device's server-side check-in time, so the silence monitor sees it as quiet. */
 function backdate(serial, at) {

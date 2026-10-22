@@ -1,0 +1,75 @@
+# The console with demo data, needing nothing but Docker. From the repository root:
+#
+#   docker compose -f dev/compose.demo.yaml up --build     # or: make demo
+#
+# It builds the production image from this checkout, runs it against its own Postgres and
+# fills it with seed.mjs. Open http://localhost:8080 when the log says "Demo ready" and
+# sign in with dev-console-token-001. Only the seed's output is shown, so the command
+# returns once the seed is done while Postgres and the API keep running; `make demo-down`
+# stops and deletes them. Development tokens only: never use this file anywhere real.
+name: altiward-demo
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    attach: false
+    environment:
+      POSTGRES_USER: altiward
+      POSTGRES_PASSWORD: altiward
+      POSTGRES_DB: altiward
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U altiward"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build: ..
+    image: altiward-api:demo
+    attach: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ALTIWARD_DATABASE_URL: postgres://altiward:altiward@postgres:5432/altiward?sslmode=disable
+      ALTIWARD_AGENT_TOKENS: dev=dev-agent-token-0001
+      ALTIWARD_CONSOLE_TOKENS: dev=dev-console-token-001
+      # A build from a checkout is version "dev", which every release would look newer than.
+      ALTIWARD_UPDATE_CHECK: "false"
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      interval: 2s
+
+  seed:
+    image: node:22-alpine
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - ./seed.mjs:/seed.mjs:ro
+    environment:
+      SEED_BACKDATE: external
+    command: ["node", "/seed.mjs", "http://api:8080"]
+
+  # Backdates the seed's silent Mac, as seed.mjs does through `docker compose exec` outside
+  # this file, then says where to go.
+  ready:
+    image: postgres:17-alpine
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    environment:
+      PGPASSWORD: altiward
+    command:
+      - sh
+      - -c
+      - |
+        psql -h postgres -U altiward -q -v ON_ERROR_STOP=1 <<'SQL'
+        UPDATE devices SET last_seen_at = now() - interval '4 days',
+          state = jsonb_set(state, '{last_received_at}',
+            to_jsonb(to_char((now() - interval '4 days') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')))
+          WHERE serial = 'C02TN5FFHV2P';
+        SQL
+        echo "Demo ready: open http://localhost:8080 and sign in with dev-console-token-001."
+        echo "It keeps running until you stop it: docker compose -f dev/compose.demo.yaml down -v (or make demo-down)"
