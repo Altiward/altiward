@@ -48,6 +48,7 @@ services:
         condition: service_healthy
     volumes:
       - ./seed.mjs:/seed.mjs:ro
+      - ./agent-client.mjs:/agent-client.mjs:ro # seed.mjs's import
     environment:
       SEED_BACKDATE: external
     command: ["node", "/seed.mjs", "http://api:8080"]
