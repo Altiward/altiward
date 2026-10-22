@@ -29,6 +29,10 @@ Start with README.md; the agent's trust model is in agent/README.md (Design note
   upgrading a Go module or a console production dependency, and commit the result.
 - `make brand-sync` refreshes the console's exported SVGs; `make brand-check` checks them.
 - `make run-api` + `make console-seed` + `make console-dev`: a local stack with demo data.
+- `make docs-screenshots`: regenerates the install guide's console pictures in
+  `docs/images/install/`, light and dark, from the seed (run
+  `npx --prefix console playwright install chromium` once). Rerun it when a console change
+  alters a pictured screen.
 - `make app-icon`: rebuilds `agent/packaging/AppIcon.icns`, the Installer backgrounds in
   `agent/packaging/installer/` and the square avatar (`altiward-avatar.png`, the GitHub
   organisation's picture) from the brand SVGs in `assets/brand/`. It also renders

@@ -33,6 +33,9 @@ chmod 755 "$D/deploy/compose/upgrade.sh"
   cp "$f" ".altiward/shipped/$f"
 done)
 cp docs/install.md docs/data-handling.md "$D/docs/"
+# The install guide's pictures, at the paths it uses.
+mkdir -p "$D/docs/images"
+cp -R docs/images/install "$D/docs/images/"
 for siem in splunk sentinel syslog; do
   mkdir -p "$D/integrations/$siem"
   cp "integrations/$siem/README.md" "$D/integrations/$siem/README.md"

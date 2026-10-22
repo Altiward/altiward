@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 480" width="1000" height="480" role="img" aria-labelledby="title desc">
+  <title id="title">How Altiward fits together</title>
+  <desc id="desc">Your MDM installs the Altiward agent and its profiles on each Mac. On the Mac, SAP Privileges grants admin rights and reports each change to the agent through its hook. The agent sends events over HTTPS on port 443 to the agent hostname, which is reachable from the internet. IT staff open the console hostname over HTTPS on port 443 from allowed networks. Both hostnames reach Caddy on your server, which handles TLS and gets certificates over port 80. Caddy passes requests to Altiward, the API and console, which stores data in Postgres, sends events to your SIEM (Splunk, Microsoft Sentinel or syslog over TLS), and signs people in through Entra ID or Okta.</desc>
+  <style>
+    text { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; fill: #f2f2f2; }
+    .title { font-size: 15px; font-weight: 600; }
+    .name { font-size: 14px; font-weight: 600; }
+    .note { fill: #a9a9a9; }
+    .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; fill: #a9a9a9; }
+    .group { fill: #171717; }
+    .box { fill: #0e0e0e; stroke: #7a7a7a; stroke-width: 1; }
+    .outside { fill: #0e0e0e; stroke: #7a7a7a; stroke-width: 1; stroke-dasharray: 4 3; }
+    .flow { fill: none; stroke: #f2f2f2; stroke-width: 1.5; marker-end: url(#arrow); }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#f2f2f2"/>
+    </marker>
+    <g id="mark">
+      <rect x="0" y="12" width="18" height="4.5" fill="#f4ede4"/>
+      <rect x="6" y="6" width="12" height="4.5" fill="#f4ede4"/>
+      <rect x="12" y="0" width="6" height="4.5" fill="#ff8a1f"/>
+    </g>
+  </defs>
+  <rect width="1000" height="480" fill="#0e0e0e"/>
+
+  <!-- Your MDM -->
+  <rect class="outside" x="24" y="24" width="240" height="60" rx="8"/>
+  <text class="name" x="40" y="50">Your MDM</text>
+  <text class="note" x="40" y="70">Jamf Pro, Intune or another</text>
+  <path class="flow" d="M144 84 V106"/>
+  <text class="mono" x="154" y="100">package, profiles</text>
+
+  <!-- Each Mac -->
+  <rect class="group" x="24" y="108" width="240" height="180" rx="10"/>
+  <text class="title" x="40" y="132">Each Mac</text>
+  <rect class="box" x="40" y="144" width="208" height="52" rx="8"/>
+  <text class="name" x="56" y="166">SAP Privileges</text>
+  <text class="note" x="56" y="185">grants admin rights</text>
+  <path class="flow" d="M144 196 V214"/>
+  <text class="mono" x="154" y="210">hook</text>
+  <rect class="box" x="40" y="216" width="208" height="56" rx="8"/>
+  <use href="#mark" x="56" y="230"/>
+  <text class="name" x="82" y="242">Altiward agent</text>
+  <text class="note" x="56" y="262">records each change</text>
+
+  <!-- IT staff -->
+  <rect class="box" x="24" y="372" width="240" height="64" rx="8"/>
+  <text class="name" x="40" y="398">IT staff</text>
+  <text class="note" x="40" y="418">a browser on an allowed network</text>
+
+  <!-- Your server -->
+  <rect class="group" x="392" y="108" width="320" height="352" rx="10"/>
+  <text class="title" x="408" y="132">Your server</text>
+  <rect class="box" x="408" y="148" width="288" height="120" rx="8"/>
+  <text class="name" x="424" y="174">Caddy</text>
+  <text class="note" x="424" y="196">TLS for both hostnames</text>
+  <text class="note" x="424" y="216">The console hostname answers only</text>
+  <text class="note" x="424" y="234">the networks you allow</text>
+  <text class="mono" x="424" y="256">port 80: certificates</text>
+  <path class="flow" d="M552 268 V298"/>
+  <rect class="box" x="408" y="300" width="288" height="56" rx="8"/>
+  <use href="#mark" x="424" y="314"/>
+  <text class="name" x="450" y="326">Altiward</text>
+  <text class="note" x="424" y="346">API and console</text>
+  <path class="flow" d="M552 356 V386"/>
+  <rect class="box" x="408" y="388" width="288" height="56" rx="8"/>
+  <text class="name" x="424" y="412">Postgres</text>
+  <text class="note" x="424" y="432">events, sessions, settings</text>
+
+  <!-- Into the server -->
+  <path class="flow" d="M248 244 H406"/>
+  <text class="mono" x="328" y="220" text-anchor="middle">HTTPS 443</text>
+  <text class="mono" x="328" y="235" text-anchor="middle">agent hostname</text>
+  <path class="flow" d="M264 404 H328 V258 H406"/>
+  <text class="mono" x="334" y="424" text-anchor="middle">HTTPS 443</text>
+  <text class="mono" x="334" y="439" text-anchor="middle">console hostname</text>
+
+  <!-- Out of the server -->
+  <path class="flow" d="M696 312 H760 V56 H790"/>
+  <path class="flow" d="M696 340 H790"/>
+  <text class="mono" x="744" y="364" text-anchor="middle">HTTPS or TLS</text>
+
+  <!-- Identity provider -->
+  <rect class="outside" x="792" y="24" width="184" height="64" rx="8"/>
+  <text class="name" x="808" y="50">Entra ID or Okta</text>
+  <text class="note" x="808" y="70">single sign-on</text>
+
+  <!-- Your SIEM -->
+  <rect class="group" x="792" y="276" width="184" height="184" rx="10"/>
+  <text class="title" x="808" y="300">Your SIEM</text>
+  <rect class="box" x="808" y="316" width="152" height="36" rx="8"/>
+  <text x="824" y="339">Splunk</text>
+  <rect class="box" x="808" y="360" width="152" height="36" rx="8"/>
+  <text x="824" y="383">Microsoft Sentinel</text>
+  <rect class="box" x="808" y="404" width="152" height="36" rx="8"/>
+  <text x="824" y="427">Syslog over TLS</text>
+</svg>

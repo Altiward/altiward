@@ -6,15 +6,10 @@ the server; the Altiward project never receives your data. For your security rev
 
 ## What you're installing
 
-```
- Macs (anywhere)                 Your server (Docker)                      Your SIEM
- ───────────────                 ────────────────────                      ─────────
- Altiward agent ──HTTPS──▶ agent hostname ┐
-                                          ├─ Caddy (TLS) ─▶ Altiward ─▶ Postgres
- IT staff ───────HTTPS──▶ console hostname┘                     │
- (office or VPN only)                                            └──────▶ Splunk, Sentinel
-                                                                          or syslog
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/install/overview-dark.svg">
+  <img src="images/install/overview-light.svg" width="1000" alt="Your MDM installs the Altiward agent and its profiles on each Mac. SAP Privileges grants admin rights and reports each change to the agent through its hook. The agent reports over HTTPS on port 443 to the agent hostname; IT staff open the console hostname over HTTPS on port 443 from allowed networks. On your server, Caddy handles TLS for both hostnames, getting certificates over port 80, and passes requests to Altiward, the API and console. Altiward stores data in Postgres, sends events to your SIEM (Splunk, Microsoft Sentinel or syslog over TLS) and signs people in through Entra ID or Okta.">
+</picture>
 
 - **The agent** runs on each Mac as a background service, installed by your MDM. It works
   alongside SAP Privileges, which grants admin rights: it records every grant and revoke
@@ -114,6 +109,15 @@ Caddy gets certificates for both hostnames within a minute. Open
 `https://<console hostname>` from an allowed network and sign in with the console token.
 The Fleet view is empty until the first Mac reports.
 
+**You should see** the sign-in page, with a padlock in the address bar. A certificate
+warning, or no page at all, is a Caddy problem: see
+[Caddy certificate errors](#caddy-certificate-errors).
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/install/sign-in-token-dark.png">
+  <img src="images/install/sign-in-token-light.png" width="400" alt="The Altiward sign-in page, asking for the console token.">
+</picture>
+
 ## 2. Deploy the agent
 
 Create these in your MDM and scope them to a pilot group first.
@@ -156,6 +160,34 @@ Create these in your MDM and scope them to a pilot group first.
 4. **The package**, `Altiward-<version>.pkg`. It installs silently, and the agent starts
    at once.
 
+**In Jamf Pro:**
+
+- Agent settings: **Computers › Configuration Profiles › New**, payload **Application &
+  Custom Settings › Upload › Add**, preference domain `com.altiward.agent`, then upload your
+  edited `com.altiward.agent.plist`.
+- Login items: **Computers › Configuration Profiles › Upload**, then
+  `altiward-login-items.mobileconfig`.
+- The package: add it in **Settings › Computer management › Packages**, then install it
+  with a policy (**Computers › Policies**, payload **Packages**, action **Install**).
+
+**In Intune** (the Microsoft Intune admin center):
+
+- Agent settings: **Devices › Manage devices › Configuration › Create › New policy**,
+  platform **macOS**, profile type **Templates › Preference file**, preference domain name
+  `com.altiward.agent`. Intune wants the keys alone: upload a copy of your edited
+  `com.altiward.agent.plist` without the `<?xml`, `<!DOCTYPE` and comment lines, the
+  `<plist>` lines and the outermost `<dict>` lines.
+- Login items: the same path with **Templates › Custom**, deployment channel **Device
+  channel**, then `altiward-login-items.mobileconfig`.
+- The package: **Apps › All Apps › Create**, platform **macOS**, type **macOS app (PKG)**.
+  That type takes packages that install outside `/Applications`, as Altiward's does.
+
+In any MDM, the SAP Privileges keys go into the profile that already configures
+Privileges.
+
+**You should see**, on a pilot Mac, the Altiward profiles under **System Settings ›
+General › Device Management**. The Mac then appears in the console ([step 3](#3-check-it-works)).
+
 Each Mac enrolls on first contact: it registers its own key with your server and signs
 everything after that, so the enrollment token is used once per Mac. The token is
 readable on every Mac, so anyone with it can enroll a key for a serial number: a new key
@@ -165,16 +197,30 @@ again** is on ([step 6](#6-settings-worth-reviewing)).
 ## 3. Check it works
 
 Within five minutes of installing, each Mac appears in **Fleet** with its macOS and agent
-versions and who is an admin. If one doesn't:
+versions and who is an admin. If one doesn't, see
+[A Mac never appears](#a-mac-never-appears).
 
-- On the Mac, run `sudo "/Library/Application Support/Altiward/Altiward.app/Contents/MacOS/altiward-agent" status`.
-  It shows the device ID once enrolled, how many events are waiting, and any open admin
-  sessions.
-- Check `ServerURL` is the agent hostname with `https://`, and that the Mac can reach it.
-- Look at the server: `docker compose logs altiward`.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/install/fleet-dark.png">
+  <img src="images/install/fleet-light.png" width="720" alt="Fleet in the console: a row per Mac with its serial number, last check-in, admins, and macOS, agent and SAP Privileges versions.">
+</picture>
 
-Then grant admin to a test user through Privileges and see the session appear under
-**Sessions** and **Admins now**.
+Then grant admin to a test user through Privileges. **You should see** the session under
+**Sessions**, marked **Elevated** and **Verified**, and the person under **Admins now**.
+Select it for the reason they gave, when the rights expire, and its timeline.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/install/session-granted-dark.png">
+  <img src="images/install/session-granted-light.png" width="720" alt="Sessions in the console, with a session selected: Elevated and Verified, its source Privileges, start and expiry times, the reason given, and a timeline with the grant.">
+</picture>
+
+Give the rights back in Privileges, or let them expire. The session ends, and its
+timeline shows the revoke.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/install/session-revoked-dark.png">
+  <img src="images/install/session-revoked-light.png" width="360" alt="A session's details after the rights were given back: Ended and Verified, the state Ended in Privileges, the time used, and a timeline with Granted then Revoked.">
+</picture>
 
 ## 4. Connect your SIEM
 
@@ -206,6 +252,15 @@ Events wait in Postgres until your SIEM accepts them, so a SIEM outage delays th
 without losing any. The console's Settings shows, for each SIEM, what is waiting and the
 last error. An admin can send a test event from there, and retry failed exports at once
 after a fix instead of waiting for the next retry, which can be up to an hour away.
+
+**You should see** your SIEM under **Settings › SIEM export** as **Up to date**, with
+nothing waiting. **Failing** means the SIEM isn't accepting events: the row shows the
+last error, and **Retry now** sends at once after a fix.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/install/settings-siem-dark.png">
+  <img src="images/install/settings-siem-light.png" width="592" alt="Settings, SIEM export: Syslog, Up to date, nothing waiting, with the time of the last delivery, and a button to send a test event.">
+</picture>
 
 If you stop sending to a SIEM, whatever was still queued for it stays in Postgres, and
 diagnostics lists it as a problem. Once you're sure, drop that queue. The events stay in
@@ -274,6 +329,20 @@ If your identity provider's certificate comes from your own CA, set
 The console then shows **Sign in with single sign-on**. Sessions end after 12 hours, or
 after an hour unused. A change to someone's groups applies the next time they sign in.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/install/sign-in-sso-dark.png">
+  <img src="images/install/sign-in-sso-light.png" width="400" alt="The sign-in page with single sign-on: a Sign in with single sign-on button, and a link to use a break-glass token instead.">
+</picture>
+
+**You should see** yourself under **Settings › Signed in to the console** once you've
+signed in, with your role. An admin can end someone's sign-in there, so a role change at
+your identity provider applies at once.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/install/settings-signed-in-dark.png">
+  <img src="images/install/settings-signed-in-light.png" width="592" alt="Settings, Signed in to the console: two people, each with their email, role, when they signed in and when the sign-in ends, and an End sign-in button.">
+</picture>
+
 The console token keeps working as a **break-glass** login, with the admin role, for
 when your identity provider is down or misconfigured. Each use shows in Activity and your
 SIEM as `break-glass:` and the token's fingerprint, so alert on it. To turn it off, leave
@@ -284,12 +353,18 @@ SIEM as `break-glass:` and the token's fingerprint, so alert on it. To turn it o
 In the console, under **Settings**:
 
 - **Approve Macs that enroll again.** On means a Mac that comes back with a new key, for
-  example after a reinstall, waits in **Enrollments** for your approval.
+  example after a reinstall, waits in **Enrollments** for your approval. Its earlier key
+  keeps working until you approve the new one.
 - **Alert when a Mac stops checking in.** Hours without a check-in before Altiward raises
   an alert. The default of 72 rides out a weekend with laptops closed.
 
 To retire a Mac, revoke its enrollment in **Enrollments**. It then stops being able to
 report and never raises a "not checking in" alert.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/install/enrollments-dark.png">
+  <img src="images/install/enrollments-light.png" width="720" alt="Enrollments in the console: a Mac waiting for approval is selected, with its key fingerprint, Approve and Reject buttons, and a note that it enrolled again with a new key.">
+</picture>
 
 **Activity** keeps every change made in the console forever, and sends each one to your
 SIEM. To remove old entries, set `ALTIWARD_AUDIT_RETENTION_DAYS` in `.env` (at least 365)
@@ -504,14 +579,17 @@ Logs aren't included. If a maintainer asks for them:
 
 | Symptom | Likely cause |
 | --- | --- |
-| Caddy logs certificate errors | A hostname doesn't resolve to this server, or port 80 is blocked |
+| Caddy logs certificate errors | A hostname doesn't resolve to this server, or port 80 is blocked ([Caddy certificate errors](#caddy-certificate-errors)) |
 | The console shows "403" | You're outside `ALTIWARD_CONSOLE_ALLOW`, or behind a proxy Caddy doesn't trust |
 | Sign-in says the token is wrong | Use the part after `yourcompany=` in `ALTIWARD_CONSOLE_TOKENS` |
 | Single sign-on says your account isn't in a group that can use Altiward | The groups claim doesn't carry any group in `ALTIWARD_OIDC_*_GROUPS`. Check the IDs (Entra) or names (Okta), and that the group is assigned to the application. |
 | Single sign-on says your identity provider didn't send your groups | Entra ID: limit the groups claim to groups assigned to the application. |
 | Single sign-on can't reach your identity provider | The server can't fetch `<issuer>/.well-known/openid-configuration`. Diagnostics checks the connection as `sso`. Use the break-glass token meanwhile. |
 | The identity provider says the redirect URI doesn't match | Register `ALTIWARD_CONSOLE_URL` plus `/v1/auth/callback` exactly. |
-| A Mac never appears | `ServerURL` is wrong, the agent hostname isn't reachable from the Mac, or the enrollment token doesn't match |
+| A Mac never appears | `ServerURL` is wrong, the agent hostname isn't reachable from the Mac, or the enrollment token doesn't match ([A Mac never appears](#a-mac-never-appears)) |
+| A Privileges grant shows as **Without a grant** | Privileges didn't run Altiward's hook, usually because its checksum is from another agent release ([Rights show as "Without a grant"](#rights-show-as-without-a-grant)) |
+| **Privileges tamper protection** fails on a Mac | `EnableSystemExtension` is off, or the Mac hasn't got SAP's system extension policy and Full Disk Access ([step 2](#2-deploy-the-agent)) |
+| **Settings › SIEM export** shows **Failing** | The SIEM is rejecting events or can't be reached. The row shows the last error; after a fix, **Retry now** ([step 4](#4-connect-your-siem)) |
 | A Mac waits in **Enrollments** | It enrolled again with a new key while approval is on: approve it. |
 | `upgrade.sh` stopped and left `compose.yaml.new` | You changed `compose.yaml` and so did the release: merge, then run it again with `--merged` ([Releases and updates](#releases-and-updates)) |
 | `upgrade.sh` says a file doesn't match `SHA256SUMS` | The download is incomplete or was changed: download the release again |
@@ -520,3 +598,78 @@ Logs aren't included. If a maintainer asks for them:
 
 For anything else, run the [diagnostics report](#diagnostics-for-a-bug-report) and check its
 `problems` list.
+
+### A Mac never appears
+
+On the Mac, ask the agent:
+
+```sh
+sudo "/Library/Application Support/Altiward/Altiward.app/Contents/MacOS/altiward-agent" status
+```
+
+```
+data directory: /Library/Application Support/Altiward
+server: https://altiward-agents.example.com
+device id: (not enrolled)
+queued events: 4
+open sessions: 0
+persistence snapshot: (none yet)
+```
+
+- `server: (not configured)`: the agent profile hasn't reached the Mac, or its preference
+  domain isn't `com.altiward.agent`. Check **System Settings › General › Device
+  Management**.
+- `device id: (not enrolled)` with a server: the Mac can't reach the agent hostname, or
+  `EnrollmentToken` isn't the part after `yourcompany=` in `ALTIWARD_AGENT_TOKENS`. From
+  the Mac, `curl -sSI https://<agent hostname>/` should answer `HTTP/2 404`: only the
+  agent's own paths answer there. A connection or certificate error means the Mac can't
+  reach the server.
+- A device ID but **queued events** that never go down: the Mac enrolled but can't deliver.
+  If **Approve Macs that enroll again** is on, look in **Enrollments** for a Mac waiting
+  for approval.
+
+### Rights show as "Without a grant"
+
+When someone gets admin rights through Privileges but the console shows **Without a
+grant**, Privileges didn't tell Altiward. Usually its profile pins the hook of a different
+agent release: Privileges then skips the hook without a word. The Mac shows **Needs
+attention** in **Fleet**, and its details show **Privileges reports to Altiward** failing,
+with the reason.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/install/fleet-hook-not-reporting-dark.png">
+  <img src="images/install/fleet-hook-not-reporting-light.png" width="311" alt="A Mac's Integrity checks in Fleet: Privileges reports to Altiward is Failing, high severity. The alert below says PostChangeExecutableChecksum doesn't match Altiward's hook, so Privileges won't run it, and to use the corp.sap.privileges.plist from this agent's release.">
+</picture>
+
+Deploy `corp.sap.privileges.plist` from the same agent release as the package installed on
+that Mac ([step 2](#2-deploy-the-agent)). Grants after that are recorded as Privileges
+grants. From agent 0.1.1, the first one also ends the open **Without a grant** session.
+
+If the check passes, the rights really were granted outside Privileges: someone added the
+account to `admin` another way. If it's an IT or managed admin account, add it to
+`PermanentAdmins`.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/install/session-without-grant-dark.png">
+  <img src="images/install/session-without-grant-light.png" width="360" alt="A session found without a grant: Without a grant, a Revoke admin rights button, a note on adding managed admin accounts to PermanentAdmins, and a timeline with Found without a grant.">
+</picture>
+
+### Caddy certificate errors
+
+Caddy gets a certificate for each hostname from Let's Encrypt when it starts. If the
+console shows a certificate warning, or nothing, look at its log:
+
+```sh
+docker compose logs caddy | grep -i error
+```
+
+- `DNS problem: NXDOMAIN looking up A for <hostname>`: the hostname doesn't resolve yet.
+  Create the DNS record, wait for it to appear, then `docker compose restart caddy`.
+- `Timeout during connect (likely firewall problem)`: Let's Encrypt can't reach the
+  server. Open ports 80 and 443 to the internet, in the server's firewall and any cloud
+  network rules.
+- `too many certificates already issued` or `rateLimited`: repeated failed attempts hit
+  Let's Encrypt's limits. Fix the cause, then wait for the time the message gives.
+
+For certificates from your own CA or a load balancer, see
+[Your own certificates or load balancer](#your-own-certificates-or-load-balancer).

@@ -71,10 +71,15 @@ const [a, b, c, d, e, f] = await Promise.all(
 const s1 = randomUUID();
 await send(a, [grant(a, jane, 12, 20, "Installing Xcode command line tools", s1), health(a, 2, ["itadmin", "jdoe"])]);
 
+// Its Privileges profile still pins an older agent's hook, so Privileges skipped the hook
+// and the grant shows up as admin rights without one.
 const s2 = randomUUID();
-await send(b, [event(b, "admin.out_of_band", ago(130), { user: ["contractor"], session: s2,
-  elevation: { reason: null, expires: null, source: "out_of_band" }, detail: { first_observed: ago(130) } }),
-  health(b, 3, ["contractor", "itadmin"])]);
+await send(b, [event(b, "agent.tamper", ago(140), { detail: { check: "privileges_hook", state: "failed",
+    problem: "PostChangeExecutableChecksum doesn't match Altiward's hook, so Privileges won't run it: " +
+      "use the corp.sap.privileges.plist from this agent's release" } }),
+  event(b, "admin.out_of_band", ago(130), { user: ["contractor"], session: s2,
+    elevation: { reason: null, expires: null, source: "out_of_band" }, detail: { first_observed: ago(130) } }),
+  health(b, 3, ["contractor", "itadmin"], { ...passing, privileges_hook: false })]);
 
 const s3 = randomUUID();
 await send(c, [grant(c, anna, 42, 20, "Updating a printer driver", s3),
@@ -109,7 +114,8 @@ function backdate(serial, at) {
     state = jsonb_set(state, '{last_received_at}', to_jsonb('${at}'::text)) WHERE serial = '${serial}'`;
   try {
     execFileSync("docker", ["compose", "-f", new URL("compose.yaml", import.meta.url).pathname,
-      "exec", "-T", "postgres", "psql", "-q", "-v", "ON_ERROR_STOP=1", "-U", "altiward", "-d", "altiward", "-c", sql],
+      "exec", "-T", "postgres", "psql", "-q", "-v", "ON_ERROR_STOP=1", "-U", "altiward",
+      "-d", process.env.SEED_DATABASE ?? "altiward", "-c", sql],
     { stdio: ["ignore", "ignore", "pipe"] });
     return true;
   } catch (err) {
@@ -122,5 +128,5 @@ function backdate(serial, at) {
 await request("POST", `/v1/devices/${b.serial}/revoke`, { bearer: CONSOLE, body: {} });
 await request("PUT", "/v1/settings", { bearer: CONSOLE, body: { reenrollment_requires_approval: true } });
 const again = await enroll(a.serial);
-console.log(`Seeded 6 Macs (${silent ? 1 : 0} silent), 5 sessions, 1 tamper alert, 1 queued revoke; ${a.serial} re-enrolled (${again.status}).`);
+console.log(`Seeded 6 Macs (${silent ? 1 : 0} silent), 5 sessions, 2 tamper alerts, 1 queued revoke; ${a.serial} re-enrolled (${again.status}).`);
 console.log("Re-enrollment approval is now on; turn it off in Settings if you prefer.");
