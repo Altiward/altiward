@@ -9,6 +9,26 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Agent 0.1.1 - unreleased
+
+### Upgrade order
+
+None.
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+- The agent's store records its schema version, and upgrades a 0.1.0 store in place
+  with its data. An older agent can't open a store written by a newer one: reinstall the
+  newer release instead of downgrading.
+
 ## Server 0.1.2 - unreleased
 
 ### Upgrade order

@@ -116,6 +116,95 @@ struct AgentStoreTests {
         #expect(try store.openSession(user: "jdoe")?.overdueReported == false)
     }
 
+    @Test func freshStoreHasCurrentSchemaVersion() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("altiward-fresh-\(UUID().uuidString)")
+        _ = try AgentStore.open(directory: dir)
+        #expect(try userVersion(of: dir) == 1)
+        #expect(AgentStore.schemaVersion == 1)
+    }
+
+    /// 0.1.0 wrote no version. Its stores must open with their data and get version 1.
+    @Test func upgradesA010Store() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("altiward-v010-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let event = sampleEvent()
+        let start = Date(timeIntervalSince1970: 1_792_000_000)
+        do {
+            // The 0.1.0 layout, exactly as agent-v0.1.0 created it.
+            let db = try SQLiteConnection(path: dir.appendingPathComponent("agent.sqlite").path)
+            try db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS outbox (
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_id TEXT NOT NULL UNIQUE,
+                    body BLOB NOT NULL,
+                    enqueued_at REAL NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT
+                );
+                CREATE TABLE IF NOT EXISTS open_sessions (
+                    user TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    started_at REAL NOT NULL,
+                    expires_at REAL,
+                    overdue_reported INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS kv (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS command_results (
+                    command_id TEXT PRIMARY KEY,
+                    body BLOB NOT NULL,
+                    executed_at REAL NOT NULL,
+                    reported_at REAL
+                );
+                """)
+            try db.run(
+                "INSERT INTO outbox (event_id, body, enqueued_at, attempts, last_error) VALUES (?, ?, ?, 2, 'offline')",
+                [.text(event.eventID), .blob(try AltiwardJSON.encoder().encode(event)), .double(start.timeIntervalSince1970)])
+            try db.run(
+                "INSERT INTO open_sessions (user, session_id, source, started_at, expires_at, overdue_reported) VALUES ('jdoe', 's1', 'privileges', ?, ?, 1)",
+                [.double(start.timeIntervalSince1970), .double(start.addingTimeInterval(1200).timeIntervalSince1970)])
+            try db.run("INSERT INTO kv (key, value) VALUES ('device_credential', 'secret')")
+        }
+        #expect(try userVersion(of: dir) == 0)
+
+        let store = try AgentStore.open(directory: dir)
+        let pending = try store.pending(limit: 10)
+        #expect(pending.map(\.event.eventID) == [event.eventID])
+        #expect(pending.first?.attempts == 2)
+        #expect(
+            try store.openSession(user: "jdoe")
+                == OpenSession(
+                    user: "jdoe", sessionID: "s1", source: .privileges, startedAt: start,
+                    expiresAt: start.addingTimeInterval(1200), overdueReported: true))
+        #expect(try store.value(forKey: "device_credential") == "secret")
+        #expect(try userVersion(of: dir) == 1)
+    }
+
+    /// Opening a newer agent's store would risk misreading it: refuse, and leave it as it is.
+    @Test func refusesANewerSchemaVersion() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("altiward-newer-\(UUID().uuidString)")
+        do {
+            let store = try AgentStore.open(directory: dir)
+            try store.setValue("secret", forKey: "device_credential")
+        }
+        let path = dir.appendingPathComponent("agent.sqlite").path
+        try SQLiteConnection(path: path).execute("PRAGMA user_version = 2")
+
+        #expect(throws: AgentStoreError.newerSchema(found: 2, supported: 1)) {
+            try AgentStore.open(directory: dir)
+        }
+        #expect(try userVersion(of: dir) == 2)
+        #expect(try SQLiteConnection(path: path).query("SELECT value FROM kv").first?.text(0) == "secret")
+    }
+
+    private func userVersion(of dir: URL) throws -> Int64? {
+        try SQLiteConnection(path: dir.appendingPathComponent("agent.sqlite").path).query("PRAGMA user_version").first?.int(0)
+    }
+
     @Test func keyValueRoundTrip() throws {
         let store = try makeStore()
         try store.setValue("x", forKey: "k")

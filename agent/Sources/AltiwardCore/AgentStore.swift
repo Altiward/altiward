@@ -1,5 +1,18 @@
 import Foundation
 
+public enum AgentStoreError: Error, Equatable, CustomStringConvertible {
+    /// The store was written by a newer agent, in a layout this build doesn't know.
+    case newerSchema(found: Int, supported: Int)
+
+    public var description: String {
+        switch self {
+        case .newerSchema(let found, let supported):
+            "agent store has schema version \(found), newer than this agent's \(supported): "
+                + "a newer Altiward agent wrote it, so reinstall that release or later"
+        }
+    }
+}
+
 /// An event waiting in the outbox.
 public struct QueuedEvent: Sendable, Equatable {
     public let seq: Int64
@@ -59,36 +72,63 @@ public final class AgentStore: @unchecked Sendable {
         return try AgentStore(path: path)
     }
 
+    /// The store's layouts, oldest first: `migrations[v]` upgrades a store at
+    /// `PRAGMA user_version` v to v + 1. Migrations are forever: a new layout appends a
+    /// step, and a shipped step is never edited or reordered.
+    ///
+    /// 0.1.0 shipped without a version, so its stores read as 0. Step 0 creates the 0.1.0
+    /// tables idempotently: a fresh file gets them, and a 0.1.0 store already has them.
+    private static let migrations: [String] = [
+        // 0 -> 1: the 0.1.0 layout.
+        """
+        CREATE TABLE IF NOT EXISTS outbox (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL UNIQUE,
+            body BLOB NOT NULL,
+            enqueued_at REAL NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT
+        );
+        CREATE TABLE IF NOT EXISTS open_sessions (
+            user TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            started_at REAL NOT NULL,
+            expires_at REAL,
+            overdue_reported INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS kv (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS command_results (
+            command_id TEXT PRIMARY KEY,
+            body BLOB NOT NULL,
+            executed_at REAL NOT NULL,
+            reported_at REAL
+        );
+        """,
+    ]
+
+    /// The layout this build writes.
+    static let schemaVersion = migrations.count
+
+    /// Brings the store up to ``schemaVersion`` in one transaction, so a failed step
+    /// leaves it at the version it had.
     private func migrate() throws {
-        try db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS outbox (
-                seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_id TEXT NOT NULL UNIQUE,
-                body BLOB NOT NULL,
-                enqueued_at REAL NOT NULL,
-                attempts INTEGER NOT NULL DEFAULT 0,
-                last_error TEXT
-            );
-            CREATE TABLE IF NOT EXISTS open_sessions (
-                user TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                source TEXT NOT NULL,
-                started_at REAL NOT NULL,
-                expires_at REAL,
-                overdue_reported INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS kv (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS command_results (
-                command_id TEXT PRIMARY KEY,
-                body BLOB NOT NULL,
-                executed_at REAL NOT NULL,
-                reported_at REAL
-            );
-            """)
+        try transaction {
+            let version = Int(try db.query("PRAGMA user_version").first?.int(0) ?? 0)
+            // A newer agent's layout may hold data this build would misread or drop: refuse it.
+            guard version <= Self.schemaVersion else {
+                throw AgentStoreError.newerSchema(found: version, supported: Self.schemaVersion)
+            }
+            for step in Self.migrations[version...] {
+                try db.execute(step)
+            }
+            if version < Self.schemaVersion {
+                try db.execute("PRAGMA user_version = \(Self.schemaVersion)")
+            }
+        }
     }
 
     /// Runs `body` atomically. Nested calls join the outer transaction.
