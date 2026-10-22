@@ -235,9 +235,19 @@ func run(log *slog.Logger) error {
 		sinks = append(sinks, &export.SplunkSink{Client: &splunk.Client{URL: s.URL, Token: s.Token, HTTP: httpClient}, Index: s.Index})
 	}
 	if s := cfg.Sentinel; s != nil {
-		var tokens sentinel.TokenSource = &sentinel.ClientCredentials{TenantID: s.TenantID, ClientID: s.ClientID, ClientSecret: s.ClientSecret, HTTP: httpClient}
-		if s.Auth == config.SentinelManagedIdentity {
+		cc := &sentinel.ClientCredentials{TenantID: s.TenantID, ClientID: s.ClientID, ClientSecret: s.ClientSecret, HTTP: httpClient}
+		var tokens sentinel.TokenSource = cc
+		switch s.Auth {
+		case config.SentinelManagedIdentity:
 			tokens = &sentinel.ManagedIdentity{ClientID: s.ClientID} // its own client: IMDS mustn't go through a proxy
+		case config.SentinelCertificate:
+			if cc.Certificate, err = sentinel.LoadCertificate(s.CertificateFile); err != nil {
+				return fmt.Errorf("ALTIWARD_SENTINEL_CERTIFICATE_FILE: %w", err)
+			}
+			if left := time.Until(cc.Certificate.Leaf.NotAfter); left < 30*24*time.Hour {
+				log.Warn("the Sentinel certificate expires soon: upload a new one to the app and replace the file",
+					"expires", cc.Certificate.Leaf.NotAfter)
+			}
 		}
 		sinks = append(sinks, &export.SentinelSink{Client: &sentinel.Client{
 			Endpoint: s.Endpoint, RuleID: s.RuleID, Stream: s.Stream, Tokens: tokens, HTTP: httpClient,

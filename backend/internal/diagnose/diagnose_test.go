@@ -173,6 +173,15 @@ func TestSentinelAuthMode(t *testing.T) {
 	if len(dialled) != 3 || dialled[2] != "169.254.169.254:80 tls=" { // IMDS is plain HTTP on a link-local address
 		t.Fatalf("dialled %q", dialled)
 	}
+
+	r, _ = run("ALTIWARD_SENTINEL_AUTH=certificate", "ALTIWARD_SENTINEL_TENANT_ID=t", "ALTIWARD_SENTINEL_CLIENT_ID=c",
+		"ALTIWARD_SENTINEL_CERTIFICATE_FILE=/etc/altiward/certs/sentinel.pem")
+	if !r.Config.Valid || r.Config.Settings["ALTIWARD_SENTINEL_CERTIFICATE_FILE"] != "/etc/altiward/certs/sentinel.pem" {
+		t.Fatalf("config = %+v", r.Config)
+	}
+	if len(r.Sinks) != 2 || r.Sinks[1].Auth != "certificate" {
+		t.Fatalf("certificate: sinks = %+v", r.Sinks)
+	}
 }
 
 // A regression guard: the setup date reaches the report through the existing stats field.

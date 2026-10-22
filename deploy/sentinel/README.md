@@ -5,7 +5,7 @@ identity, then prints the settings for Altiward's `.env`. It changes Azure resou
 run it only against the workspace you intend to connect.
 
 The [Sentinel guide](../../integrations/sentinel/README.md) covers permissions, options,
-managed identity, secret rotation and troubleshooting. From a source checkout, run:
+managed identity, certificates, secret rotation and troubleshooting. From a source checkout, run:
 
 ```sh
 bash deploy/sentinel/setup.sh --resource-group <group> --workspace <workspace>

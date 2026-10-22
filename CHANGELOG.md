@@ -60,6 +60,10 @@ None.
   that grant starts is flagged `after_out_of_band`. The SIEM export closes its
   `admin.out_of_band` finding with status Other, "Replaced by a Privileges grant", not
   Resolved, since the grant is reported by Privileges' hook. Needs agent 0.1.1.
+- The Sentinel export can sign in with a certificate on the app instead of a client
+  secret, for servers outside Azure: `ALTIWARD_SENTINEL_AUTH=certificate` and
+  `ALTIWARD_SENTINEL_CERTIFICATE_FILE`, a PEM file in `certs/`
+  (`integrations/sentinel/README.md`).
 
 ## Server 0.1.1 - 2026-10-21
 
