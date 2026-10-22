@@ -84,5 +84,19 @@ describe("Admins Now", () => {
     renderView(api, <AdminsNowView />);
     const row = (await screen.findByText("backdoor")).closest("tr")!;
     expect(within(row).getByText("Without a grant")).toBeInTheDocument();
+
+    await userEvent.click(row);
+    const inspector = screen.getByRole("complementary", { name: "Session details" });
+    expect(within(inspector).getByText(/managed admin account \(LAPS\)/)).toBeInTheDocument();
+    expect(within(inspector).getByRole("link", { name: "how" }))
+      .toHaveAttribute("href", expect.stringContaining("docs/install.md#2-deploy-the-agent"));
+  });
+
+  it("doesn't point a Privileges grant at PermanentAdmins", async () => {
+    const api = fakeApi({ sessions: vi.fn(async () => [session({ session_id: "s-priv", local_user: "asmith", upn: null })]) });
+    renderView(api, <AdminsNowView />);
+    await userEvent.click((await screen.findByText("asmith")).closest("tr")!);
+    const inspector = screen.getByRole("complementary", { name: "Session details" });
+    expect(within(inspector).queryByText(/PermanentAdmins/)).toBeNull();
   });
 });

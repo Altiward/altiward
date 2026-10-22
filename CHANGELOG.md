@@ -27,6 +27,9 @@ None.
 
 - A Mac's details in Fleet list its permanent admins, read-only, from its configuration
   profile, and say whether each one is an admin now.
+- Admin rights without a grant say that a managed admin account (LAPS) or another
+  standing IT account belongs in `PermanentAdmins` in the Altiward profile, with a link
+  to the install guide.
 
 ## Server 0.1.1 - 2026-10-21
 
