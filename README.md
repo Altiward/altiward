@@ -98,11 +98,15 @@ To look around first, run the console with demo data using only Docker:
 ```sh
 git clone https://github.com/Altiward/altiward && cd altiward
 docker compose -f dev/compose.demo.yaml up --build
+
+# When you're done, from the same folder:
+docker compose -f dev/compose.demo.yaml down -v
 ```
 
 When it says `Demo ready`, open http://localhost:8080 and sign in with
-`dev-console-token-001`. [dev/README.md](dev/README.md) has the details and fixes for
-common errors.
+`dev-console-token-001`. It keeps running until you stop it with the last command, which
+also deletes the demo data; leave out `-v` to keep it. [dev/README.md](dev/README.md) has
+the details and fixes for common errors.
 
 For a real deployment you need a Linux server with Docker Compose, two DNS names (one for Macs, one for the
 console), and an MDM. The [install guide](docs/install.md) covers each step, running on
