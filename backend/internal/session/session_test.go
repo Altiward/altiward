@@ -222,6 +222,36 @@ func TestPermanentAdminEndsAnOutOfBandSession(t *testing.T) {
 	}
 }
 
+func TestPrivilegesGrantEndsAnOutOfBandSession(t *testing.T) {
+	found := testfixture.Event(t, "admin-out-of-band")
+	ended := testfixture.Event(t, "elevation-revoked-privileges-grant")
+	for _, events := range [][]event.Event{{found, ended}, {ended, found}} {
+		s := session.New("t1", *found.SessionID)
+		for _, e := range events {
+			s.Apply(e)
+		}
+		if s.Open() || *s.EndReason != session.EndPrivilegesGrant || s.Source != event.SourceOutOfBand ||
+			!s.Verified || slices.Contains(s.Flags, session.FlagInferredEnd) {
+			t.Fatalf("session = %+v", s)
+		}
+	}
+}
+
+func TestGrantThatReplacedAnOutOfBandSessionIsFlagged(t *testing.T) {
+	granted := testfixture.Event(t, "elevation-granted")
+	granted.Detail["replaced_out_of_band"] = true
+	revoked := testfixture.Event(t, "elevation-revoked")
+	for _, events := range [][]event.Event{{granted, revoked}, {revoked, granted}} {
+		s := session.New("t1", *granted.SessionID)
+		for _, e := range events {
+			s.Apply(e)
+		}
+		if !slices.Equal(s.Flags, []string{session.FlagAfterOutOfBand}) || *s.EndReason != session.EndRevoked {
+			t.Fatalf("session = %+v", s)
+		}
+	}
+}
+
 // tamperAlerts makes n agent.tamper events a minute apart, with distinct IDs.
 func tamperAlerts(t *testing.T, n int) []event.Event {
 	base := testfixture.Event(t, "agent-tamper")

@@ -19,6 +19,7 @@ const (
 	FlagInferredEnd         = "inferred_end"         // closed by the heartbeat, not the hook
 	FlagPersistenceDetected = "persistence_detected" // new persistence seen during the window
 	FlagOverdue             = "overdue"              // rights outlived their expiry plus grace
+	FlagAfterOutOfBand      = "after_out_of_band"    // the grant replaced a session nothing granted
 )
 
 // End reasons.
@@ -26,8 +27,9 @@ const (
 	EndRevoked         = "revoked"
 	EndInferred        = "inferred"
 	EndExpiredEnforced = "expired_enforced"
-	EndRemoteRevoke    = "remote_revoke"   // console revoke executed by the agent
-	EndPermanentAdmin  = "permanent_admin" // found without a grant, then made a permanent admin; rights kept
+	EndRemoteRevoke    = "remote_revoke"    // console revoke executed by the agent
+	EndPermanentAdmin  = "permanent_admin"  // found without a grant, then made a permanent admin; rights kept
+	EndPrivilegesGrant = "privileges_grant" // found without a grant, then replaced by a Privileges grant
 )
 
 // Session is one elevation window, from grant (or first observation) to revoke.
@@ -118,6 +120,9 @@ func (s *Session) Apply(e event.Event) {
 		if renewed, _ := e.DetailBool("renewed"); renewed {
 			s.Renewals++
 		}
+		if replaced, _ := e.DetailBool("replaced_out_of_band"); replaced {
+			s.flag(FlagAfterOutOfBand)
+		}
 		if e.Elevation != nil {
 			if s.Reason == nil && e.Elevation.Reason != nil {
 				s.Reason = e.Elevation.Reason
@@ -139,6 +144,8 @@ func (s *Session) Apply(e event.Event) {
 			reason = EndRemoteRevoke
 		case "permanent_admin":
 			reason = EndPermanentAdmin
+		case "privileges_grant":
+			reason = EndPrivilegesGrant
 		}
 		if inferred, _ := e.DetailBool("inferred"); inferred {
 			reason = EndInferred

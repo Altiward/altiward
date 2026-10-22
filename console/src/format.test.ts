@@ -42,11 +42,13 @@ describe("labels", () => {
     expect(endReasonLabel("remote_revoke")).toBe("Revoked from the console");
     expect(endReasonLabel("expired_enforced")).toBe("Removed at expiry");
     expect(endReasonLabel("permanent_admin")).toBe("Now a permanent admin");
+    expect(endReasonLabel("privileges_grant")).toBe("Replaced by a Privileges grant");
     expect(endReasonLabel("something_new")).toBe("Ended");
   });
   it("hides flags that repeat the end reason and names the rest", () => {
     expect(flagLabel("inferred_end")).toBeNull();
     expect(flagLabel("out_of_band")).toBe("Found without a grant");
+    expect(flagLabel("after_out_of_band")).toBe("Followed rights without a grant");
     expect(flagLabel("brand_new_flag")).toBe("brand_new_flag");
   });
 });

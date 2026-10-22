@@ -6,7 +6,9 @@
 //	                              rights_after_expiry Detection Finding (2004), Medium
 //	elevation.overdue           → Detection Finding (2004), Create (1), Medium; High if removal failed
 //	admin.out_of_band           → Detection Finding (2004), Create (1), High; an elevation.revoked
-//	                              with trigger permanent_admin closes it (Resolved, Informational)
+//	                              with trigger permanent_admin closes it (Resolved, Informational),
+//	                              and one with trigger privileges_grant closes it (Other: "Replaced
+//	                              by a Privileges grant", Informational)
 //	persistence.detected        → Detection Finding (2004), Create (1), High; each new local
 //	                              account is a finding of its own (High for an admin account),
 //	                              and the rest of the persistence one more
@@ -50,8 +52,11 @@ var severityNames = map[int]string{1: "Informational", 2: "Low", 3: "Medium", 4:
 func Map(e store.StoredEvent, tenantID string) []Record {
 	switch e.Type {
 	case event.ElevationGranted, event.ElevationRevoked, event.ElevationExpiredEnforced:
-		if trigger, _ := e.Detail["trigger"].(string); e.Type == event.ElevationRevoked && trigger == "permanent_admin" {
-			return []Record{outOfBandResolved(e, tenantID)}
+		if trigger, _ := e.Detail["trigger"].(string); e.Type == event.ElevationRevoked {
+			switch trigger {
+			case "permanent_admin", "privileges_grant":
+				return []Record{outOfBandClosed(e, tenantID, trigger)}
+			}
 		}
 		if e.Type == event.ElevationExpiredEnforced {
 			// Rights that outlived their expiry mean Privileges' timer failed or was stopped:
@@ -151,16 +156,24 @@ func TamperSeverities() map[string]string {
 	return out
 }
 
-// outOfBandResolved maps the elevation.revoked that ends an out-of-band session because
-// its user became a permanent admin: the rights stay and are now expected, so it closes
-// the admin.out_of_band finding, which used the session ID as its uid, rather than
-// reporting a revoke.
-func outOfBandResolved(e store.StoredEvent, tenantID string) Record {
+// outOfBandClosed maps the elevation.revoked that ends an out-of-band session while the
+// rights stay: its user became a permanent admin, so the rights are now expected, or a
+// Privileges grant replaced it. It closes the admin.out_of_band finding, which used the
+// session ID as its uid, rather than reporting a revoke. A grant is reported by the hook,
+// which the user can run by hand, so it closes the finding as Other, not Resolved.
+func outOfBandClosed(e store.StoredEvent, tenantID, trigger string) Record {
 	const title = "Admin rights without a grant"
-	desc := fmt.Sprintf("Resolved on %s: %s is now a permanent admin, so their admin rights are expected",
-		e.Device.Serial, userName(e))
 	r := base(e, tenantID, 2004, "Detection Finding", 2, "Findings", 3, "Close", SeverityInformational)
-	r["status_id"], r["status"] = 4, "Resolved"
+	var desc string
+	if trigger == "privileges_grant" {
+		desc = fmt.Sprintf("Replaced on %s: a Privileges grant was reported for %s, who held admin rights without one",
+			e.Device.Serial, userName(e))
+		r["status_id"], r["status"] = 99, "Replaced by a Privileges grant"
+	} else {
+		desc = fmt.Sprintf("Resolved on %s: %s is now a permanent admin, so their admin rights are expected",
+			e.Device.Serial, userName(e))
+		r["status_id"], r["status"] = 4, "Resolved"
+	}
 	uid := e.EventID
 	if e.SessionID != nil {
 		uid = *e.SessionID
@@ -296,7 +309,7 @@ func finding(e store.StoredEvent, tenantID string) Record {
 	uid := e.EventID
 	switch {
 	case e.Type == event.AdminOutOfBand && e.SessionID != nil:
-		// One per session, and the session is what outOfBandResolved knows to close it by.
+		// One per session, and the session is what outOfBandClosed knows to close it by.
 		uid = *e.SessionID
 	case e.Type == event.ElevationExpiredEnforced:
 		uid = e.EventID + "/finding" // the event's own ID is its revoke record's

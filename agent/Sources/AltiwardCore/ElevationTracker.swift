@@ -121,6 +121,20 @@ public final class ElevationTracker: Sendable {
                 let expiresAt = limit?.date
                 detail["renewed"] = .bool(renewing != nil)
                 if let limit { detail["expires_basis"] = .string(limit.basis) }
+                // A grant replaces an out-of-band session: end it first, or it stays open on
+                // the server with its finding. The grant says so, since the claim closes it.
+                if let replaced = existing, replaced.source == .outOfBand {
+                    detail["replaced_out_of_band"] = true
+                    try store.enqueue(
+                        AltiwardEvent(
+                            type: .elevationRevoked, sessionID: replaced.sessionID,
+                            timestamp: invocation.invokedAt, device: device, user: user,
+                            elevation: ElevationInfo(source: .outOfBand),
+                            detail: [
+                                "trigger": "privileges_grant", "observed_admin": .bool(observedAdmin),
+                                "verified": .bool(observedAdmin),
+                            ]))
+                }
                 // The overdue report is re-armed only when the expiry moves.
                 let unchanged = renewing.map { $0.expiresAt == expiresAt } ?? false
                 try store.upsertOpenSession(

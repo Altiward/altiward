@@ -52,6 +52,7 @@ const endReasons: Record<string, string> = {
   expired_enforced: "Removed at expiry",
   remote_revoke: "Revoked from the console",
   permanent_admin: "Now a permanent admin",
+  privileges_grant: "Replaced by a Privileges grant",
 };
 
 export function endReasonLabel(reason: string | null): string {
@@ -66,6 +67,7 @@ const flags: Record<string, string | null> = {
   inferred_end: null, // already said by the end reason
   overdue: "Past expiry",
   persistence_detected: "New persistence",
+  after_out_of_band: "Followed rights without a grant",
 };
 
 export function flagLabel(flag: string): string | null {

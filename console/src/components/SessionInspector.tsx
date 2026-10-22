@@ -27,12 +27,14 @@ const eventLabels: Record<string, string> = {
 /** The timeline's name for an event; an end that removed nothing doesn't say Revoked. */
 function eventLabel(e: TimelineEvent): string {
   if (e.type === "elevation.revoked" && e.detail.trigger === "permanent_admin") return "Now a permanent admin";
+  if (e.type === "elevation.revoked" && e.detail.trigger === "privileges_grant") return "Replaced by a Privileges grant";
   return eventLabels[e.type] ?? e.type;
 }
 
 function eventNote(e: TimelineEvent): string | null {
   const d = e.detail;
   if (d.trigger === "permanent_admin") return "Rights kept, no longer unexplained";
+  if (d.trigger === "privileges_grant") return "Rights kept, now under a Privileges grant";
   if (d.trigger === "command") return "From the console";
   if (d.trigger === "heartbeat" && e.type === "elevation.revoked") return "Seen by the agent";
   if (d.renewed === true) return "Renewal";

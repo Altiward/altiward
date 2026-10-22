@@ -17,7 +17,7 @@ import (
 var Names = []string{
 	"elevation-granted", "elevation-revoked", "elevation-overdue", "elevation-expired-enforced",
 	"admin-out-of-band", "agent-health", "agent-tamper", "agent-silent", "persistence-detected",
-	"elevation-revoked-permanent-admin", "agent-tamper-retired",
+	"elevation-revoked-permanent-admin", "agent-tamper-retired", "elevation-revoked-privileges-grant",
 }
 
 func read(t testing.TB, dir, name string) []byte {

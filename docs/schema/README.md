@@ -17,12 +17,13 @@ decoder rejects unknown fields, so drift fails loudly.
 | | `observed_admin` | Real `admin` group membership when the daemon recorded it |
 | | `verified` | `claimed_state` agrees with `observed_admin` |
 | | `renewed` | A grant while this user's Privileges session was already open |
+| | `replaced_out_of_band` | `true` when the grant replaced this user's out-of-band session, which an `elevation.revoked` with trigger `privileges_grant` ends just before it. Absent otherwise |
 | | `expires_basis` | Where `elevation.expires` came from: `ExpirationInterval` or `ExpirationIntervalMax`; `PrivilegesTimer`, the duration the user picked in Privileges, read from Privileges' own timer and never later than `ExpirationIntervalMax` |
 | | `caller_uid` | UID of the process that called the daemon over XPC |
-| `elevation.revoked` | `trigger` | `hook`, `heartbeat`, `command` (remote revoke) or `permanent_admin` (an out-of-band session's user is now in `PermanentAdmins`: the session ends and the rights stay) |
+| `elevation.revoked` | `trigger` | `hook`, `heartbeat`, `command` (remote revoke) `permanent_admin` (an out-of-band session's user is now in `PermanentAdmins`: the session ends and the rights stay) or `privileges_grant` (a Privileges grant replaced the user's out-of-band session: the session ends, the rights stay, and the grant's session follows) |
 | | `command_id` | The console command that caused it (`command` only) |
 | | `claimed_state` | As above (`hook` only) |
-| | `observed_admin`, `verified` | As above. On `heartbeat` and `command` they are `false`, `true`: the daemon confirmed the rights are gone. On `permanent_admin` they are `true`, `true`: the rights are still there, as expected |
+| | `observed_admin`, `verified` | As above. On `heartbeat` and `command` they are `false`, `true`: the daemon confirmed the rights are gone. On `permanent_admin` they are `true`, `true`: the rights are still there, as expected. On `privileges_grant` both are the admin group membership the daemon read with the grant |
 | | `caller_uid` | UID of the process that called the daemon over XPC (`hook` only) |
 | | `orphan` | Revoke with no open session on the device (e.g. agent installed mid-session) |
 | | `inferred` | Closed without the user giving rights back: by the heartbeat because the user is no longer admin |

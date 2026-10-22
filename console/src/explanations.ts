@@ -55,6 +55,9 @@ export const flagTips: Record<string, string> = {
     "someone was already an admin.",
   out_of_band: explanations.withoutGrant,
   overdue: "The rights outlived their expiry and the grace period after it.",
+  after_out_of_band:
+    "This grant replaced admin rights nobody granted. Privileges’ hook reported it, and the user can run the hook " +
+    "by hand, so check the grant is real.",
   persistence_detected:
     "Something that could keep access after the rights end appeared during this window, such as a launch item, " +
     "sudoers rule, SSH key, local account or remote access setting.",
