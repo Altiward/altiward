@@ -13,7 +13,7 @@ Every section has the four headings below, with "None." under any that don't app
 
 ### Upgrade order
 
-Upgrade the server to 0.1.2 first. An older server ends the replaced session as `revoked`
+Upgrade the server to 0.2.0 first. An older server ends the replaced session as `revoked`
 and doesn't close its finding.
 
 ### Breaking changes
@@ -34,7 +34,7 @@ None.
   Privileges one. The grant carries `replaced_out_of_band: true`. Before, the session stayed
   open and its `admin.out_of_band` finding never closed.
 
-## Server 0.1.2 - unreleased
+## Server 0.2.0 - unreleased
 
 ### Upgrade order
 
