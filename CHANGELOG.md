@@ -64,6 +64,10 @@ None.
   secret, for servers outside Azure: `ALTIWARD_SENTINEL_AUTH=certificate` and
   `ALTIWARD_SENTINEL_CERTIFICATE_FILE`, a PEM file in `certs/`
   (`integrations/sentinel/README.md`).
+- The install guide, `docs/install.md`, has a diagram of how the parts connect, a picture
+  of what to expect after each step, the paths in Jamf Pro and Intune, and troubleshooting
+  for a Mac that never appears, grants that show as "Without a grant" and certificate
+  errors. The bundle includes its pictures.
 
 ## Server 0.1.1 - 2026-10-21
 

@@ -13,7 +13,7 @@ DEV_ENV := ALTIWARD_LISTEN_ADDR=127.0.0.1:8080 \
 	ALTIWARD_AGENT_TOKENS=dev=dev-agent-token-0001 \
 	ALTIWARD_CONSOLE_TOKENS=dev=dev-console-token-001
 
-.PHONY: help test lint agent-build agent-test backend-build backend-test test-db db db-down run-api run-api-console notices notices-check image test-upgrade dev-hook dev-heartbeat package package-verify app-icon console-install console-dev console-test console-build console-seed brand-sync brand-check
+.PHONY: help test lint agent-build agent-test backend-build backend-test test-db db db-down run-api run-api-console notices notices-check image test-upgrade dev-hook dev-heartbeat package package-verify app-icon console-install console-dev console-test console-build console-seed docs-screenshots brand-sync brand-check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
@@ -108,3 +108,6 @@ console-build: ## Build the console into console/dist
 
 console-seed: ## Fill `make run-api` with demo Macs, sessions and an enrollment to approve
 	node dev/seed.mjs
+
+docs-screenshots: db console-build ## Regenerate the console screenshots in docs/images
+	node scripts/docs/screenshots.mjs
