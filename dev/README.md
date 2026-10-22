@@ -13,6 +13,9 @@ make console-dev    # console on localhost:5173
 `compose.yaml` starts only Postgres. `seed.mjs` uses Node's built-in modules to enroll
 simulated Macs and post signed events through the real agent protocol; it has no console
 package dependencies. Development tokens are defined in the Makefile and seed script.
+Check-ins are timed by the server's clock, so to seed a Mac that stopped checking in it
+backdates that device in this Compose project's Postgres (`docker compose exec`); the
+monitor then raises `agent.silent` within a minute.
 
 `make db-down` stops the development database. The Compose project is named `altiward`;
 the production deployment is a separate project named `altiward-server`.
