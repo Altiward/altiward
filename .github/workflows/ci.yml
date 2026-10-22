@@ -109,6 +109,13 @@ jobs:
           done
           docker logs api
           exit 1
+      - name: The Docker-only demo seeds and says it's ready
+        run: |
+          docker tag altiward-api:ci altiward-api:demo # the demo uses it instead of building
+          timeout 300 docker compose -f dev/compose.demo.yaml up --no-build | tee "$RUNNER_TEMP/demo.log"
+          grep -q "Demo ready" "$RUNNER_TEMP/demo.log" || { docker compose -f dev/compose.demo.yaml logs api; exit 1; }
+          docker compose -f dev/compose.demo.yaml down -v
+          docker rmi altiward-api:demo
       - name: The deployment bundle builds
         run: |
           scripts/server-bundle.sh 0.0.0 altiward-api:ci "$RUNNER_TEMP/bundle"

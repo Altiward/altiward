@@ -4,6 +4,10 @@ This guide takes you from nothing to Macs reporting to your own Altiward server.
 the server; the Altiward project never receives your data. For your security review,
 [data handling](data-handling.md) lists what Altiward stores and where data goes.
 
+To look around before you install, the
+[demo](https://github.com/Altiward/altiward/blob/main/dev/README.md#try-the-console-with-demo-data)
+runs the console with example data on your own computer, needing only Docker.
+
 ## What you're installing
 
 <picture>
