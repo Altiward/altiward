@@ -108,7 +108,9 @@ For a real deployment you need a Linux server with Docker Compose, two DNS names
 console), and an MDM. The [install guide](docs/install.md) covers each step, running on
 your own Postgres or load balancer, backups and troubleshooting. On Azure,
 [Deploy to Azure](deploy/azure/README.md) (Preview) creates the server in your
-subscription instead, on Azure Container Apps, with no VM to look after.
+subscription instead, on Azure Container Apps, with no VM to look after:
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v0.2.0%2Fdeploy%2Fazure%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v0.2.0%2Fdeploy%2Fazure%2FcreateUiDefinition.json)
 
 **1. The server.** Download the server release from
 [GitHub Releases](https://github.com/Altiward/altiward/releases) (tagged `server-v0.1.0`),
