@@ -9,6 +9,28 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Server 0.1.2 - unreleased
+
+### Upgrade order
+
+None.
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+- A Mac's details in Fleet list its permanent admins, read-only, from its configuration
+  profile, and say whether each one is an admin now.
+- Admin rights without a grant say that a managed admin account (LAPS) or another
+  standing IT account belongs in `PermanentAdmins` in the Altiward profile, with a link
+  to the install guide.
+
 ## Server 0.1.1 - 2026-10-21
 
 ### Upgrade order

@@ -226,6 +226,28 @@ function DeviceInspector({ device: d, severities, onClose }: {
         </div>
       </div>
 
+      {d.permanent_admins && (
+        <div className="group" role="group" aria-labelledby="permanent-admins-title">
+          <h3 id="permanent-admins-title">Permanent admins</h3>
+          <div className="box">
+            {d.permanent_admins.length === 0
+              ? <p className="secondary" style={{ padding: "6px 0" }}>None set.</p>
+              : (
+                <dl>
+                  {d.permanent_admins.map((u) => [
+                    <dt key={`${u}-t`} style={{ color: "var(--label)" }}>{u}</dt>,
+                    <dd key={`${u}-d`}><span className="secondary">{d.admin_members.includes(u) ? "Admin now" : "Not an admin now"}</span></dd>,
+                  ])}
+                </dl>
+              )}
+          </div>
+          <p className="role-note">
+            From the Mac’s configuration profile. Change them in your MDM: Altiward reports this setting made any other
+            way as tampering, and never removes these accounts’ admin rights.
+          </p>
+        </div>
+      )}
+
       {(d.integrity || d.persistence_unreadable || (d.recent_tamper ?? []).length > 0) && (
         <div className="group" role="group" aria-labelledby="integrity-title">
           <h3 id="integrity-title">Integrity</h3>

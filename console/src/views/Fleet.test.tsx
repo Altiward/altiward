@@ -178,6 +178,24 @@ describe("Fleet", () => {
     expect(await screen.findAllByText("Agent outdated")).toHaveLength(1);
   });
 
+  it("lists the permanent admins from the Mac's profile, read-only", async () => {
+    const api = fakeApi({ devices: vi.fn(async () => [{ ...mac, permanent_admins: ["itadmin", "breakglass"] }]) });
+    render(<ApiContext.Provider value={api}><MemoryRouter><FleetView /></MemoryRouter></ApiContext.Provider>);
+    await userEvent.click(await screen.findByText("C02ZM1BBMD6T"));
+    const group = screen.getByRole("group", { name: "Permanent admins" });
+    expect(within(group).getByText("itadmin").nextSibling).toHaveTextContent("Admin now");
+    expect(within(group).getByText("breakglass").nextSibling).toHaveTextContent("Not an admin now");
+    expect(within(group).getByText(/configuration profile/)).toBeInTheDocument();
+    expect(within(group).queryByRole("button")).toBeNull();
+  });
+
+  it("leaves out permanent admins an agent didn't report", async () => {
+    const api = fakeApi({ devices: vi.fn(async () => [{ ...mac, permanent_admins: undefined }]) });
+    render(<ApiContext.Provider value={api}><MemoryRouter><FleetView /></MemoryRouter></ApiContext.Provider>);
+    await userEvent.click(await screen.findByText("C02ZM1BBMD6T"));
+    expect(screen.queryByRole("group", { name: "Permanent admins" })).toBeNull();
+  });
+
   it("offers revoke for elevated users but not permanent admins", async () => {
     const pending = { command_id: "c1", serial: "C02ZM1BBMD6T", user: "asmith", status: "pending", result: null };
     const api = fakeApi({

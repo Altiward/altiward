@@ -12,6 +12,9 @@ import { CloseIcon, ElevatedGlyph, EndedGlyph, NotGrantedGlyph } from "./Icons";
 import { ConfirmSheet } from "./Sheet";
 import { StateBadge } from "./StateBadge";
 
+/** The install guide's step that sets PermanentAdmins in the agent's profile. */
+const PERMANENT_ADMINS_GUIDE = "https://github.com/Altiward/altiward/blob/main/docs/install.md#2-deploy-the-agent";
+
 const eventLabels: Record<string, string> = {
   "elevation.granted": "Granted",
   "elevation.revoked": "Revoked",
@@ -106,6 +109,14 @@ export function SessionInspector({ session, onClose, onChanged }: {
         </div>
       )}
       {session.open && !session.permanent_admin && !canRevoke && <RoleNote>Revoking admin rights needs the operator role.</RoleNote>}
+      {session.open && !session.permanent_admin && session.source === "out_of_band" && (
+        <p className="role-note">
+          If {session.local_user} is this Mac’s managed admin account (LAPS) or another standing IT account, add it
+          to <code>PermanentAdmins</code> in the Altiward profile in your MDM (<a href={PERMANENT_ADMINS_GUIDE}
+          target="_blank" rel="noreferrer">how</a>). Altiward can’t tell a managed account from one made to look like
+          it, so your MDM decides.
+        </p>
+      )}
       {notice && <div style={{ margin: "8px -16px 0" }}><Banner kind={notice.kind}>{notice.text}</Banner></div>}
 
       <div className="group">
