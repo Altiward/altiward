@@ -60,18 +60,10 @@ lists what is collected, stored and sent, for your security review.
 
 ### How it fits together
 
-```
- Mac                                      Your Altiward server               Your SIEM
-┌────────────────────────────────┐      ┌───────────────────────────────┐    ┌──────────────┐
-│ SAP Privileges                 │      │ altiward-api (Go)             │    │ Splunk HEC   │
-│  └─ altiward-hook              │      │  ingest ─▶ Postgres           │    │ Sentinel     │
-│       │ XPC                    │HTTPS │   events · sessions · devices │───▶│ syslog       │
-│       ▼                        │─────▶│   export outbox ─▶ workers    │    │ (OCSF, CEF)  │
-│ altiward-agent (root)          │      │  read API ─▶ console          │    └──────────────┘
-│   verify · ledger · outbox     │      └───────────────────────────────┘
-│   heartbeat (admin group)      │
-└────────────────────────────────┘
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/architecture-dark.svg">
+  <img src="docs/images/architecture-light.svg" width="1000" alt="On each Mac, SAP Privileges grants admin rights and runs Altiward's hook on each change. The hook runs as the logged-in user, so it is untrusted; it passes its claim over XPC to the Altiward agent, which runs as root, checks each claim, reads and removes members of the real admin group, and queues events until they are sent. The agent sends signed events over HTTPS on port 443 to Altiward on your server and picks up revoke commands from it. Altiward, the API and web console, checks each Mac's signature, works out sessions from events, stores them in Postgres and sends events to your SIEM (Splunk, Microsoft Sentinel or syslog) as OCSF or CEF over HTTPS or TLS. IT staff open the console in a browser and sign in through Entra ID or Okta.">
+</picture>
 
 Privileges runs the hook as the logged-in user, who can call it with anything, so it is
 untrusted: the agent, running as root, verifies everything it says against the `admin`
