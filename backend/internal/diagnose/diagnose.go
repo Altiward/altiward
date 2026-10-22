@@ -128,18 +128,22 @@ func Run(ctx context.Context, o Options) Report {
 			switch {
 			case strings.HasPrefix(k, "ALTIWARD_"):
 				env[k] = v
-			case k == "IDENTITY_ENDPOINT" || k == "IDENTITY_HEADER":
+			case k == "IDENTITY_ENDPOINT" || k == "IDENTITY_HEADER" || k == "CONTAINER_APP_NAME":
 				platform[k] = v
 			}
 		}
+	}
+	logs := "docker compose logs --since 24h altiward"
+	if app := platform["CONTAINER_APP_NAME"]; app != "" {
+		logs = "az containerapp logs show --name " + app + " --resource-group <its resource group> " +
+			"--container altiward --tail 300"
 	}
 	now := o.Now()
 	r := Report{
 		GeneratedAt: now.UTC(), Version: o.Version, GoVersion: runtime.Version(),
 		Platform: runtime.GOOS + "/" + runtime.GOARCH,
 		Config:   Config{Settings: redact(env)}, Tokens: []Token{}, Sinks: []SinkCheck{}, Problems: []string{},
-		Logs: "The server's logs aren't in this report. Attach them separately if asked: " +
-			"docker compose logs --since 24h altiward",
+		Logs: "The server's logs aren't in this report. Attach them separately if asked: " + logs,
 	}
 	problem := func(s string) { r.Problems = append(r.Problems, s) }
 

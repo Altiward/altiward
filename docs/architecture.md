@@ -63,7 +63,8 @@ module replacement connect them during development. The Dockerfile builds both G
 the console from the repository root.
 
 `dev/` holds local Postgres and the demo seed. `deploy/compose/` holds the production
-server deployment. Release assembly translates source paths into the established
+server deployment, and `deploy/azure/` the Deploy to Azure template, which runs the same
+image on Azure Container Apps. Release assembly translates source paths into the established
 bundle layout; see [`deploy/README.md`](../deploy/README.md).
 
 Canonical brand SVGs live in `assets/brand/`, renderers in `scripts/brand/`, and generated

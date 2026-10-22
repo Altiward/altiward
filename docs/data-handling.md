@@ -79,7 +79,9 @@ details. Console actions go there too, naming the person who made them.
 
 In the example deployment, Caddy also asks Let's Encrypt for TLS certificates unless you
 provide your own. If you pull the image from the registry instead of loading the file,
-Docker connects to `ghcr.io`.
+Docker connects to `ghcr.io`. With the Deploy to Azure template, Azure pulls the images
+from `ghcr.io` and Caddy's from `public.ecr.aws`, and Container Apps gets the certificate
+for your own domain.
 
 ### In the browser
 
@@ -160,13 +162,20 @@ days after they are reported). It logs to the Mac's unified log under
 
 ## Network and transport
 
-- **TLS** is handled in front of the server: by Caddy in the example deployment, or by
-  your load balancer. The server itself listens on plain HTTP inside the deployment.
+- **TLS** is handled in front of the server: by Caddy in the example deployment, by the
+  Container Apps ingress with the Deploy to Azure template, or by your load balancer. The
+  server itself listens on plain HTTP inside the deployment.
 - **Two hostnames.** Only the agent endpoints face the internet. The console hostname
-  accepts only the networks you list in `ALTIWARD_CONSOLE_ALLOW`.
+  accepts only the networks you list in `ALTIWARD_CONSOLE_ALLOW`. The Deploy to Azure
+  template serves both on one address, and its caddy container applies the same rule by
+  path.
 - **The database connection** in the example deployment stays on Docker's internal
   network without TLS. With your own Postgres, use `sslmode=require` or stronger
-  ([An existing Postgres](install.md#an-existing-postgres)).
+  ([An existing Postgres](install.md#an-existing-postgres)). The Deploy to Azure template
+  keeps the database on a private network, with no public endpoint, and connects over
+  TLS with the certificate checked.
+- **Logs.** The server logs to standard output, naming Macs by serial. With the Deploy to
+  Azure template, Azure keeps them in the template's Log Analytics workspace for 30 days.
 
 ## Diagnostics
 

@@ -68,6 +68,13 @@ None.
   identity endpoint the platform gives the app, and `setup.sh --identity <client ID>`
   sets Sentinel up for a user-assigned identity, with no app registration or secret
   (`integrations/sentinel/README.md`).
+- Deploy to Azure (Preview): a template creates the server in your Azure subscription on
+  Azure Container Apps, with Postgres on a private network, the database URL and tokens
+  in Key Vault, and a caddy container that keeps the console to the networks you list
+  while Macs report from anywhere (`deploy/azure/README.md`). The server sends nothing
+  new; on Azure, Azure keeps its logs for 30 days (`docs/data-handling.md`).
+- On Azure Container Apps, the console's notice of a newer server names the image to
+  change the container app to, instead of the `upgrade.sh` command.
 - The install guide, `docs/install.md`, has a diagram of how the parts connect, a picture
   of what to expect after each step, the paths in Jamf Pro and Intune, and troubleshooting
   for a Mac that never appears, grants that show as "Without a grant" and certificate

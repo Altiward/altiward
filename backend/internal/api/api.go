@@ -19,8 +19,9 @@
 //	POST /v1/devices/{serial}/revoke    operator          revoke a Mac's admins
 //	GET  /v1/commands, /v1/commands/{id} viewer           commands and their results
 //	GET  /v1/audit                      viewer            console actions, newest first
-//	GET  /v1/about                      viewer            the server's version, the oldest agent it accepts, tamper severities
-//	                                                      and whether the console may check GitHub for newer releases
+//	GET  /v1/about                      viewer            the server's version, the oldest agent it accepts, tamper severities,
+//	                                                      whether the console may check GitHub for newer releases and
+//	                                                      the platform it runs on
 //	/v1/auth/*                          see auth.go   console sign-in
 //	GET  /v1/agent/commands             device signature  this Mac's pending commands
 //	POST /v1/agent/commands/{id}/result device signature  report a command's result
@@ -54,7 +55,9 @@ type Server struct {
 	version string
 	// Whether the console's browser may ask GitHub for newer releases (ALTIWARD_UPDATE_CHECK).
 	updateCheck bool
-	sinks       []string // the configured SIEM export sinks
+	// Where it runs, when that changes how to upgrade: "azure-container-apps", and the app's name.
+	platform, app string
+	sinks         []string // the configured SIEM export sinks
 
 	sso           *sso.Provider // nil: console tokens only
 	secureCookies bool
@@ -74,6 +77,12 @@ func WithVersion(v string) Option { return func(s *Server) { s.version = v } }
 // WithUpdateCheck sets whether GET /v1/about lets the console check GitHub for newer
 // releases; on without it. Pass the same value to WithConsole, whose CSP allows the check.
 func WithUpdateCheck(on bool) Option { return func(s *Server) { s.updateCheck = on } }
+
+// WithAzureContainerApp says the server runs as the named Azure container app, so GET
+// /v1/about tells the console to show how to upgrade one.
+func WithAzureContainerApp(name string) Option {
+	return func(s *Server) { s.platform, s.app = "azure-container-apps", name }
+}
 
 func New(s store.Store, tokens *auth.Tokens, log *slog.Logger, now func() time.Time, opts ...Option) http.Handler {
 	srv := &Server{store: s, tokens: tokens, log: log, now: now, version: "dev", updateCheck: true}
@@ -134,10 +143,14 @@ func (s *Server) require(role auth.Role, h handler) http.Handler {
 }
 
 func (s *Server) about(w http.ResponseWriter, _ *http.Request, _ auth.Principal) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	about := map[string]any{
 		"version": s.version, "oldest_supported_agent": release.OldestSupportedAgent,
 		"tamper_severities": ocsf.TamperSeverities(), "update_check": s.updateCheck,
-	})
+	}
+	if s.platform != "" {
+		about["platform"], about["app"] = s.platform, s.app
+	}
+	writeJSON(w, http.StatusOK, about)
 }
 
 func parseTime(s string) (*time.Time, error) {

@@ -106,7 +106,9 @@ common errors.
 
 For a real deployment you need a Linux server with Docker Compose, two DNS names (one for Macs, one for the
 console), and an MDM. The [install guide](docs/install.md) covers each step, running on
-your own Postgres or load balancer, backups and troubleshooting.
+your own Postgres or load balancer, backups and troubleshooting. On Azure,
+[Deploy to Azure](deploy/azure/README.md) (Preview) creates the server in your
+subscription instead, on Azure Container Apps, with no VM to look after.
 
 **1. The server.** Download the server release from
 [GitHub Releases](https://github.com/Altiward/altiward/releases) (tagged `server-v0.1.0`),
@@ -180,6 +182,7 @@ forwards SAP Privileges events without the Altiward agent.
 
 - [Architecture and source layout](docs/architecture.md): component boundaries and where to contribute
 - [Install guide](docs/install.md): server, agent, SIEM, single sign-on, upgrades, backups
+- [Deploy to Azure](deploy/azure/README.md) (Preview): the server on Azure Container Apps
 - [Data handling](docs/data-handling.md): what Altiward collects, stores and sends
 - [Design notes](agent/README.md#design-notes): the agent's trust model, and why
   Privileges stays at the edge

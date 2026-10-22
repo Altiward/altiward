@@ -243,6 +243,9 @@ export interface About {
   tamper_severities?: Record<string, string>;
   /** Whether the console may ask GitHub for newer releases (ALTIWARD_UPDATE_CHECK); missing from older servers. */
   update_check?: boolean;
+  /** Set when the server runs somewhere that changes how to upgrade it: Azure Container Apps, as the named app. */
+  platform?: "azure-container-apps";
+  app?: string;
 }
 
 export class ApiError extends Error {

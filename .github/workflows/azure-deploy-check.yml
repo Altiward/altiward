@@ -1,0 +1,153 @@
+name: Azure deploy check
+
+# Deploys the Deploy to Azure template (deploy/azure/) into a test resource group, checks
+# the server works through the ingress and caddy as a Mac and an admin would use it, then
+# deletes everything it made. It runs after each server release, from the release's tag on
+# GitHub, which is exactly what the button deploys, and by hand on main. A button stays labelled
+# "Preview" until this has passed on a release.
+#
+# Never on pull requests: it signs in to Azure. The azure-test environment holds only IDs
+# (AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID); the sign-in is GitHub OIDC
+# with no secret. That identity has Contributor and Role Based Access Control
+# Administrator on rg-altiward-deploycheck only (docs/releasing.md).
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "A server-v tag, deployed from GitHub as the button does; empty deploys main's template"
+        required: false
+  workflow_run:
+    workflows: [Release server]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-deploy-check
+
+jobs:
+  check:
+    name: Deploy, check and delete
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    environment: azure-test
+    permissions:
+      contents: read
+      id-token: write # the Azure sign-in
+    env:
+      RG: rg-altiward-deploycheck
+      # A release's run takes its tag from the run that triggered it.
+      TAG: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || inputs.tag }}
+      PREFIX: "" # the deploy step sets it; cleanup runs once it has
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ env.TAG || github.ref }}
+
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy, with the console allowed only from a documentation range
+        run: |
+          # New names each time, re-runs too: a deleted run's key vault keeps its name for 90
+          # days. At most 12 characters.
+          prefix="chk$(openssl rand -hex 4)"
+          echo "PREFIX=$prefix" >> "$GITHUB_ENV"
+          password="Aa1-$(openssl rand -hex 16)"
+          echo "::add-mask::$password"
+          if [ -n "$TAG" ]; then
+            template=(--template-uri "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$TAG/deploy/azure/azuredeploy.json")
+          else
+            template=(--template-file deploy/azure/azuredeploy.json)
+          fi
+          # A deployment stack, so deleting it deletes everything it made.
+          az stack group create --name "$prefix" --resource-group "$RG" "${template[@]}" \
+            --parameters namePrefix="$prefix" organisationName=deploycheck \
+              consoleAllowedNetworks=192.0.2.0/24 postgresAdminPassword="$password" \
+            --action-on-unmanage deleteAll --deny-settings-mode none --yes --output none
+          out=$(az stack group show --name "$prefix" --resource-group "$RG" --query outputs --output json)
+          {
+            echo "URL=$(jq -r .consoleUrl.value <<<"$out")"
+            echo "APP=$(jq -r .appName.value <<<"$out")"
+            echo "VAULT=$(jq -r .vaultName.value <<<"$out")"
+          } >> "$GITHUB_ENV"
+
+      - name: The server answers through the ingress and caddy
+        run: |
+          for _ in $(seq 1 60); do
+            [ "$(curl -s -o /dev/null -w '%{http_code}' "$URL/healthz")" = 200 ] && exit 0
+            sleep 10
+          done
+          echo "::error::$URL/healthz never answered 200"
+          exit 1
+
+      - name: Agents get through from anywhere; the console only from the allowed networks
+        run: |
+          code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          expect() { local want="$1" what="$2" got; shift 2; got=$(code "$@") || true # 000: no answer
+            [ "$got" = "$want" ] || { echo "::error::$what: HTTP $got, want $want"; exit 1; }; echo "ok - $what"; }
+          expect 401 "agent enroll without a token reaches Altiward" -X POST "$URL/v1/agent/enroll" -d '{}'
+          expect 403 "console from outside the allowed networks" "$URL/"
+          expect 403 "console with a forged allowed address" -H "X-Forwarded-For: 192.0.2.10" "$URL/"
+
+      - name: The tokens are in Key Vault, readable by whoever deployed
+        run: |
+          for _ in $(seq 1 30); do # a new role assignment takes a few minutes to apply
+            if agent=$(az keyvault secret show --vault-name "$VAULT" --name agent-tokens --query value -o tsv 2>/dev/null) &&
+              console=$(az keyvault secret show --vault-name "$VAULT" --name console-tokens --query value -o tsv 2>/dev/null); then
+              echo "::add-mask::${agent#*=}"
+              echo "::add-mask::${console#*=}"
+              { echo "AGENT_TOKEN=${agent#*=}"; echo "CONSOLE_TOKEN=${console#*=}"; } >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::Can't read the tokens from $VAULT"
+          exit 1
+
+      - name: A Mac enrolls, sends a signed event and holds a long poll
+        run: node scripts/agent-smoke.mjs "$URL" "$AGENT_TOKEN"
+
+      - name: Allowing this runner opens the console to it, which runs the release
+        run: |
+          ip=$(curl -s https://api.ipify.org)
+          az containerapp update --name "$APP" --resource-group "$RG" --container-name caddy \
+            --set-env-vars "ALTIWARD_CONSOLE_ALLOW=$ip/32" --output none
+          want=$(jq -r .variables.version deploy/azure/azuredeploy.json)
+          for _ in $(seq 1 30); do # until the new revision serves
+            if about=$(curl -sf -H "Authorization: Bearer $CONSOLE_TOKEN" "$URL/v1/about"); then
+              got=$(jq -r .version <<<"$about")
+              [ "$got" = "$want" ] || { echo "::error::the server runs $got, want $want"; exit 1; }
+              echo "ok - the console answers, running $got ($(jq -r '.platform // "no platform"' <<<"$about"))"
+              devices=$(curl -sf -H "Authorization: Bearer $CONSOLE_TOKEN" "$URL/v1/devices" | jq '.devices | length')
+              [ "$devices" -ge 1 ] || { echo "::error::the console lists no Macs"; exit 1; }
+              echo "ok - the console lists the Mac"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::the console never answered this runner"
+          exit 1
+
+      - name: Delete everything it made
+        if: always() && env.PREFIX != ''
+        run: |
+          for _ in 1 2 3; do
+            az stack group delete --name "$PREFIX" --resource-group "$RG" --action-on-unmanage deleteAll --yes && break
+            sleep 60
+          done
+          # Anything the stack couldn't delete; every name starts with the prefix.
+          left=$(az resource list --resource-group "$RG" --query "[?starts_with(name, '$PREFIX')].id" -o tsv)
+          if [ -n "$left" ]; then
+            # shellcheck disable=SC2086 # one ID each
+            az resource delete --ids $left --output none || true
+            left=$(az resource list --resource-group "$RG" --query "[?starts_with(name, '$PREFIX')].id" -o tsv)
+          fi
+          [ -z "$left" ] || { echo "::error::Left in $RG: $left"; exit 1; }
+          # The key vault stays soft-deleted for 90 days, under a name no later run uses.

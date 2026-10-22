@@ -16,6 +16,9 @@ signed. A tag is the only trigger: `server-vX.Y.Z` (or `server-vX.Y.Z-rc.N`) run
    replace `unreleased` with today's date. Say under "Upgrade order" whether agents need
    anything, and list any security fixes. The workflow refuses a version whose section
    is missing, undated or lacks one of the four headings.
+   In the same commit, run `scripts/azure-template.sh X.Y.Z`: it sets the Deploy to Azure
+   template's version and points the buttons at the new tag. The workflow refuses a tag
+   the template doesn't match.
 2. **Check everything passes** on `main`: CI, then locally `make test test-db`.
 3. **Tag and push:** `git tag server-vX.Y.Z && git push origin
    server-vX.Y.Z`. The *Release server* workflow waits for a maintainer to approve the
@@ -50,7 +53,9 @@ For anyone who wants to test a release before it ships. Candidates get no fixes:
 candidate or the release replaces them.
 
 1. **Check the notes.** The candidate uses the coming release's `CHANGELOG.md` section,
-   which can still say `unreleased`; keep its four headings filled in.
+   which can still say `unreleased`; keep its four headings filled in. Run
+   `scripts/azure-template.sh X.Y.Z-rc.N` too: it moves only the template, so the deploy
+   check below tries the candidate while the buttons stay on the last release.
 2. **Tag and push:** `git tag server-vX.Y.Z-rc.N && git push
    origin server-vX.Y.Z-rc.N`. The same workflow builds, signs and publishes it. Its notes
    are headed as a release candidate.
@@ -96,6 +101,37 @@ Settings, Environments: add the maintainers as required reviewers, and restrict 
 `server-v*` and `agent-v*` tags. A run then pauses until a maintainer approves it, before
 anything is built, pushed or signed. The `publish` job that creates the release runs after
 it and needs no second approval.
+
+## Deploy to Azure check
+
+After each server release or candidate, the *Azure deploy check* workflow
+(`.github/workflows/azure-deploy-check.yml`) deploys `deploy/azure/azuredeploy.json` from
+the tag on GitHub, as the Deploy to Azure button does, into `rg-altiward-deploycheck`. It
+checks that a Mac can enroll, send a signed event and hold a long poll; that the console
+answers only the allowed networks, including against a forged `X-Forwarded-For`; and that
+the server runs the release. Then it deletes everything it made. Run it by hand from the
+Actions tab, on `main` or with a release tag: the `azure-test` environment allows nothing
+else, so branch code never gets the Azure sign-in. Deploy to Azure stays labelled
+Preview until this has passed on a release; then take "Preview" out of `README.md`,
+`docs/install.md`, `deploy/azure/README.md` and `deploy/azure/createUiDefinition.json`.
+
+Set it up once:
+
+1. Create the resource group `rg-altiward-deploycheck`, and register the resource
+   providers listed in [Before you deploy](../deploy/azure/README.md#before-you-deploy) in
+   its subscription.
+2. Create an Entra app registration with a federated credential for GitHub Actions:
+   organisation `Altiward`, repository `altiward`, entity *Environment*, name
+   `azure-test`. Give it **Contributor** and **Role Based Access Control Administrator**
+   on that resource group only. The template grants access to its key vault, which
+   Contributor alone can't.
+3. Create the repository environment `azure-test`, limited to the `main` branch, with
+   the variables `AZURE_CLIENT_ID` (the app's), `AZURE_TENANT_ID` and
+   `AZURE_SUBSCRIPTION_ID`. They are IDs, not secrets: GitHub's OIDC token is the only
+   credential.
+
+Each run leaves a soft-deleted key vault behind, under a name no later run uses, which
+Azure removes after 90 days.
 
 ## Signing
 

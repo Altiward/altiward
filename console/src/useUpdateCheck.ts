@@ -2,10 +2,14 @@ import { useEffect, useState } from "react";
 import { useApi, useCan } from "./context";
 import { type Check, checkReleases } from "./updates";
 
-export type UpdateCheck =
+/** Where the server runs, which decides how to upgrade it: azureApp is the container app's
+ *  name on Azure Container Apps, and missing for the Compose bundle and the like. */
+export interface Deployment { azureApp?: string }
+
+export type UpdateCheck = Deployment & (
   | { state: "off" }
   | { state: "checking"; running: string }
-  | { state: "done"; running: string; check: Check };
+  | { state: "done"; running: string; check: Check });
 
 /** The update check for an admin; null for other roles, who can't act on it, and while
  *  the server's version is loading. Nothing is fetched for them, or while the server
@@ -24,13 +28,14 @@ export function useUpdateCheck(): UpdateCheck | null {
       } catch {
         return;
       }
+      const where: Deployment = about.platform === "azure-container-apps" ? { azureApp: about.app } : {};
       if (about.update_check !== true) {
-        if (live) setResult({ state: "off" });
+        if (live) setResult({ ...where, state: "off" });
         return;
       }
-      if (live) setResult({ state: "checking", running: about.version });
+      if (live) setResult({ ...where, state: "checking", running: about.version });
       const check = await checkReleases();
-      if (live) setResult({ state: "done", running: about.version, check });
+      if (live) setResult({ ...where, state: "done", running: about.version, check });
     })();
     return () => { live = false; };
   }, [api, admin]);

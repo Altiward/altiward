@@ -133,6 +133,23 @@ describe("Overview update notice", () => {
     expect(github(fetch)).toHaveLength(1);
   });
 
+  it("tells an admin on Azure Container Apps which image to change to", async () => {
+    githubFetch();
+    const api = fakeApi({
+      about: vi.fn(async () => ({ version: "0.1.0", oldest_supported_agent: "0.1", update_check: true,
+        platform: "azure-container-apps" as const, app: "altiwardlab" })),
+    });
+    render(<ApiContext.Provider value={api}><MeContext.Provider value={signedIn("admin")}>
+      <MemoryRouter><OverviewView /></MemoryRouter>
+    </MeContext.Provider></ApiContext.Provider>);
+    const notice = await screen.findByRole("region", { name: "Server 0.2.0 is available" });
+    expect(within(notice).getByText("ghcr.io/altiward/altiward-api:0.2.0")).toBeInTheDocument();
+    expect(within(notice).getByText("altiwardlab")).toBeInTheDocument();
+    expect(within(notice).queryByText(/upgrade\.sh/)).toBeNull();
+    expect(within(notice).getByRole("link", { name: "how to upgrade" }))
+      .toHaveAttribute("href", "https://github.com/Altiward/altiward/blob/server-v0.2.0/deploy/azure/README.md#upgrading");
+  });
+
   it("can be dismissed for that version", async () => {
     githubFetch();
     renderAs("admin");

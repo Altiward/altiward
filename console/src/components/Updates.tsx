@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { dateTime } from "../format";
 import { type GitHubRelease, type Latest, available, dismiss, isDismissed, isVersion } from "../updates";
-import { useUpdateCheck } from "../useUpdateCheck";
+import { type Deployment, useUpdateCheck } from "../useUpdateCheck";
 import { AttentionGlyph, UpdateGlyph } from "./Icons";
 import { StateBadge } from "./StateBadge";
 
@@ -33,10 +33,15 @@ function Command({ text }: { text: string }) {
 }
 
 /** A newer server: what it is, whether it fixes a security problem, and the upgrade steps
- *  from the install guide with its version filled in. */
-export function ServerNotice({ running, latest, onDismiss }: { running: string; latest: Latest; onDismiss?: () => void }) {
+ *  from the install guide with its version filled in: upgrade.sh, or on Azure Container
+ *  Apps, the app's new image. */
+export function ServerNotice({ running, latest, azureApp, onDismiss }: Deployment & {
+  running: string; latest: Latest; onDismiss?: () => void;
+}) {
   const v = latest.version;
-  const guide = `https://github.com/Altiward/altiward/blob/server-v${v}/docs/install.md#releases-and-updates`;
+  const guide = azureApp !== undefined
+    ? `https://github.com/Altiward/altiward/blob/server-v${v}/deploy/azure/README.md#upgrading`
+    : `https://github.com/Altiward/altiward/blob/server-v${v}/docs/install.md#releases-and-updates`;
   return (
     <section className="update-notice" aria-label={`Server ${v} is available`}>
       <div className="update-head">
@@ -44,12 +49,25 @@ export function ServerNotice({ running, latest, onDismiss }: { running: string; 
         {latest.security && <SecurityTag />}
         {onDismiss && <button type="button" className="button" onClick={onDismiss}>Dismiss</button>}
       </div>
-      <p className="hint">
-        <a href={latest.url} target="_blank" rel="noreferrer">Release notes for {v}</a>. Put the release files in one
-        directory on the server, read <code>RELEASE_NOTES.md</code>, then run the upgrade script from your deployment
-        directory (<a href={guide} target="_blank" rel="noreferrer">how to upgrade</a>):
-      </p>
-      <Command text={`./upgrade.sh ~/altiward-${v}`} />
+      {azureApp !== undefined ? (
+        <>
+          <p className="hint">
+            <a href={latest.url} target="_blank" rel="noreferrer">Release notes for {v}</a>. Read them, then change the
+            image of the container app <code>{azureApp}</code>’s <code>altiward</code> container to this one
+            (<a href={guide} target="_blank" rel="noreferrer">how to upgrade</a>):
+          </p>
+          <Command text={`ghcr.io/altiward/altiward-api:${v}`} />
+        </>
+      ) : (
+        <>
+          <p className="hint">
+            <a href={latest.url} target="_blank" rel="noreferrer">Release notes for {v}</a>. Put the release files in one
+            directory on the server, read <code>RELEASE_NOTES.md</code>, then run the upgrade script from your deployment
+            directory (<a href={guide} target="_blank" rel="noreferrer">how to upgrade</a>):
+          </p>
+          <Command text={`./upgrade.sh ~/altiward-${v}`} />
+        </>
+      )}
     </section>
   );
 }
@@ -88,10 +106,15 @@ export function UpdateNotices({ fleetAgents }: { fleetAgents: string[] }) {
   const hide = (product: "server" | "agent", version: string) => () => { dismiss(product, version); setDismissed((n) => n + 1); };
   return (
     <div className="update-notices">
-      {server && <ServerNotice running={u.running} latest={server} onDismiss={hide("server", server.version)} />}
+      {server && <ServerNotice running={u.running} latest={server} azureApp={u.azureApp} onDismiss={hide("server", server.version)} />}
       {agent && a.fleetAgent && <AgentNotice fleet={a.fleetAgent} latest={agent} onDismiss={hide("agent", agent.version)} />}
     </div>
   );
+}
+
+/** Where the update check is turned off: the Compose bundle's .env, or the container app. */
+function whereSettingsLive(azureApp?: string) {
+  return azureApp !== undefined ? "in the container app’s environment variables" : "in the server’s .env";
 }
 
 /** Settings' Updates group, for admins: the latest versions, when they were checked, and
@@ -103,13 +126,14 @@ export function UpdatesGroup({ fleetAgents }: { fleetAgents: string[] | null }) 
       <h3 id="updates-title">Updates</h3>
       {u?.state === "off" && (
         <p className="hint">
-          The update check is off: <code>ALTIWARD_UPDATE_CHECK=false</code> is set in the server’s .env. New releases are
-          listed on <a href={RELEASES_PAGE} target="_blank" rel="noreferrer">GitHub</a>.
+          The update check is off: <code>ALTIWARD_UPDATE_CHECK=false</code> is set {whereSettingsLive(u.azureApp)}. New
+          releases are listed on <a href={RELEASES_PAGE} target="_blank" rel="noreferrer">GitHub</a>.
         </p>
       )}
       {u?.state === "checking" && <p className="hint" role="status">Checking for updates…</p>}
       {u?.state === "done" && (u.check.releases
-        ? <LatestVersions running={u.running} fleetAgents={fleetAgents} releases={u.check.releases} checkedAt={u.check.checkedAt} />
+        ? <LatestVersions running={u.running} fleetAgents={fleetAgents} releases={u.check.releases} checkedAt={u.check.checkedAt}
+          azureApp={u.azureApp} />
         : (
           <div className="box">
             <div className="row">
@@ -130,7 +154,7 @@ export function UpdatesGroup({ fleetAgents }: { fleetAgents: string[] | null }) 
   );
 }
 
-function LatestVersions({ running, fleetAgents, releases, checkedAt }: {
+function LatestVersions({ running, fleetAgents, releases, checkedAt, azureApp }: Deployment & {
   running: string; fleetAgents: string[] | null; releases: GitHubRelease[]; checkedAt: string | null;
 }) {
   const a = available(running, fleetAgents ?? [], releases);
@@ -155,9 +179,9 @@ function LatestVersions({ running, fleetAgents, releases, checkedAt }: {
       <p className="hint">
         Last checked {dateTime(checkedAt)}. Your browser asks api.github.com for the release list at most once a
         day after a successful check, and at most once an hour while it can’t reach GitHub. It sends no versions and
-        nothing about your Macs. <code>ALTIWARD_UPDATE_CHECK=false</code> in the server’s .env turns it off.
+        nothing about your Macs. <code>ALTIWARD_UPDATE_CHECK=false</code> {whereSettingsLive(azureApp)} turns it off.
       </p>
-      {a.newerServer && <ServerNotice running={running} latest={a.newerServer} />}
+      {a.newerServer && <ServerNotice running={running} latest={a.newerServer} azureApp={azureApp} />}
       {a.newerAgent && a.fleetAgent && <AgentNotice fleet={a.fleetAgent} latest={a.newerAgent} />}
     </>
   );
