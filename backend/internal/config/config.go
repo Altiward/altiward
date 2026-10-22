@@ -77,17 +77,21 @@ type Sentinel struct {
 	Endpoint string // ALTIWARD_SENTINEL_ENDPOINT (the rule's logs ingestion URL, or a DCE's)
 	RuleID   string // ALTIWARD_SENTINEL_DCR_ID (immutable ID)
 	Stream   string // ALTIWARD_SENTINEL_STREAM, default Custom-AltiwardOCSF
-	Auth     string // ALTIWARD_SENTINEL_AUTH: SentinelSecret (default) or SentinelManagedIdentity
-	TenantID string // ALTIWARD_SENTINEL_TENANT_ID; secret only
+	Auth     string // ALTIWARD_SENTINEL_AUTH: SentinelSecret (default), SentinelCertificate or SentinelManagedIdentity
+	TenantID string // ALTIWARD_SENTINEL_TENANT_ID; secret and certificate only
 	// ALTIWARD_SENTINEL_CLIENT_ID: the app registration's, or with a managed identity, a
 	// user-assigned identity's (empty = the VM's system-assigned identity)
 	ClientID     string
 	ClientSecret string // ALTIWARD_SENTINEL_CLIENT_SECRET; secret only
+	// ALTIWARD_SENTINEL_CERTIFICATE_FILE; certificate only: a PEM file with the app's
+	// certificate and its private key
+	CertificateFile string
 }
 
 // How the Sentinel export signs in to Entra ID.
 const (
 	SentinelSecret          = "secret"           // an app registration's client secret
+	SentinelCertificate     = "certificate"      // an app registration's certificate, from a file
 	SentinelManagedIdentity = "managed-identity" // the Azure VM's managed identity, through IMDS
 )
 
@@ -136,20 +140,33 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if ep := getenv("ALTIWARD_SENTINEL_ENDPOINT"); ep != "" {
 		c.Sentinel = &Sentinel{
-			Endpoint:     ep,
-			RuleID:       getenv("ALTIWARD_SENTINEL_DCR_ID"),
-			Stream:       or(getenv("ALTIWARD_SENTINEL_STREAM"), "Custom-AltiwardOCSF"),
-			Auth:         or(getenv("ALTIWARD_SENTINEL_AUTH"), SentinelSecret),
-			TenantID:     getenv("ALTIWARD_SENTINEL_TENANT_ID"),
-			ClientID:     getenv("ALTIWARD_SENTINEL_CLIENT_ID"),
-			ClientSecret: getenv("ALTIWARD_SENTINEL_CLIENT_SECRET"),
+			Endpoint:        ep,
+			RuleID:          getenv("ALTIWARD_SENTINEL_DCR_ID"),
+			Stream:          or(getenv("ALTIWARD_SENTINEL_STREAM"), "Custom-AltiwardOCSF"),
+			Auth:            or(getenv("ALTIWARD_SENTINEL_AUTH"), SentinelSecret),
+			TenantID:        getenv("ALTIWARD_SENTINEL_TENANT_ID"),
+			ClientID:        getenv("ALTIWARD_SENTINEL_CLIENT_ID"),
+			ClientSecret:    getenv("ALTIWARD_SENTINEL_CLIENT_SECRET"),
+			CertificateFile: getenv("ALTIWARD_SENTINEL_CERTIFICATE_FILE"),
 		}
 		s := c.Sentinel
+		if s.CertificateFile != "" && s.Auth != SentinelCertificate {
+			return c, errors.New("ALTIWARD_SENTINEL_CERTIFICATE_FILE is only used with ALTIWARD_SENTINEL_AUTH=certificate")
+		}
 		switch s.Auth {
 		case SentinelSecret:
 			if s.RuleID == "" || s.TenantID == "" || s.ClientID == "" || s.ClientSecret == "" {
 				return c, errors.New("ALTIWARD_SENTINEL_* needs DCR_ID, TENANT_ID, CLIENT_ID and CLIENT_SECRET " +
-					"(or ALTIWARD_SENTINEL_AUTH=managed-identity on an Azure VM)")
+					"(or ALTIWARD_SENTINEL_AUTH=certificate, or managed-identity on an Azure VM)")
+			}
+		case SentinelCertificate:
+			if s.RuleID == "" || s.TenantID == "" || s.ClientID == "" || s.CertificateFile == "" {
+				return c, errors.New("ALTIWARD_SENTINEL_AUTH=certificate needs ALTIWARD_SENTINEL_DCR_ID, TENANT_ID, " +
+					"CLIENT_ID and CERTIFICATE_FILE")
+			}
+			if s.ClientSecret != "" {
+				return c, errors.New("ALTIWARD_SENTINEL_CLIENT_SECRET isn't used with ALTIWARD_SENTINEL_AUTH=certificate: " +
+					"remove it from .env")
 			}
 		case SentinelManagedIdentity:
 			if s.RuleID == "" {
@@ -160,7 +177,7 @@ func Load(getenv func(string) string) (Config, error) {
 					"remove it from .env")
 			}
 		default:
-			return c, fmt.Errorf("ALTIWARD_SENTINEL_AUTH: want secret or managed-identity, got %q", s.Auth)
+			return c, fmt.Errorf("ALTIWARD_SENTINEL_AUTH: want secret, certificate or managed-identity, got %q", s.Auth)
 		}
 	}
 	if addr := getenv("ALTIWARD_SYSLOG_ADDR"); addr != "" {

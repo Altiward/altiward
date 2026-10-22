@@ -66,7 +66,7 @@ type Database struct {
 type SinkCheck struct {
 	Sink      string `json:"sink"`
 	Endpoint  string `json:"endpoint"`
-	Auth      string `json:"auth,omitempty"` // Sentinel's: secret or managed-identity
+	Auth      string `json:"auth,omitempty"` // Sentinel's: secret, certificate or managed-identity
 	Reachable bool   `json:"reachable"`
 	Error     string `json:"error,omitempty"`
 }
@@ -77,7 +77,8 @@ var notSecret = map[string]bool{
 	"ALTIWARD_SPLUNK_HEC_URL": true, "ALTIWARD_SPLUNK_INDEX": true,
 	"ALTIWARD_SENTINEL_ENDPOINT": true, "ALTIWARD_SENTINEL_DCR_ID": true, "ALTIWARD_SENTINEL_STREAM": true,
 	"ALTIWARD_SENTINEL_AUTH": true, "ALTIWARD_SENTINEL_TENANT_ID": true, "ALTIWARD_SENTINEL_CLIENT_ID": true,
-	"ALTIWARD_SYSLOG_ADDR": true, "ALTIWARD_SYSLOG_TLS": true, "ALTIWARD_SYSLOG_CA_FILE": true, "ALTIWARD_TRUSTED_CAS_FILE": true,
+	"ALTIWARD_SENTINEL_CERTIFICATE_FILE": true,
+	"ALTIWARD_SYSLOG_ADDR":               true, "ALTIWARD_SYSLOG_TLS": true, "ALTIWARD_SYSLOG_CA_FILE": true, "ALTIWARD_TRUSTED_CAS_FILE": true,
 	"ALTIWARD_SYSLOG_FORMAT": true, "ALTIWARD_SYSLOG_FRAMING": true, "ALTIWARD_AUDIT_RETENTION_DAYS": true,
 	"ALTIWARD_OIDC_ISSUER": true, "ALTIWARD_OIDC_CLIENT_ID": true, "ALTIWARD_CONSOLE_URL": true,
 	"ALTIWARD_OIDC_TENANT": true, "ALTIWARD_OIDC_GROUPS_CLAIM": true, "ALTIWARD_OIDC_SCOPES": true,

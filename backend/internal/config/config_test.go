@@ -146,7 +146,42 @@ func TestSentinelManagedIdentity(t *testing.T) {
 	for name, tc := range map[string]struct{ key, value, want string }{
 		"a secret too": {"ALTIWARD_SENTINEL_CLIENT_SECRET", "s", "ALTIWARD_SENTINEL_CLIENT_SECRET isn't used with ALTIWARD_SENTINEL_AUTH=managed-identity"},
 		"no rule":      {"ALTIWARD_SENTINEL_DCR_ID", "", "ALTIWARD_SENTINEL_DCR_ID"},
-		"unknown auth": {"ALTIWARD_SENTINEL_AUTH", "msi", `ALTIWARD_SENTINEL_AUTH: want secret or managed-identity, got "msi"`},
+		"unknown auth": {"ALTIWARD_SENTINEL_AUTH", "msi", `ALTIWARD_SENTINEL_AUTH: want secret, certificate or managed-identity, got "msi"`},
+	} {
+		bad := map[string]string{}
+		for k, v := range m {
+			bad[k] = v
+		}
+		bad[tc.key] = tc.value
+		if _, err := config.Load(env(bad)); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+}
+
+func TestSentinelCertificate(t *testing.T) {
+	m := map[string]string{
+		"ALTIWARD_AGENT_TOKENS":              "acme=x",
+		"ALTIWARD_SENTINEL_ENDPOINT":         "https://dce",
+		"ALTIWARD_SENTINEL_DCR_ID":           "dcr-1",
+		"ALTIWARD_SENTINEL_AUTH":             "certificate",
+		"ALTIWARD_SENTINEL_TENANT_ID":        "t",
+		"ALTIWARD_SENTINEL_CLIENT_ID":        "c",
+		"ALTIWARD_SENTINEL_CERTIFICATE_FILE": "/etc/altiward/certs/sentinel.pem",
+	}
+	c, err := config.Load(env(m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := c.Sentinel; s.Auth != config.SentinelCertificate || s.CertificateFile != "/etc/altiward/certs/sentinel.pem" {
+		t.Fatalf("certificate = %+v", s)
+	}
+
+	for name, tc := range map[string]struct{ key, value, want string }{
+		"a secret too": {"ALTIWARD_SENTINEL_CLIENT_SECRET", "s", "ALTIWARD_SENTINEL_CLIENT_SECRET isn't used with ALTIWARD_SENTINEL_AUTH=certificate"},
+		"no file":      {"ALTIWARD_SENTINEL_CERTIFICATE_FILE", "", "needs ALTIWARD_SENTINEL_DCR_ID, TENANT_ID, CLIENT_ID and CERTIFICATE_FILE"},
+		"no tenant":    {"ALTIWARD_SENTINEL_TENANT_ID", "", "needs ALTIWARD_SENTINEL_DCR_ID, TENANT_ID, CLIENT_ID and CERTIFICATE_FILE"},
+		"another auth": {"ALTIWARD_SENTINEL_AUTH", "secret", "ALTIWARD_SENTINEL_CERTIFICATE_FILE is only used with ALTIWARD_SENTINEL_AUTH=certificate"},
 	} {
 		bad := map[string]string{}
 		for k, v := range m {

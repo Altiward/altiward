@@ -111,7 +111,7 @@ also run `docker compose exec altiward /usr/local/bin/altiward-api diagnose` and
 
 | The error contains | Likely cause |
 | --- | --- |
-| `sentinel: token: token endpoint HTTP 400` or `401` | Wrong tenant ID, client ID or secret |
+| `sentinel: token: token endpoint HTTP 400` or `401` | Wrong tenant ID, client ID or secret; with a certificate, it isn't on the app or has expired (`AADSTS700027`) |
 | `sentinel: HTTP 403` | The role assignment hasn't taken effect yet (allow 30 minutes), or it's on a different DCR |
 | `sentinel: HTTP 404` | Wrong DCR immutable ID or endpoint |
 | `sentinel: Post` | The server can't reach the ingestion host: check its firewall, or with private link, that the DCE is in the scope |
@@ -134,6 +134,43 @@ az ad app credential reset --id <appId> --append --years 1
 Put the new `password` in `.env` as `ALTIWARD_SENTINEL_CLIENT_SECRET` and run
 `docker compose up -d`. Once events are arriving again, delete the old secret in the app's
 *Certificates & secrets* page in the Entra admin center.
+
+### Outside Azure: a certificate instead of a secret
+
+A server that isn't on an Azure VM can sign in with a certificate on the app instead of a
+secret, so `.env` holds no secret. After step 1, on a machine with OpenSSL and the Azure
+CLI, make a certificate, add it to the app next to its secret, and put the certificate and
+its private key in one file:
+
+```sh
+openssl req -x509 -newkey rsa:3072 -nodes -days 365 -subj "/CN=Altiward SIEM export" \
+  -keyout sentinel-key.pem -out sentinel-cert.pem
+az ad app credential reset --id <appId> --cert @sentinel-cert.pem --append
+cat sentinel-cert.pem sentinel-key.pem > sentinel.pem
+```
+
+A certificate from your own CA works too, exported as PEM with an RSA key and no
+passphrase. Copy `sentinel.pem` to `certs/` in your deployment directory, readable only by
+the server's container user (UID 65532), and delete the other copies of the key:
+
+```sh
+sudo install -o 65532 -g 65532 -m 400 sentinel.pem certs/sentinel.pem
+rm sentinel.pem sentinel-key.pem
+```
+
+In `.env`, replace the `ALTIWARD_SENTINEL_CLIENT_SECRET` line with these two, then run
+`docker compose up -d`:
+
+```sh
+ALTIWARD_SENTINEL_AUTH=certificate
+ALTIWARD_SENTINEL_CERTIFICATE_FILE=/etc/altiward/certs/sentinel.pem
+```
+
+Once events are arriving, delete the app's secret on its *Certificates & secrets* page in
+the Entra admin center. The server reads the file when it starts, and logs a warning in
+the last 30 days before the certificate expires. To renew it, make and add a new one the
+same way, replace the file, run `docker compose up -d`, then delete the old certificate
+from the app.
 
 ### On an Azure VM: no secret
 

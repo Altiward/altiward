@@ -49,6 +49,7 @@ services:
       ALTIWARD_SENTINEL_TENANT_ID: ${ALTIWARD_SENTINEL_TENANT_ID:-}
       ALTIWARD_SENTINEL_CLIENT_ID: ${ALTIWARD_SENTINEL_CLIENT_ID:-}
       ALTIWARD_SENTINEL_CLIENT_SECRET: ${ALTIWARD_SENTINEL_CLIENT_SECRET:-}
+      ALTIWARD_SENTINEL_CERTIFICATE_FILE: ${ALTIWARD_SENTINEL_CERTIFICATE_FILE:-}
       ALTIWARD_SYSLOG_ADDR: ${ALTIWARD_SYSLOG_ADDR:-}
       ALTIWARD_SYSLOG_TLS: ${ALTIWARD_SYSLOG_TLS:-}
       ALTIWARD_SYSLOG_CA_FILE: ${ALTIWARD_SYSLOG_CA_FILE:-}
@@ -57,7 +58,8 @@ services:
       # An internal CA to trust for the SIEM and the identity provider.
       ALTIWARD_TRUSTED_CAS_FILE: ${ALTIWARD_TRUSTED_CAS_FILE:-}
     volumes:
-      # CA files, such as your SIEM's: ALTIWARD_TRUSTED_CAS_FILE=/etc/altiward/certs/<file>
+      # CA files, such as your SIEM's: ALTIWARD_TRUSTED_CAS_FILE=/etc/altiward/certs/<file>,
+      # and the Sentinel certificate: ALTIWARD_SENTINEL_CERTIFICATE_FILE=/etc/altiward/certs/<file>
       - ./certs:/etc/altiward/certs:ro
     healthcheck:
       test: ["CMD", "/usr/local/bin/altiward-api", "health"]

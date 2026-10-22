@@ -104,11 +104,13 @@ func (c *Client) post(ctx context.Context, batch []json.RawMessage) error {
 }
 
 // ClientCredentials gets Entra ID tokens with the OAuth 2.0 client-credentials grant
-// and caches them until shortly before expiry.
+// and caches them until shortly before expiry. It signs in with Certificate when set, and
+// with ClientSecret otherwise.
 type ClientCredentials struct {
 	TenantID     string
 	ClientID     string
 	ClientSecret string
+	Certificate  *Certificate
 	// AuthorityHost defaults to https://login.microsoftonline.com (override for sovereign clouds).
 	AuthorityHost string
 	HTTP          *http.Client
@@ -136,13 +138,22 @@ func (cc *ClientCredentials) Token(ctx context.Context) (string, error) {
 	if host == "" {
 		host = "https://login.microsoftonline.com"
 	}
-	form := url.Values{
-		"grant_type":    {"client_credentials"},
-		"client_id":     {cc.ClientID},
-		"client_secret": {cc.ClientSecret},
-		"scope":         {monitorScope},
-	}
 	u := fmt.Sprintf("%s/%s/oauth2/v2.0/token", strings.TrimRight(host, "/"), url.PathEscape(cc.TenantID))
+	form := url.Values{
+		"grant_type": {"client_credentials"},
+		"client_id":  {cc.ClientID},
+		"scope":      {monitorScope},
+	}
+	if cc.Certificate != nil {
+		assertion, err := cc.Certificate.assertion(cc.ClientID, u, now())
+		if err != nil {
+			return "", fmt.Errorf("sign client assertion: %w", err)
+		}
+		form.Set("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
+		form.Set("client_assertion", assertion)
+	} else {
+		form.Set("client_secret", cc.ClientSecret)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", err

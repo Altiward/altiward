@@ -5,7 +5,7 @@ Reusable Go transport clients used by `backend/internal/export`:
 | Directory | Client |
 | --- | --- |
 | [`splunk/`](splunk/) | Splunk HTTP Event Collector |
-| [`sentinel/`](sentinel/) | Azure Monitor Logs Ingestion, with client-secret or managed-identity authentication |
+| [`sentinel/`](sentinel/) | Azure Monitor Logs Ingestion, with client-secret, certificate or managed-identity authentication |
 | [`syslog/`](syslog/) | Syslog over TLS or TCP, with CEF or OCSF JSON bodies |
 
 These packages have their own Go module, `github.com/Altiward/altiward/integrations`,
