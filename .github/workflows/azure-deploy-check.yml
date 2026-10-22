@@ -2,9 +2,10 @@ name: Azure deploy check
 
 # Deploys the Deploy to Azure template (deploy/azure/) into a test resource group, checks
 # the server works through the ingress and caddy as a Mac and an admin would use it, then
-# deletes everything it made. It runs after each server release, from the release's tag on
-# GitHub, which is exactly what the button deploys, and by hand on main. A button stays labelled
-# "Preview" until this has passed on a release.
+# deletes everything it made. It runs after each server release, deploying the template
+# from GitHub at the commit the release built, as the button does, and by hand with a
+# release tag or on main. Deploy to Azure stays labelled Preview until this has passed on
+# a release.
 #
 # Never on pull requests: it signs in to Azure. The azure-test environment holds only IDs
 # (AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID); the sign-in is GitHub OIDC
@@ -15,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "A server-v tag, deployed from GitHub as the button does; empty deploys main's template"
+        description: "A server-v release tag to deploy; empty deploys main's template"
         required: false
   workflow_run:
     workflows: [Release server]
@@ -39,13 +40,20 @@ jobs:
       id-token: write # the Azure sign-in
     env:
       RG: rg-altiward-deploycheck
-      # A release's run takes its tag from the run that triggered it.
-      TAG: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || inputs.tag }}
-      PREFIX: "" # the deploy step sets it; cleanup runs once it has
     steps:
+      - name: A release tag, if one was given
+        if: inputs.tag != ''
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$TAG" =~ ^server-v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] ||
+            { echo "::error::Not a server release tag: $TAG"; exit 1; }
+
+      # After a release, the commit it built, never a name that could have moved since; by
+      # hand, the tag given or main.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: ${{ env.TAG || github.ref }}
+          ref: ${{ github.event.workflow_run.head_sha || inputs.tag || github.sha }}
 
       - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
@@ -54,31 +62,31 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy, with the console allowed only from a documentation range
+        id: deploy
         run: |
           # New names each time, re-runs too: a deleted run's key vault keeps its name for 90
           # days. At most 12 characters.
           prefix="chk$(openssl rand -hex 4)"
-          echo "PREFIX=$prefix" >> "$GITHUB_ENV"
+          echo "prefix=$prefix" >> "$GITHUB_OUTPUT"
           password="Aa1-$(openssl rand -hex 16)"
           echo "::add-mask::$password"
-          if [ -n "$TAG" ]; then
-            template=(--template-uri "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$TAG/deploy/azure/azuredeploy.json")
-          else
-            template=(--template-file deploy/azure/azuredeploy.json)
-          fi
+          # From GitHub, as the button deploys it, at the commit checked out.
+          template="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$(git rev-parse HEAD)/deploy/azure/azuredeploy.json"
           # A deployment stack, so deleting it deletes everything it made.
-          az stack group create --name "$prefix" --resource-group "$RG" "${template[@]}" \
+          az stack group create --name "$prefix" --resource-group "$RG" --template-uri "$template" \
             --parameters namePrefix="$prefix" organisationName=deploycheck \
               consoleAllowedNetworks=192.0.2.0/24 postgresAdminPassword="$password" \
             --action-on-unmanage deleteAll --deny-settings-mode none --yes --output none
           out=$(az stack group show --name "$prefix" --resource-group "$RG" --query outputs --output json)
           {
-            echo "URL=$(jq -r .consoleUrl.value <<<"$out")"
-            echo "APP=$(jq -r .appName.value <<<"$out")"
-            echo "VAULT=$(jq -r .vaultName.value <<<"$out")"
-          } >> "$GITHUB_ENV"
+            echo "url=$(jq -r .consoleUrl.value <<<"$out")"
+            echo "app=$(jq -r .appName.value <<<"$out")"
+            echo "vault=$(jq -r .vaultName.value <<<"$out")"
+          } >> "$GITHUB_OUTPUT"
 
       - name: The server answers through the ingress and caddy
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
         run: |
           for _ in $(seq 1 60); do
             [ "$(curl -s -o /dev/null -w '%{http_code}' "$URL/healthz")" = 200 ] && exit 0
@@ -88,6 +96,8 @@ jobs:
           exit 1
 
       - name: Agents get through from anywhere; the console only from the allowed networks
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
         run: |
           code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
           expect() { local want="$1" what="$2" got; shift 2; got=$(code "$@") || true # 000: no answer
@@ -97,35 +107,44 @@ jobs:
           expect 403 "console with a forged allowed address" -H "X-Forwarded-For: 192.0.2.10" "$URL/"
 
       - name: The tokens are in Key Vault, readable by whoever deployed
+        env:
+          VAULT: ${{ steps.deploy.outputs.vault }}
         run: |
           for _ in $(seq 1 30); do # a new role assignment takes a few minutes to apply
-            if agent=$(az keyvault secret show --vault-name "$VAULT" --name agent-tokens --query value -o tsv 2>/dev/null) &&
-              console=$(az keyvault secret show --vault-name "$VAULT" --name console-tokens --query value -o tsv 2>/dev/null); then
-              echo "::add-mask::${agent#*=}"
-              echo "::add-mask::${console#*=}"
-              { echo "AGENT_TOKEN=${agent#*=}"; echo "CONSOLE_TOKEN=${console#*=}"; } >> "$GITHUB_ENV"
-              exit 0
-            fi
+            az keyvault secret show --vault-name "$VAULT" --name console-tokens --query id -o tsv >/dev/null 2>&1 && exit 0
             sleep 20
           done
           echo "::error::Can't read the tokens from $VAULT"
           exit 1
 
       - name: A Mac enrolls, sends a signed event and holds a long poll
-        run: node scripts/agent-smoke.mjs "$URL" "$AGENT_TOKEN"
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+          VAULT: ${{ steps.deploy.outputs.vault }}
+        run: |
+          agent=$(az keyvault secret show --vault-name "$VAULT" --name agent-tokens --query value -o tsv)
+          echo "::add-mask::${agent#*=}"
+          node scripts/agent-smoke.mjs "$URL" "${agent#*=}"
 
       - name: Allowing this runner opens the console to it, which runs the release
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+          APP: ${{ steps.deploy.outputs.app }}
+          VAULT: ${{ steps.deploy.outputs.vault }}
         run: |
+          console=$(az keyvault secret show --vault-name "$VAULT" --name console-tokens --query value -o tsv)
+          token=${console#*=}
+          echo "::add-mask::$token"
           ip=$(curl -s https://api.ipify.org)
           az containerapp update --name "$APP" --resource-group "$RG" --container-name caddy \
             --set-env-vars "ALTIWARD_CONSOLE_ALLOW=$ip/32" --output none
           want=$(jq -r .variables.version deploy/azure/azuredeploy.json)
           for _ in $(seq 1 30); do # until the new revision serves
-            if about=$(curl -sf -H "Authorization: Bearer $CONSOLE_TOKEN" "$URL/v1/about"); then
+            if about=$(curl -sf -H "Authorization: Bearer $token" "$URL/v1/about"); then
               got=$(jq -r .version <<<"$about")
               [ "$got" = "$want" ] || { echo "::error::the server runs $got, want $want"; exit 1; }
               echo "ok - the console answers, running $got ($(jq -r '.platform // "no platform"' <<<"$about"))"
-              devices=$(curl -sf -H "Authorization: Bearer $CONSOLE_TOKEN" "$URL/v1/devices" | jq '.devices | length')
+              devices=$(curl -sf -H "Authorization: Bearer $token" "$URL/v1/devices" | jq '.devices | length')
               [ "$devices" -ge 1 ] || { echo "::error::the console lists no Macs"; exit 1; }
               echo "ok - the console lists the Mac"
               exit 0
@@ -136,7 +155,9 @@ jobs:
           exit 1
 
       - name: Delete everything it made
-        if: always() && env.PREFIX != ''
+        if: always() && steps.deploy.outputs.prefix != ''
+        env:
+          PREFIX: ${{ steps.deploy.outputs.prefix }}
         run: |
           for _ in 1 2 3; do
             az stack group delete --name "$PREFIX" --resource-group "$RG" --action-on-unmanage deleteAll --yes && break
