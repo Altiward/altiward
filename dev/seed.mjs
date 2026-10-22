@@ -1,6 +1,7 @@
 // Fills a local API (`make run-api`) with realistic demo data through the real agent
 // protocol: each fake Mac enrolls with its own P-256 key and signs its events.
 // Development only. Usage: node dev/seed.mjs [http://127.0.0.1:8080]
+import { execFileSync } from "node:child_process";
 import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto";
 
 const server = process.argv[2] ?? "http://127.0.0.1:8080";
@@ -97,11 +98,29 @@ await send(e, [grant(e, mia, 1500, 60, "Configuring a VPN client", s5),
   health(e, 4, ["itadmin"], { ...passing, privileges_tamper_protection: false })]);
 
 // A Mac last heard from four days ago: within a minute the API's monitor raises agent.silent.
+// Check-ins are timed by the server's clock, so the API records this one as now; backdate
+// the stored device in `make db`'s Postgres to match.
 await send(f, [health(f, 4 * 24 * 60, ["itadmin"])]);
+const silent = backdate(f.serial, ago(4 * 24 * 60));
+
+/** Sets a device's server-side check-in time, so the silence monitor sees it as quiet. */
+function backdate(serial, at) {
+  const sql = `UPDATE devices SET last_seen_at = '${at}',
+    state = jsonb_set(state, '{last_received_at}', to_jsonb('${at}'::text)) WHERE serial = '${serial}'`;
+  try {
+    execFileSync("docker", ["compose", "-f", new URL("compose.yaml", import.meta.url).pathname,
+      "exec", "-T", "postgres", "psql", "-q", "-v", "ON_ERROR_STOP=1", "-U", "altiward", "-d", "altiward", "-c", sql],
+    { stdio: ["ignore", "ignore", "pipe"] });
+    return true;
+  } catch (err) {
+    console.warn(`Couldn't backdate ${serial} in make db's Postgres, so it won't go silent: ${err.stderr?.toString().trim() || err.message}`);
+    return false;
+  }
+}
 
 // A queued device-wide revoke, and a reinstalled Mac waiting for approval.
 await request("POST", `/v1/devices/${b.serial}/revoke`, { bearer: CONSOLE, body: {} });
 await request("PUT", "/v1/settings", { bearer: CONSOLE, body: { reenrollment_requires_approval: true } });
 const again = await enroll(a.serial);
-console.log(`Seeded 6 Macs (1 silent), 5 sessions, 1 tamper alert, 1 queued revoke; ${a.serial} re-enrolled (${again.status}).`);
+console.log(`Seeded 6 Macs (${silent ? 1 : 0} silent), 5 sessions, 1 tamper alert, 1 queued revoke; ${a.serial} re-enrolled (${again.status}).`);
 console.log("Re-enrollment approval is now on; turn it off in Settings if you prefer.");
