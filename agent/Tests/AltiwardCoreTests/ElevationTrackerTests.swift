@@ -351,9 +351,37 @@ struct ElevationTrackerTests {
         let admins = FakeAdmins(["jdoe"])
         let tracker = ElevationTracker(store: store, environment: makeEnvironment(admins: admins, clock: clock))
         let oob = try #require(try tracker.heartbeat().first { $0.type == .adminOutOfBand })
+        clock.advance(300)
         let granted = try tracker.record(grant())
         #expect(granted.sessionID != oob.sessionID)
         #expect(granted.detail["renewed"] == false)
+        #expect(granted.detail["replaced_out_of_band"] == true)
+
+        // The out-of-band session ends ahead of the grant, in the same transaction.
+        let pending = try store.pending(limit: 10).map(\.event)
+        #expect(pending.map(\.type) == [.adminOutOfBand, .agentHealth, .elevationRevoked, .elevationGranted])
+        let ended = pending[2]
+        #expect(ended.sessionID == oob.sessionID)
+        #expect(ended.timestamp == granted.timestamp)
+        #expect(ended.elevation?.source == .outOfBand)
+        #expect(ended.detail["trigger"] == "privileges_grant")
+        #expect(ended.detail["observed_admin"] == true)
+        #expect(ended.detail["verified"] == true)
+        #expect(ended.detail["inferred"] == nil)
+        #expect(pending[3].eventID == granted.eventID)
+        #expect(try store.openSession(user: "jdoe")?.sessionID == granted.sessionID)
+    }
+
+    @Test func firstGrantAndRenewalEndNothing() throws {
+        let store = try makeStore()
+        let tracker = ElevationTracker(
+            store: store, environment: makeEnvironment(admins: FakeAdmins(["jdoe"]), clock: clock))
+        let first = try tracker.record(grant())
+        clock.advance(900)
+        let renewed = try tracker.record(grant())
+        #expect(first.detail["replaced_out_of_band"] == nil)
+        #expect(renewed.detail["replaced_out_of_band"] == nil)
+        #expect(try store.pending(limit: 10).map(\.event.eventID) == [first.eventID, renewed.eventID])
     }
 
     @Test func heartbeatRacingAHookGrantDoesNotCloseIt() throws {

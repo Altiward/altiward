@@ -77,12 +77,14 @@ token in `X-CSRF-Token`; requests with a token don't.
 | `POST /v1/agent/commands/{id}/result` | Device signature. Report a result; the first one wins. |
 | `GET /healthz` | Liveness. |
 
-Session `end_reason`: `revoked`, `inferred`, `expired_enforced`, `remote_revoke` or
-`permanent_admin` (found without a grant, then made a permanent admin; the rights stay).
+Session `end_reason`: `revoked`, `inferred`, `expired_enforced`, `remote_revoke`,
+`permanent_admin` (found without a grant, then made a permanent admin; the rights stay) or
+`privileges_grant` (found without a grant, then replaced by a Privileges grant; the rights stay).
 A session's `source` is `privileges` or `out_of_band`.
 
 Session `flags`: `unverified_claim`, `orphan_revoke`, `out_of_band`, `inferred_end`,
-`overdue`, `persistence_detected`.
+`overdue`, `persistence_detected`, `after_out_of_band` (a Privileges grant that replaced an
+out-of-band session).
 
 ## Configuration
 

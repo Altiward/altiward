@@ -138,6 +138,24 @@ func TestPermanentAdminClosesTheOutOfBandFinding(t *testing.T) {
 	}
 }
 
+func TestPrivilegesGrantClosesTheOutOfBandFinding(t *testing.T) {
+	// The grant is the hook's claim, so the finding closes as Other, saying why, not Resolved.
+	closed := mapJSON(t, stored(t, "elevation-revoked-privileges-grant"))
+	if get(closed, "finding_info.uid") != "7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f" {
+		t.Fatalf("finding uid = %v, want the out-of-band session ID", get(closed, "finding_info.uid"))
+	}
+	if closed["class_uid"] != 2004.0 || closed["activity_name"] != "Close" || closed["status_id"] != 99.0 ||
+		closed["status"] != "Replaced by a Privileges grant" || closed["severity_id"] != 1.0 || closed["is_alert"] != nil {
+		t.Fatalf("%v", closed)
+	}
+	if get(closed, "finding_info.analytic.name") != "altiward.admin_out_of_band" {
+		t.Fatalf("analytic = %v", get(closed, "finding_info.analytic"))
+	}
+	if want := "Replaced on C02XK0AAJGH5: a Privileges grant was reported for backdoor, who held admin rights without one"; closed["message"] != want {
+		t.Fatalf("message = %q", closed["message"])
+	}
+}
+
 func TestPersistenceIsAFindingWithFileEvidence(t *testing.T) {
 	r := mapJSON(t, stored(t, "persistence-detected"))
 	if r["class_uid"] != 2004.0 || r["type_uid"] != 200401.0 || r["severity_id"] != 4.0 || r["is_alert"] != true {

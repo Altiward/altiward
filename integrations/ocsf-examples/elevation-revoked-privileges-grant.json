@@ -1,0 +1,79 @@
+[
+  {
+    "activity_id": 3,
+    "activity_name": "Close",
+    "category_name": "Findings",
+    "category_uid": 2,
+    "class_name": "Detection Finding",
+    "class_uid": 2004,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "finding_info": {
+      "analytic": {
+        "name": "altiward.admin_out_of_band",
+        "type": "Rule",
+        "type_id": 1
+      },
+      "created_time": 1792145700000,
+      "desc": "Replaced on C02XK0AAJGH5: a Privileges grant was reported for backdoor, who held admin rights without one",
+      "first_seen_time": 1792145700000,
+      "title": "Admin rights without a grant",
+      "types": [
+        "Privilege Escalation"
+      ],
+      "uid": "7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f"
+    },
+    "message": "Replaced on C02XK0AAJGH5: a Privileges grant was reported for backdoor, who held admin rights without one",
+    "metadata": {
+      "correlation_uid": "7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f",
+      "logged_time": 1792145700000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.1.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "b61c0e4a-3f2d-4a8b-9e7c-5d4f3a2b1c0e",
+      "version": "1.9.0"
+    },
+    "observables": [
+      {
+        "name": "user.name",
+        "type": "User Name",
+        "type_id": 4,
+        "value": "backdoor"
+      }
+    ],
+    "severity": "Informational",
+    "severity_id": 1,
+    "status": "Replaced by a Privileges grant",
+    "status_id": 99,
+    "time": 1792145700000,
+    "type_name": "Detection Finding: Close",
+    "type_uid": 200403,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "observed_admin": true,
+          "trigger": "privileges_grant",
+          "verified": true
+        },
+        "event_type": "elevation.revoked",
+        "source": "out_of_band"
+      }
+    },
+    "user": {
+      "name": "backdoor"
+    }
+  }
+]

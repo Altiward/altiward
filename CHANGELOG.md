@@ -13,7 +13,8 @@ Every section has the four headings below, with "None." under any that don't app
 
 ### Upgrade order
 
-None.
+Upgrade the server to 0.1.2 first. An older server ends the replaced session as `revoked`
+and doesn't close its finding.
 
 ### Breaking changes
 
@@ -28,6 +29,10 @@ None.
 - The agent's store records its schema version, and upgrades a 0.1.0 store in place
   with its data. An older agent can't open a store written by a newer one: reinstall the
   newer release instead of downgrading.
+- A Privileges grant for a user who holds admin rights nobody granted now ends that
+  "Without a grant" session, with trigger `privileges_grant`, before it starts the
+  Privileges one. The grant carries `replaced_out_of_band: true`. Before, the session stayed
+  open and its `admin.out_of_band` finding never closed.
 
 ## Server 0.1.2 - unreleased
 
@@ -50,6 +55,11 @@ None.
 - Admin rights without a grant say that a managed admin account (LAPS) or another
   standing IT account belongs in `PermanentAdmins` in the Altiward profile, with a link
   to the install guide.
+- A "Without a grant" session that a Privileges grant replaces ends with the reason
+  `privileges_grant` ("Replaced by a Privileges grant" in the console), and the session
+  that grant starts is flagged `after_out_of_band`. The SIEM export closes its
+  `admin.out_of_band` finding with status Other, "Replaced by a Privileges grant", not
+  Resolved, since the grant is reported by Privileges' hook. Needs agent 0.1.1.
 
 ## Server 0.1.1 - 2026-10-21
 
