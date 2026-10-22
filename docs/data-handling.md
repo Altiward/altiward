@@ -69,7 +69,7 @@ Each connection exists only if you configure it.
 | --- | --- | --- |
 | Your Postgres | Storage | `ALTIWARD_DATABASE_URL` |
 | Splunk HTTP Event Collector | SIEM export | `ALTIWARD_SPLUNK_*` |
-| Microsoft Entra ID (or, with a managed identity, the Azure VM's metadata service at 169.254.169.254) and your Azure Monitor endpoint | Sentinel export | `ALTIWARD_SENTINEL_*` |
+| Microsoft Entra ID (or, with a managed identity, the Azure VM's metadata service at 169.254.169.254, or the container app's identity endpoint) and your Azure Monitor endpoint | Sentinel export | `ALTIWARD_SENTINEL_*` |
 | Your syslog receiver, over TLS 1.2 or later by default | SIEM export | `ALTIWARD_SYSLOG_*` |
 | Your identity provider | Console sign-in | `ALTIWARD_OIDC_*` |
 
@@ -173,8 +173,8 @@ days after they are reported). It logs to the Mac's unified log under
 `altiward-api diagnose` prints a JSON report to attach to a bug report. It contains the
 version, which settings are set, migration state, record counts, each SIEM's backlog and
 last error, whether each SIEM and the identity provider accept a connection (and the
-Azure VM's metadata service, when Sentinel uses a managed identity), and when the server
-was set up.
+Azure VM's metadata service or the container app's identity endpoint, when Sentinel uses a
+managed identity), and when the server was set up.
 
 It hides every secret: tokens, client secrets, the database password. It holds no event
 contents, names or reasons, only counts. It sends nothing: you read it, then decide

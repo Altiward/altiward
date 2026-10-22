@@ -61,8 +61,8 @@ type Database struct {
 
 // SinkCheck is a connection test: TCP, then TLS where the sink uses it. Nothing is sent.
 // The identity provider for console sign-in, if set up, is checked as the sink "sso", and
-// the Azure Instance Metadata Service, when Sentinel signs in with the VM's managed
-// identity, as "sentinel-identity".
+// where Sentinel's managed identity gets its tokens (the Azure Instance Metadata Service,
+// or a container app's identity endpoint) as "sentinel-identity".
 type SinkCheck struct {
 	Sink      string `json:"sink"`
 	Endpoint  string `json:"endpoint"`
@@ -122,9 +122,15 @@ func Live(version string) Options {
 // Run builds the report.
 func Run(ctx context.Context, o Options) Report {
 	env := map[string]string{}
+	platform := map[string]string{} // set by Azure Container Apps: read, never reported
 	for _, kv := range o.Environ {
-		if k, v, ok := strings.Cut(kv, "="); ok && strings.HasPrefix(k, "ALTIWARD_") && v != "" {
-			env[k] = v
+		if k, v, ok := strings.Cut(kv, "="); ok && v != "" {
+			switch {
+			case strings.HasPrefix(k, "ALTIWARD_"):
+				env[k] = v
+			case k == "IDENTITY_ENDPOINT" || k == "IDENTITY_HEADER":
+				platform[k] = v
+			}
 		}
 	}
 	now := o.Now()
@@ -137,7 +143,12 @@ func Run(ctx context.Context, o Options) Report {
 	}
 	problem := func(s string) { r.Problems = append(r.Problems, s) }
 
-	cfg, err := config.Load(func(k string) string { return env[k] })
+	cfg, err := config.Load(func(k string) string {
+		if v, ok := env[k]; ok {
+			return v
+		}
+		return platform[k]
+	})
 	r.Config.Valid = err == nil
 	if err != nil {
 		r.Config.Error = err.Error()
@@ -252,8 +263,13 @@ func sinks(ctx context.Context, o Options, cfg config.Config, problem func(strin
 	if s := cfg.Sentinel; s != nil {
 		httpsCheck("sentinel", s.Endpoint)
 		checks[len(checks)-1].Auth = s.Auth
-		if s.Auth == config.SentinelManagedIdentity {
-			// Where the token comes from. Nothing answers off Azure, or if the container
+		switch {
+		case s.Auth != config.SentinelManagedIdentity:
+		case s.IdentityEndpoint != "":
+			// Where a container app's token comes from: a local address the platform gives it.
+			httpsCheck("sentinel-identity", s.IdentityEndpoint)
+		default:
+			// Where a VM's token comes from. Nothing answers off Azure, or if the container
 			// can't reach the link-local address.
 			check("sentinel-identity", "http://169.254.169.254", "169.254.169.254:80", "", nil, nil)
 		}

@@ -142,6 +142,12 @@ func TestSentinelManagedIdentity(t *testing.T) {
 	if c, err = config.Load(env(m)); err != nil || c.Sentinel.ClientID != "user-assigned-id" {
 		t.Fatalf("user-assigned = %+v, %v", c.Sentinel, err)
 	}
+	// Azure Container Apps sets these for an app with a managed identity.
+	m["IDENTITY_ENDPOINT"], m["IDENTITY_HEADER"] = "http://localhost:42356/msi/token", "header-1"
+	if c, err = config.Load(env(m)); err != nil || c.Sentinel.IdentityEndpoint != "http://localhost:42356/msi/token" ||
+		c.Sentinel.IdentityHeader != "header-1" {
+		t.Fatalf("container app = %+v, %v", c.Sentinel, err)
+	}
 
 	for name, tc := range map[string]struct{ key, value, want string }{
 		"a secret too": {"ALTIWARD_SENTINEL_CLIENT_SECRET", "s", "ALTIWARD_SENTINEL_CLIENT_SECRET isn't used with ALTIWARD_SENTINEL_AUTH=managed-identity"},

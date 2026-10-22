@@ -10,6 +10,7 @@
 #   FAKE_APPS                 how many apps have the display name (default 0)
 #   FAKE_ROLE=1               the existing app has the role on the rule
 #   FAKE_NO_DIRECT_URL=1      the rule comes back without its own ingestion URL
+#   FAKE_NO_IDENTITY=1        no service principal has the managed identity's client ID
 #
 # Anything else it doesn't expect fails with exit status 99.
 set -euo pipefail
@@ -21,6 +22,8 @@ TENANT=00000000-0000-0000-0000-00000000bbbb
 LAW_ID=/subscriptions/$SUB/resourceGroups/rg-sec/providers/Microsoft.OperationalInsights/workspaces/law-sec
 APP_ID=11111111-0000-0000-0000-000000000001
 SP_ID=22222222-0000-0000-0000-000000000002
+MI_CLIENT_ID=44444444-0000-0000-0000-000000000004
+MI_PRINCIPAL_ID=55555555-0000-0000-0000-000000000005
 
 not_found() {
   echo "ERROR: (ResourceNotFound) The Resource '$1' was not found." >&2
@@ -65,6 +68,12 @@ case "$*" in
   done ;;
 "ad sp create-for-rbac"*) printf '%s\n' "$APP_ID" 'fake~secret.value-123' ;;
 "ad sp show --id $APP_ID"*) echo "$SP_ID" ;;
+"ad sp show --id $MI_CLIENT_ID"*)
+  if [ -n "${FAKE_NO_IDENTITY:-}" ]; then
+    echo "ERROR: Resource '$MI_CLIENT_ID' does not exist or one of its queried reference-property objects are not present." >&2
+    exit 3
+  fi
+  echo "$MI_PRINCIPAL_ID" ;;
 "vm identity assign"*"--query systemAssignedIdentity"*) echo 33333333-0000-0000-0000-000000000003 ;;
 "role assignment list"*) [ -z "${FAKE_ROLE:-}" ] || echo "/fake/roleAssignments/1" ;;
 "role assignment create"*) ;;
