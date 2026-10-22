@@ -3,6 +3,7 @@
 | Directory | Purpose |
 | --- | --- |
 | [`compose/`](compose/) | Production server, Postgres and Caddy; environment template and upgrade script |
+| [`azure/`](azure/) | The Deploy to Azure template: the server on Azure Container Apps, with Postgres on a private network and its tokens in Key Vault |
 | [`mdm/`](mdm/) | Mac configuration templates for the Altiward agent and SAP Privileges |
 | [`sentinel/`](sentinel/) | Azure resource provisioning for the Sentinel export |
 

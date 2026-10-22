@@ -17,14 +17,21 @@ Start with README.md; the agent's trust model is in agent/README.md (Design note
   (`make test-upgrade` locally: installs a release in Docker and upgrades it).
 - Admins set everything in `.env`: a new server setting gets a `${VAR:-}` line in
   `deploy/compose/compose.yaml` and an entry in `env.example`, so nobody edits
-  `compose.yaml` and `upgrade.sh` can replace it.
+  `compose.yaml` and `upgrade.sh` can replace it. If a new server can't start without
+  it, also set it in `deploy/azure/main.bicep`; optional settings are set on the
+  container app after it's deployed (`deploy/azure/README.md`).
+- `deploy/azure/azuredeploy.json`, which the Deploy to Azure button deploys, is compiled
+  from `main.bicep`: after changing either it or its `Caddyfile`, run `make azure-template`
+  (the Bicep version the Makefile names) and commit both. CI checks they match, and
+  `scripts/test-azure-proxy.sh` checks the console allowlist.
 - Releases: tag `agent-vX.Y.Z` for the signed agent package (`release-agent.yml`), and
   `server-vX.Y.Z` for the signed server image and deployment bundle (`release-server.yml`),
   or `server-vX.Y.Z-rc.N` for a server release candidate. Semantic versions, a minor about
   quarterly: support and agent compatibility count the last two minors, which gives sites
   about six months on a version.
   Both refuse a version without a dated section in `CHANGELOG.md`; add the user-facing
-  changes there as you make them. Steps: [docs/releasing.md](docs/releasing.md).
+  changes there as you make them. A server tag also needs `scripts/azure-template.sh`
+  run for its version. Steps: [docs/releasing.md](docs/releasing.md).
 - `make notices`: regenerates `THIRD_PARTY_NOTICES.md`. Run it after adding, removing or
   upgrading a Go module or a console production dependency, and commit the result.
 - `make brand-sync` refreshes the console's exported SVGs; `make brand-check` checks them.

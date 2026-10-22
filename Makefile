@@ -13,7 +13,7 @@ DEV_ENV := ALTIWARD_LISTEN_ADDR=127.0.0.1:8080 \
 	ALTIWARD_AGENT_TOKENS=dev=dev-agent-token-0001 \
 	ALTIWARD_CONSOLE_TOKENS=dev=dev-console-token-001
 
-.PHONY: help test lint agent-build agent-test backend-build backend-test test-db docker-check go-check node-check db db-down demo demo-down run-api run-api-console notices notices-check image test-upgrade dev-hook dev-heartbeat package package-verify app-icon console-install console-dev console-test console-build console-seed docs-screenshots brand-sync brand-check
+.PHONY: help test lint agent-build agent-test backend-build backend-test test-db docker-check go-check node-check db db-down demo demo-down run-api run-api-console notices notices-check image test-upgrade azure-template dev-hook dev-heartbeat package package-verify app-icon console-install console-dev console-test console-build console-seed docs-screenshots brand-sync brand-check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
@@ -92,6 +92,15 @@ image: ## Build the production image: the API serving the console (VERSION=0.1.0
 test-upgrade: ## Install a release in Docker and upgrade it with deploy/compose/upgrade.sh
 	docker build --build-arg VERSION=upgrade-test -t altiward-api:upgrade-test .
 	scripts/test-upgrade.sh altiward-api:upgrade-test
+
+# The Bicep compiler stamps its version into azuredeploy.json, so CI and everyone who
+# rebuilds it use this one: az bicep install --version v$(BICEP_VERSION)
+BICEP_VERSION := 0.48.1
+
+azure-template: ## Compile deploy/azure/main.bicep into azuredeploy.json, which the Deploy to Azure button deploys
+	@az bicep version 2>/dev/null | grep -q "Bicep CLI version $(BICEP_VERSION) " || \
+		{ echo "needs Bicep $(BICEP_VERSION): az bicep install --version v$(BICEP_VERSION)" >&2; exit 1; }
+	az bicep build --file deploy/azure/main.bicep --outfile deploy/azure/azuredeploy.json
 
 # Drive a local agent against `make run-api`, without launchd or root.
 AGENT_ENV := ALTIWARD_DATA_DIR=$(SWIFT_SCRATCH)/dev-agent-data \

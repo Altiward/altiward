@@ -42,6 +42,12 @@ jobs:
           { echo "VERSION=$v"; echo "IMAGE=$image"; echo "OUT=$out"; } >> "$GITHUB_ENV"
           { echo "version=$v"; echo "image=$image"; echo "out=$out"; } >> "$GITHUB_OUTPUT"
 
+      - name: The Deploy to Azure template runs this version
+        run: |
+          got=$(jq -r .variables.version deploy/azure/azuredeploy.json)
+          [ "$got" = "$VERSION" ] ||
+            { echo "deploy/azure runs $got, not $VERSION: run scripts/azure-template.sh $VERSION and commit (docs/releasing.md)"; exit 1; }
+
       - name: Release notes (refuses a version without a dated CHANGELOG section)
         run: |
           mkdir -p "$OUT"
@@ -53,6 +59,14 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The Deploy to Azure template pulls Caddy from here, where the anonymous pulls of
+      # container apps' shared addresses aren't limited as they are on Docker Hub.
+      - name: Copy the Azure template's Caddy image to ghcr.io
+        run: |
+          target=$(sed -n "s/^var caddyImage = '\(ghcr\.io\/[^']*\)'$/\1/p" deploy/azure/main.bicep)
+          [ -n "$target" ] || { echo "deploy/azure/main.bicep: caddyImage isn't on ghcr.io"; exit 1; }
+          docker buildx imagetools create --tag "$target" "docker.io/library/caddy:${target##*:}"
 
       # Users pin a version; there is deliberately no "latest" tag.
       - id: build

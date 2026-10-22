@@ -123,12 +123,36 @@ jobs:
             grep -E '^-rwxr-xr-x .*/integrations/sentinel/setup\.sh$'
       - name: A release installs and upgrades with upgrade.sh
         run: scripts/test-upgrade.sh altiward-api:ci
+      - name: On Azure, agents get through and the console only from the allowed networks
+        run: scripts/test-azure-proxy.sh altiward-api:ci
       - name: Saved image loads and runs, as admins do it
         run: |
           docker save altiward-api:ci | gzip > "$RUNNER_TEMP/image.tar.gz"
           docker rmi altiward-api:ci
           docker load -i "$RUNNER_TEMP/image.tar.gz"
           docker run --rm altiward-api:ci version
+
+  azure:
+    name: Deploy to Azure template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Bicep, the version the Makefile names
+        run: az bicep install --version "v$(sed -n 's/^BICEP_VERSION := //p' Makefile)"
+      - name: The committed azuredeploy.json is main.bicep compiled
+        run: |
+          make azure-template
+          git diff --exit-code deploy/azure/azuredeploy.json ||
+            { echo "::error::Run make azure-template and commit deploy/azure/azuredeploy.json"; exit 1; }
+      - name: The template has no lint warnings
+        run: |
+          out=$(az bicep lint --file deploy/azure/main.bicep 2>&1)
+          echo "$out"
+          ! grep -Eq '(Warning|Error) ' <<<"$out"
+      - name: The portal form fills in parameters the template has
+        run: |
+          jq -e --slurpfile t deploy/azure/azuredeploy.json \
+            '[.parameters.outputs | keys[]] - [$t[0].parameters | keys[]] | length == 0' deploy/azure/createUiDefinition.json
 
   # Signing and notarization run in a separate release workflow that reads the
   # Developer ID certificate and notary credentials from repository secrets.

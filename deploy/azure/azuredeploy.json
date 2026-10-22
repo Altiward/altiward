@@ -1,0 +1,530 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.48.1.52935",
+      "templateHash": "13006494718040149188"
+    },
+    "description": "The Altiward server on Azure Container Apps, with Postgres on a private network and its tokens in Key Vault."
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Where to create everything. Defaults to the resource group's region."
+      }
+    },
+    "namePrefix": {
+      "type": "string",
+      "defaultValue": "altiward",
+      "minLength": 3,
+      "maxLength": 12,
+      "metadata": {
+        "description": "The start of every resource name: 3 to 12 lowercase letters and digits, starting with a letter. The console's address starts with it."
+      }
+    },
+    "organisationName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "metadata": {
+        "description": "Your organisation's short name, which the tokens carry: letters, digits and hyphens."
+      }
+    },
+    "postgresAdminPassword": {
+      "type": "securestring",
+      "minLength": 12,
+      "maxLength": 128,
+      "metadata": {
+        "description": "The password for the database's admin user, altiward: at least 12 characters, with three of upper case, lower case, digits and symbols."
+      }
+    },
+    "consoleAllowedNetworks": {
+      "type": "string",
+      "minLength": 7,
+      "metadata": {
+        "description": "The networks allowed to open the console, space separated, such as your office's public addresses: 203.0.113.0/24 198.51.100.7/32. Macs report from anywhere whatever this says. 0.0.0.0/0 allows everyone."
+      }
+    },
+    "agentToken": {
+      "type": "securestring",
+      "defaultValue": "[replace(newGuid(), '-', '')]",
+      "minLength": 16,
+      "metadata": {
+        "description": "The token Macs enroll with, the profile's EnrollmentToken. Leave it out to generate one."
+      }
+    },
+    "consoleToken": {
+      "type": "securestring",
+      "defaultValue": "[replace(newGuid(), '-', '')]",
+      "minLength": 16,
+      "metadata": {
+        "description": "The console token, for signing in before single sign-on is set up and as a break-glass login after. Leave it out to generate one."
+      }
+    }
+  },
+  "variables": {
+    "$fxv#0": "# The caddy container next to Altiward in the Deploy to Azure template (README.md). The\n# Container Apps ingress terminates TLS and sends everything here, on one hostname:\n# Macs report from any network, so the agent endpoints answer everyone; the console and\n# its API answer only the networks in ALTIWARD_CONSOLE_ALLOW (space separated).\n{\n\tadmin off\n\tauto_https off\n\tservers {\n\t\t# The ingress adds the address it saw to the right of X-Forwarded-For. Trust only\n\t\t# the ingress's own addresses, and read right to left, so an address a client\n\t\t# puts in the header itself is never taken as theirs. The ingress connects from\n\t\t# Container Apps' internal 100.100.x.x addresses, which no client on the internet\n\t\t# can have.\n\t\ttrusted_proxies static {$ALTIWARD_INGRESS_PROXIES:100.64.0.0/10}\n\t\ttrusted_proxies_strict\n\t}\n}\n\n:8081 {\n\t@agent path /v1/agent/* /healthz\n\thandle @agent {\n\t\treverse_proxy 127.0.0.1:8080\n\t}\n\t@allowed client_ip {$ALTIWARD_CONSOLE_ALLOW}\n\thandle @allowed {\n\t\treverse_proxy 127.0.0.1:8080\n\t}\n\thandle {\n\t\trespond 403\n\t}\n}\n",
+    "version": "0.1.1",
+    "image": "[format('ghcr.io/altiward/altiward-api:{0}', variables('version'))]",
+    "caddyImage": "ghcr.io/altiward/caddy:2.8-alpine",
+    "suffix": "[uniqueString(resourceGroup().id, parameters('namePrefix'))]",
+    "names": {
+      "workspace": "[format('{0}-logs', parameters('namePrefix'))]",
+      "network": "[format('{0}-network', parameters('namePrefix'))]",
+      "identity": "[format('{0}-identity', parameters('namePrefix'))]",
+      "vault": "[take(format('{0}-{1}', parameters('namePrefix'), variables('suffix')), 24)]",
+      "database": "[format('{0}-db-{1}', parameters('namePrefix'), variables('suffix'))]",
+      "environment": "[format('{0}-environment', parameters('namePrefix'))]",
+      "app": "[parameters('namePrefix')]"
+    },
+    "keyVaultSecretsUser": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]",
+    "keyVaultSecretsOfficer": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')]",
+    "healthz": {
+      "path": "/healthz",
+      "port": 8080
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2024-06-01",
+      "name": "[format('{0}/{1}', format('{0}.private.postgres.database.azure.com', variables('names').database), variables('names').network)]",
+      "location": "global",
+      "properties": {
+        "registrationEnabled": false,
+        "virtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', variables('names').network)]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', format('{0}.private.postgres.database.azure.com', variables('names').database))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('names').network)]"
+      ]
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers/databases",
+      "apiVersion": "2025-08-01",
+      "name": "[format('{0}/{1}', variables('names').database, 'altiward')]",
+      "properties": {
+        "charset": "UTF8",
+        "collation": "en_US.utf8"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('names').database)]"
+      ]
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults/secrets",
+      "apiVersion": "2025-05-01",
+      "name": "[format('{0}/{1}', variables('names').vault, 'database-url')]",
+      "properties": {
+        "value": "[format('postgres://altiward:{0}@{1}:5432/altiward?sslmode=verify-full', uriComponent(parameters('postgresAdminPassword')), reference(resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('names').database), '2025-08-01').fullyQualifiedDomainName)]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('names').database)]",
+        "[resourceId('Microsoft.KeyVault/vaults', variables('names').vault)]"
+      ]
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults/secrets",
+      "apiVersion": "2025-05-01",
+      "name": "[format('{0}/{1}', variables('names').vault, 'agent-tokens')]",
+      "properties": {
+        "value": "[format('{0}={1}', parameters('organisationName'), parameters('agentToken'))]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', variables('names').vault)]"
+      ]
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults/secrets",
+      "apiVersion": "2025-05-01",
+      "name": "[format('{0}/{1}', variables('names').vault, 'console-tokens')]",
+      "properties": {
+        "value": "[format('{0}={1}', parameters('organisationName'), parameters('consoleToken'))]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', variables('names').vault)]"
+      ]
+    },
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2025-07-01",
+      "name": "[variables('names').workspace]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "sku": {
+          "name": "PerGB2018"
+        },
+        "retentionInDays": 30
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2024-07-01",
+      "name": "[variables('names').network]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "10.42.0.0/16"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "apps",
+            "properties": {
+              "addressPrefix": "10.42.0.0/24",
+              "delegations": [
+                {
+                  "name": "apps",
+                  "properties": {
+                    "serviceName": "Microsoft.App/environments"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "database",
+            "properties": {
+              "addressPrefix": "10.42.1.0/28",
+              "delegations": [
+                {
+                  "name": "database",
+                  "properties": {
+                    "serviceName": "Microsoft.DBforPostgreSQL/flexibleServers"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2024-06-01",
+      "name": "[format('{0}.private.postgres.database.azure.com', variables('names').database)]",
+      "location": "global"
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers",
+      "apiVersion": "2025-08-01",
+      "name": "[variables('names').database]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Standard_B1ms",
+        "tier": "Burstable"
+      },
+      "properties": {
+        "version": "17",
+        "administratorLogin": "altiward",
+        "administratorLoginPassword": "[parameters('postgresAdminPassword')]",
+        "storage": {
+          "storageSizeGB": 32
+        },
+        "backup": {
+          "backupRetentionDays": 7,
+          "geoRedundantBackup": "Disabled"
+        },
+        "highAvailability": {
+          "mode": "Disabled"
+        },
+        "network": {
+          "delegatedSubnetResourceId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('names').network, 'database')]",
+          "privateDnsZoneArmResourceId": "[resourceId('Microsoft.Network/privateDnsZones', format('{0}.private.postgres.database.azure.com', variables('names').database))]",
+          "publicNetworkAccess": "Disabled"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', format('{0}.private.postgres.database.azure.com', variables('names').database))]",
+        "[resourceId('Microsoft.Network/privateDnsZones/virtualNetworkLinks', format('{0}.private.postgres.database.azure.com', variables('names').database), variables('names').network)]",
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('names').network)]"
+      ]
+    },
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2024-11-30",
+      "name": "[variables('names').identity]",
+      "location": "[parameters('location')]"
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults",
+      "apiVersion": "2025-05-01",
+      "name": "[variables('names').vault]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "tenantId": "[tenant().tenantId]",
+        "sku": {
+          "family": "A",
+          "name": "standard"
+        },
+        "enableRbacAuthorization": true,
+        "publicNetworkAccess": "Enabled"
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults', variables('names').vault)]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', variables('names').vault), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('names').identity), variables('keyVaultSecretsUser'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('keyVaultSecretsUser')]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('names').identity), '2024-11-30').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('names').identity)]",
+        "[resourceId('Microsoft.KeyVault/vaults', variables('names').vault)]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults', variables('names').vault)]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', variables('names').vault), deployer().objectId, variables('keyVaultSecretsOfficer'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('keyVaultSecretsOfficer')]",
+        "principalId": "[deployer().objectId]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', variables('names').vault)]"
+      ]
+    },
+    {
+      "type": "Microsoft.App/managedEnvironments",
+      "apiVersion": "2025-07-01",
+      "name": "[variables('names').environment]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "workloadProfiles": [
+          {
+            "name": "Consumption",
+            "workloadProfileType": "Consumption"
+          }
+        ],
+        "vnetConfiguration": {
+          "infrastructureSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('names').network, 'apps')]",
+          "internal": false
+        },
+        "appLogsConfiguration": {
+          "destination": "log-analytics",
+          "logAnalyticsConfiguration": {
+            "customerId": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', variables('names').workspace), '2025-07-01').customerId]",
+            "sharedKey": "[listKeys(resourceId('Microsoft.OperationalInsights/workspaces', variables('names').workspace), '2025-07-01').primarySharedKey]"
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('names').network)]",
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('names').workspace)]"
+      ]
+    },
+    {
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2025-07-01",
+      "name": "[variables('names').app]",
+      "location": "[parameters('location')]",
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": {
+          "[format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('names').identity))]": {}
+        }
+      },
+      "properties": {
+        "environmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('names').environment)]",
+        "workloadProfileName": "Consumption",
+        "configuration": {
+          "activeRevisionsMode": "Single",
+          "ingress": {
+            "external": true,
+            "targetPort": 8081,
+            "transport": "http",
+            "allowInsecure": false
+          },
+          "secrets": [
+            {
+              "name": "database-url",
+              "keyVaultUrl": "[reference(resourceId('Microsoft.KeyVault/vaults/secrets', variables('names').vault, 'database-url'), '2025-05-01').secretUri]",
+              "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('names').identity)]"
+            },
+            {
+              "name": "agent-tokens",
+              "keyVaultUrl": "[reference(resourceId('Microsoft.KeyVault/vaults/secrets', variables('names').vault, 'agent-tokens'), '2025-05-01').secretUri]",
+              "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('names').identity)]"
+            },
+            {
+              "name": "console-tokens",
+              "keyVaultUrl": "[reference(resourceId('Microsoft.KeyVault/vaults/secrets', variables('names').vault, 'console-tokens'), '2025-05-01').secretUri]",
+              "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('names').identity)]"
+            },
+            {
+              "name": "caddyfile",
+              "value": "[variables('$fxv#0')]"
+            }
+          ]
+        },
+        "template": {
+          "containers": [
+            {
+              "name": "altiward",
+              "image": "[variables('image')]",
+              "resources": {
+                "cpu": "[json('0.5')]",
+                "memory": "1Gi"
+              },
+              "env": [
+                {
+                  "name": "ALTIWARD_DATABASE_URL",
+                  "secretRef": "database-url"
+                },
+                {
+                  "name": "ALTIWARD_AGENT_TOKENS",
+                  "secretRef": "agent-tokens"
+                },
+                {
+                  "name": "ALTIWARD_CONSOLE_TOKENS",
+                  "secretRef": "console-tokens"
+                },
+                {
+                  "name": "ALTIWARD_CONSOLE_URL",
+                  "value": "[format('https://{0}.{1}', variables('names').app, reference(resourceId('Microsoft.App/managedEnvironments', variables('names').environment), '2025-07-01').defaultDomain)]"
+                }
+              ],
+              "probes": [
+                {
+                  "type": "Startup",
+                  "httpGet": "[variables('healthz')]",
+                  "initialDelaySeconds": 5,
+                  "periodSeconds": 30,
+                  "failureThreshold": 10
+                },
+                {
+                  "type": "Liveness",
+                  "httpGet": "[variables('healthz')]",
+                  "periodSeconds": 10,
+                  "failureThreshold": 3
+                },
+                {
+                  "type": "Readiness",
+                  "httpGet": "[variables('healthz')]",
+                  "periodSeconds": 5,
+                  "failureThreshold": 3
+                }
+              ]
+            },
+            {
+              "name": "caddy",
+              "image": "[variables('caddyImage')]",
+              "resources": {
+                "cpu": "[json('0.25')]",
+                "memory": "0.5Gi"
+              },
+              "env": [
+                {
+                  "name": "ALTIWARD_CONSOLE_ALLOW",
+                  "value": "[parameters('consoleAllowedNetworks')]"
+                }
+              ],
+              "volumeMounts": [
+                {
+                  "volumeName": "caddy-config",
+                  "mountPath": "/etc/caddy"
+                }
+              ],
+              "probes": [
+                {
+                  "type": "Readiness",
+                  "httpGet": {
+                    "path": "/healthz",
+                    "port": 8081
+                  },
+                  "periodSeconds": 5,
+                  "failureThreshold": 3
+                }
+              ]
+            }
+          ],
+          "volumes": [
+            {
+              "name": "caddy-config",
+              "storageType": "Secret",
+              "secrets": [
+                {
+                  "secretRef": "caddyfile",
+                  "path": "Caddyfile"
+                }
+              ]
+            }
+          ],
+          "scale": {
+            "minReplicas": 1,
+            "maxReplicas": 1
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.App/managedEnvironments', variables('names').environment)]",
+        "[extensionResourceId(resourceId('Microsoft.KeyVault/vaults', variables('names').vault), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.KeyVault/vaults', variables('names').vault), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('names').identity), variables('keyVaultSecretsUser')))]",
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers/databases', variables('names').database, 'altiward')]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('names').identity)]",
+        "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('names').vault, 'agent-tokens')]",
+        "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('names').vault, 'console-tokens')]",
+        "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('names').vault, 'database-url')]"
+      ]
+    }
+  ],
+  "outputs": {
+    "consoleUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "The console, and the ServerURL for the Macs' configuration profile until you add your own domain."
+      },
+      "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', variables('names').app), '2025-07-01').configuration.ingress.fqdn)]"
+    },
+    "tokensUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "The tokens, in Key Vault: agent-tokens and console-tokens, each your organisation's name, =, then the token."
+      },
+      "value": "[format('{0}/#@{1}/resource{2}/secrets', environment().portal, tenant().tenantId, resourceId('Microsoft.KeyVault/vaults', variables('names').vault))]"
+    },
+    "vaultName": {
+      "type": "string",
+      "metadata": {
+        "description": "The key vault holding the tokens, for az keyvault secret show --vault-name."
+      },
+      "value": "[variables('names').vault]"
+    },
+    "appName": {
+      "type": "string",
+      "value": "[variables('names').app]"
+    },
+    "identityClientId": {
+      "type": "string",
+      "metadata": {
+        "description": "The app's managed identity, for integrations/sentinel/setup.sh --identity."
+      },
+      "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('names').identity), '2024-11-30').clientId]"
+    },
+    "customDomainVerificationId": {
+      "type": "string",
+      "metadata": {
+        "description": "For your own domain: the asuid TXT record's value."
+      },
+      "value": "[reference(resourceId('Microsoft.App/containerApps', variables('names').app), '2025-07-01').customDomainVerificationId]"
+    },
+    "fqdn": {
+      "type": "string",
+      "metadata": {
+        "description": "For your own domain: the CNAME record's target."
+      },
+      "value": "[reference(resourceId('Microsoft.App/containerApps', variables('names').app), '2025-07-01').configuration.ingress.fqdn]"
+    }
+  }
+}

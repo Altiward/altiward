@@ -188,6 +188,13 @@ func TestSentinelAuthMode(t *testing.T) {
 	if out, _ := json.Marshal(r); strings.Contains(string(out), "header-1") || strings.Contains(string(out), "IDENTITY_") {
 		t.Fatalf("report shows the platform's identity settings: %s", out)
 	}
+	if !strings.Contains(r.Logs, "docker compose logs") {
+		t.Fatalf("logs = %q", r.Logs)
+	}
+	if r, _ = run("CONTAINER_APP_NAME=altiward"); !strings.HasSuffix(r.Logs, ": az containerapp logs show --name altiward "+
+		"--resource-group <its resource group> --container altiward --tail 300") { // az allows 300 lines at most
+		t.Fatalf("container app logs = %q", r.Logs)
+	}
 
 	r, _ = run("ALTIWARD_SENTINEL_AUTH=certificate", "ALTIWARD_SENTINEL_TENANT_ID=t", "ALTIWARD_SENTINEL_CLIENT_ID=c",
 		"ALTIWARD_SENTINEL_CERTIFICATE_FILE=/etc/altiward/certs/sentinel.pem")

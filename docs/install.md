@@ -24,22 +24,25 @@ runs the console with example data on your own computer, needing only Docker.
 - **Two hostnames.** Macs report to the *agent hostname*, which must be reachable from
   the internet so laptops can report from home and on the road. Only the agent endpoints
   answer there. People use the *console hostname*, which only accepts connections from
-  the networks you list.
+  the networks you list. On Azure Container Apps, one address serves both, split by path,
+  with the same rule.
 
 ## Choose how to run it
 
 Altiward is the same software however you run it. Pick the setup that
 matches what you already have:
 
-| | The bundle | Your own infrastructure |
-| --- | --- | --- |
-| For | A site that wants Altiward to bring everything it needs | A site with a managed database and its own load balancer or certificates |
-| Database | Postgres in the bundle, backed up by you ([Backups](#backups)) | Your managed Postgres ([An existing Postgres](#an-existing-postgres)) |
-| TLS | Caddy, with certificates from Let's Encrypt | Your certificates or load balancer ([Your own certificates or load balancer](#your-own-certificates-or-load-balancer)) |
-| Steps | This guide as written | This guide, plus the sections linked here |
+| | The bundle | Your own infrastructure | Azure Container Apps (Preview) |
+| --- | --- | --- | --- |
+| For | A site that wants Altiward to bring everything it needs | A site with a managed database and its own load balancer or certificates | A site on Azure that wants no server or VM to look after |
+| Database | Postgres in the bundle, backed up by you ([Backups](#backups)) | Your managed Postgres ([An existing Postgres](#an-existing-postgres)) | Azure Database for PostgreSQL on a private network, with Azure's backups |
+| TLS | Caddy, with certificates from Let's Encrypt | Your certificates or load balancer ([Your own certificates or load balancer](#your-own-certificates-or-load-balancer)) | The Container Apps ingress, on its own address or your domain |
+| Steps | This guide as written | This guide, plus the sections linked here | [Deploy to Azure](../deploy/azure/README.md), then this guide from step 2 |
 
-Both use the same image and the same `deploy/compose` files, so you can move from the
-bundle to your own infrastructure later without reinstalling. If you run Kubernetes,
+The bundle and your own infrastructure use the same image and the same `deploy/compose`
+files, so you can move from one to the other later without reinstalling. Deploy to Azure
+runs the same image, set up by a template, with settings on the container app instead of
+in `.env`. If you run Kubernetes,
 [open an issue](https://github.com/Altiward/altiward/issues): manifests or a Helm chart
 come when someone needs them.
 
@@ -420,7 +423,9 @@ about your fleet ([Data handling](data-handling.md#in-the-browser)). A notice ca
 dismissed until the next version. Settings always shows the latest versions and when
 they were last checked, or "Couldn’t check for updates" when a firewall or proxy blocks
 GitHub. To turn the check off for everyone, set `ALTIWARD_UPDATE_CHECK=false` in `.env`
-and run `docker compose up -d`.
+and run `docker compose up -d`. On Azure Container Apps, the notice names the image to
+change to instead, and upgrades work differently
+([Upgrading](../deploy/azure/README.md#upgrading)).
 
 **Upgrading the server:** put the release files in one directory on the server, read
 `RELEASE_NOTES.md`, then run the upgrade script from your deployment directory:

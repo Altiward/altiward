@@ -287,6 +287,10 @@ func run(log *slog.Logger) error {
 		api.WithVersion(version), api.WithSinks(cfg.SinkNames()), api.WithShutdown(stopping),
 		api.WithUpdateCheck(cfg.UpdateCheck),
 	}
+	// Azure Container Apps names the app, which the console's upgrade notice needs.
+	if name := os.Getenv("CONTAINER_APP_NAME"); name != "" {
+		opts = append(opts, api.WithAzureContainerApp(name))
+	}
 	if o := cfg.OIDC; o != nil {
 		tokens.BreakGlass()
 		provider := sso.New(*o, httpClient, time.Now)

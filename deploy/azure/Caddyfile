@@ -1,0 +1,31 @@
+# The caddy container next to Altiward in the Deploy to Azure template (README.md). The
+# Container Apps ingress terminates TLS and sends everything here, on one hostname:
+# Macs report from any network, so the agent endpoints answer everyone; the console and
+# its API answer only the networks in ALTIWARD_CONSOLE_ALLOW (space separated).
+{
+	admin off
+	auto_https off
+	servers {
+		# The ingress adds the address it saw to the right of X-Forwarded-For. Trust only
+		# the ingress's own addresses, and read right to left, so an address a client
+		# puts in the header itself is never taken as theirs. The ingress connects from
+		# Container Apps' internal 100.100.x.x addresses, which no client on the internet
+		# can have.
+		trusted_proxies static {$ALTIWARD_INGRESS_PROXIES:100.64.0.0/10}
+		trusted_proxies_strict
+	}
+}
+
+:8081 {
+	@agent path /v1/agent/* /healthz
+	handle @agent {
+		reverse_proxy 127.0.0.1:8080
+	}
+	@allowed client_ip {$ALTIWARD_CONSOLE_ALLOW}
+	handle @allowed {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle {
+		respond 403
+	}
+}

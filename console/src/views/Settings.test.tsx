@@ -231,6 +231,18 @@ describe("Settings updates", () => {
     expect(within(group).getByText("./upgrade.sh ~/altiward-0.2.0")).toBeInTheDocument();
   });
 
+  it("on Azure Container Apps, says which image to change to and where the setting lives", async () => {
+    githubFetch();
+    renderView(fakeApi({
+      about: vi.fn(async () => ({ version: "0.1.0", oldest_supported_agent: "0.1", update_check: true,
+        platform: "azure-container-apps" as const, app: "altiwardlab" })),
+    }));
+    const group = await screen.findByRole("group", { name: "Updates" });
+    expect(await within(group).findByText("ghcr.io/altiward/altiward-api:0.2.0")).toBeInTheDocument();
+    expect(within(group).queryByText(/upgrade\.sh/)).toBeNull();
+    expect(within(group).getByText(/in the container app’s environment variables turns it off/)).toBeInTheDocument();
+  });
+
   it("says when the server is up to date", async () => {
     githubFetch();
     renderView(withCheck("0.2.0"));
@@ -255,7 +267,17 @@ describe("Settings updates", () => {
     renderView(api);
     const group = await screen.findByRole("group", { name: "Updates" });
     expect(await within(group).findByText(/ALTIWARD_UPDATE_CHECK=false/)).toBeInTheDocument();
+    expect(within(group).getByText(/is set in the server’s \.env/)).toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("says the check is off in the container app’s settings on Azure Container Apps", async () => {
+    renderView(fakeApi({
+      about: vi.fn(async () => ({ version: "0.1.0", oldest_supported_agent: "0.1", update_check: false,
+        platform: "azure-container-apps" as const, app: "altiwardlab" })),
+    }));
+    const group = await screen.findByRole("group", { name: "Updates" });
+    expect(await within(group).findByText(/is set in the container app’s environment variables/)).toBeInTheDocument();
   });
 
   it("isn't shown to an operator", async () => {

@@ -257,6 +257,20 @@ func TestAboutReportsUpdateCheck(t *testing.T) {
 	}
 }
 
+// On Azure Container Apps the console shows how to change the app's image instead of upgrade.sh.
+func TestAboutReportsAnAzureContainerApp(t *testing.T) {
+	if _, out := do(t, newServer(t), "GET", "/v1/about", consoleToken, nil); out["platform"] != nil || out["app"] != nil {
+		t.Fatalf("default platform = %v, app = %v", out["platform"], out["app"])
+	}
+	tokens, _ := auth.Parse("acme="+agentToken, "acme="+consoleToken)
+	h := api.New(store.NewMemory(nil), tokens, slog.New(slog.NewTextHandler(io.Discard, nil)), time.Now,
+		api.WithAzureContainerApp("altiward"))
+	if rec, out := do(t, h, "GET", "/v1/about", consoleToken, nil); rec.Code != 200 ||
+		out["platform"] != "azure-container-apps" || out["app"] != "altiward" {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
 func TestOverviewAlwaysServed(t *testing.T) {
 	if rec, _ := do(t, newServer(t), "GET", "/v1/overview", consoleToken, nil); rec.Code != http.StatusOK {
 		t.Fatalf("overview = %d %s", rec.Code, rec.Body)

@@ -2,31 +2,15 @@
 // protocol: each fake Mac enrolls with its own P-256 key and signs its events.
 // Development only. Usage: node dev/seed.mjs [http://127.0.0.1:8080]
 import { execFileSync } from "node:child_process";
-import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { agentClient, event } from "./agent-client.mjs";
 
 const server = process.argv[2] ?? "http://127.0.0.1:8080";
 const ENROLL = "dev-agent-token-0001";
 const CONSOLE = "dev-console-token-001";
 const now = Date.now();
 const ago = (min) => new Date(now - min * 60_000).toISOString();
-
-async function request(method, path, { bearer, body, mac } = {}) {
-  const raw = body === undefined ? "" : JSON.stringify(body);
-  const headers = { "Content-Type": "application/json" };
-  if (bearer) headers.Authorization = `Bearer ${bearer}`;
-  if (mac) {
-    const ts = Math.floor(Date.now() / 1000);
-    const digest = createHash("sha256").update(raw).digest("hex");
-    const canonical = ["ALTIWARD-SIG-V1", method, path, ts, digest].join("\n");
-    headers.Authorization = `AltiwardDevice ${mac.deviceID}`;
-    headers["X-Altiward-Timestamp"] = String(ts);
-    headers["X-Altiward-Signature"] = sign("sha256", Buffer.from(canonical), { key: mac.privateKey, dsaEncoding: "der" }).toString("base64");
-  }
-  const res = await fetch(server + path, { method, headers, body: raw || undefined });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`${method} ${path}: ${res.status} ${text}`);
-  return text ? JSON.parse(text) : {};
-}
+const { request, enroll } = agentClient(server, ENROLL);
 
 /** Waits up to 30 seconds for the API, which may still be starting, then explains. */
 async function waitForAPI() {
@@ -43,23 +27,6 @@ async function waitForAPI() {
   }
 }
 
-async function enroll(serial) {
-  const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
-  const spki = publicKey.export({ type: "spki", format: "der" }).toString("base64");
-  const r = await request("POST", "/v1/agent/enroll", {
-    bearer: ENROLL, body: { serial, hardware_uuid: randomUUID().toUpperCase(), public_key: spki },
-  });
-  return { serial, deviceID: r.device_id, status: r.status, privateKey };
-}
-
-function event(mac, type, at, { user, session, elevation, detail = {} } = {}) {
-  return {
-    schema_version: 1, event_id: randomUUID(), type, session_id: session ?? null, timestamp: at,
-    device: { serial: mac.serial, hardware_uuid: "HW-" + mac.serial, os_version: "26.1.0", agent_version: "0.1.0", privileges_version: "2.5.3" },
-    user: user ? { local_name: user[0], upn: user[1] ?? null } : null,
-    elevation: elevation ?? null, delayed: false, detail,
-  };
-}
 const privileges = (reason, expires) => ({ reason, expires, source: "privileges" });
 const grant = (mac, user, at, minutes, reason, session) =>
   event(mac, "elevation.granted", ago(at), { user, session, elevation: privileges(reason, ago(at - minutes)),
