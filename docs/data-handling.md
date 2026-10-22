@@ -80,7 +80,7 @@ details. Console actions go there too, naming the person who made them.
 In the example deployment, Caddy also asks Let's Encrypt for TLS certificates unless you
 provide your own. If you pull the image from the registry instead of loading the file,
 Docker connects to `ghcr.io`. With the Deploy to Azure template, Azure pulls the images
-from `ghcr.io` and Caddy's from `public.ecr.aws`, and Container Apps gets the certificate
+from `ghcr.io`, Caddy's included, and Container Apps gets the certificate
 for your own domain.
 
 ### In the browser

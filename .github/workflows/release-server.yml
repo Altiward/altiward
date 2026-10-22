@@ -60,6 +60,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The Deploy to Azure template pulls Caddy from here, where the anonymous pulls of
+      # container apps' shared addresses aren't limited as they are on Docker Hub.
+      - name: Copy the Azure template's Caddy image to ghcr.io
+        run: |
+          target=$(sed -n "s/^var caddyImage = '\(ghcr\.io\/[^']*\)'$/\1/p" deploy/azure/main.bicep)
+          [ -n "$target" ] || { echo "deploy/azure/main.bicep: caddyImage isn't on ghcr.io"; exit 1; }
+          docker buildx imagetools create --tag "$target" "docker.io/library/caddy:${target##*:}"
+
       # Users pin a version; there is deliberately no "latest" tag.
       - id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2

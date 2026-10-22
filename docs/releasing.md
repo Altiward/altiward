@@ -47,6 +47,12 @@ The package must be public: on GitHub, under the package's settings, set its vis
 to public once, after its first push. An image that needs a login is a release gone
 wrong.
 
+The workflow also copies the official Caddy image that the Deploy to Azure template uses
+to `ghcr.io/altiward/caddy`, at the tag `deploy/azure/main.bicep` names, because container
+apps pull from shared addresses that Docker Hub limits. Set that package up once too:
+make it public, and under *Manage Actions access* give the `altiward` repository the Write
+role, so the workflow can push to it.
+
 ## Server release candidate
 
 For anyone who wants to test a release before it ships. Candidates get no fixes: the next

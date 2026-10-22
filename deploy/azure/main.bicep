@@ -45,9 +45,10 @@ param consoleToken string = replace(newGuid(), '-', '')
 // workflow refuses a tag it doesn't match.
 var version = '0.1.1'
 var image = 'ghcr.io/altiward/altiward-api:${version}'
-// The Docker Official Image, from its mirror: Docker Hub limits anonymous pulls, and
-// container apps share their outbound addresses.
-var caddyImage = 'public.ecr.aws/docker/library/caddy:2.8-alpine'
+// The Docker Official Image, copied next to Altiward's by each server release
+// (release-server.yml): Docker Hub and other public mirrors limit anonymous pulls by
+// address, and container apps share their outbound addresses.
+var caddyImage = 'ghcr.io/altiward/caddy:2.8-alpine'
 
 var suffix = uniqueString(resourceGroup().id, namePrefix)
 var names = {

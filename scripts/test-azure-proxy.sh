@@ -11,8 +11,9 @@ set -euo pipefail
 
 IMAGE="${1:?the Altiward image to test}"
 cd "$(dirname "$0")/.."
-# The template's own caddy image.
-CADDY=$(sed -n "s/^var caddyImage = '\(.*\)'$/\1/p" deploy/azure/main.bicep)
+# The template's Caddy version, from Docker Hub, where release-server.yml copies it from:
+# the copy on ghcr.io only exists once a release has made it.
+CADDY=$(sed -n "s/^var caddyImage = '.*\/caddy:\(.*\)'$/caddy:\1/p" deploy/azure/main.bicep)
 [ -n "$CADDY" ] || { echo "FAIL: no caddyImage in deploy/azure/main.bicep" >&2; exit 1; }
 CURL=curlimages/curl:8.11.1
 P=altiward-proxy-test
