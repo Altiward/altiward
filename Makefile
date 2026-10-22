@@ -13,14 +13,14 @@ DEV_ENV := ALTIWARD_LISTEN_ADDR=127.0.0.1:8080 \
 	ALTIWARD_AGENT_TOKENS=dev=dev-agent-token-0001 \
 	ALTIWARD_CONSOLE_TOKENS=dev=dev-console-token-001
 
-.PHONY: help test lint agent-build agent-test backend-build backend-test test-db docker-check db db-down demo demo-down run-api run-api-console notices notices-check image test-upgrade dev-hook dev-heartbeat package package-verify app-icon console-install console-dev console-test console-build console-seed docs-screenshots brand-sync brand-check
+.PHONY: help test lint agent-build agent-test backend-build backend-test test-db docker-check go-check node-check db db-down demo demo-down run-api run-api-console notices notices-check image test-upgrade dev-hook dev-heartbeat package package-verify app-icon console-install console-dev console-test console-build console-seed docs-screenshots brand-sync brand-check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
 
 test: agent-test backend-test console-test ## Run all unit tests (no database needed)
 
-lint: ## gofmt + go vet
+lint: go-check ## gofmt + go vet
 	@test -z "$$(gofmt -l backend integrations deploy/sentinel)" || (gofmt -l backend integrations deploy/sentinel; echo "run gofmt -w"; exit 1)
 	go vet ./...
 	cd integrations && go vet ./...
@@ -31,14 +31,14 @@ agent-build: ## Build altiward-agent and altiward-hook (debug)
 agent-test: ## Run the Swift agent tests
 	swift test $(SWIFT_FLAGS)
 
-backend-build: ## Build bin/altiward-api
+backend-build: go-check ## Build bin/altiward-api
 	go build -o bin/altiward-api ./backend/cmd/altiward-api
 
-backend-test: ## Run Go tests (store tests against Postgres are skipped)
+backend-test: go-check ## Run Go tests (store tests against Postgres are skipped)
 	go test ./...
 	cd integrations && go test ./...
 
-test-db: db ## Run Go tests including the Postgres store suite
+test-db: go-check db ## Run Go tests including the Postgres store suite
 	ALTIWARD_TEST_DATABASE_URL="$(DATABASE_URL)" go test -count=1 ./...
 	cd integrations && go test -count=1 ./...
 
@@ -47,6 +47,20 @@ test-db: db ## Run Go tests including the Postgres store suite
 docker-check:
 	@command -v docker >/dev/null || { echo "Docker isn't installed: see https://docs.docker.com/get-started/get-docker/" >&2; exit 1; }
 	@docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 isn't installed: install Docker Desktop, or the docker-compose-plugin package (https://docs.docker.com/compose/install/linux/)" >&2; exit 1; }
+
+# Go 1.21+ fetches the Go release go.mod names by itself. Older Go, such as Ubuntu 22.04's
+# 1.18, stops on go.mod's syntax without saying it's too old.
+go-check:
+	@command -v go >/dev/null || { echo "Go isn't installed: Altiward needs Go 1.27 (https://go.dev/doc/install)" >&2; exit 1; }
+	@v=$$(GOTOOLCHAIN=local go version | awk '{print $$3}'); \
+	if [ "$$(echo $$v | cut -d. -f2)" -lt 21 ] 2>/dev/null; then echo "Go $${v#go} is too old: Altiward needs Go 1.27 (https://go.dev/doc/install)" >&2; exit 1; fi
+
+# Older Node, such as Ubuntu 24.04's 18, installs the console with only warnings, then
+# fails inside Vite with a SyntaxError that doesn't mention Node. 22.12 is Vite's minimum.
+node-check:
+	@command -v node >/dev/null || { echo "Node isn't installed: the console needs Node 22.12+ (https://nodejs.org/en/download)" >&2; exit 1; }
+	@node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 12) ? 0 : 1)' || \
+	{ echo "Node $$(node --version) is too old: the console needs Node 22.12+ (https://nodejs.org/en/download)" >&2; exit 1; }
 
 db: docker-check ## Start local Postgres (docker compose)
 	docker compose -f dev/compose.yaml up -d --wait postgres
@@ -60,10 +74,10 @@ demo: docker-check ## Run the console with demo data on :8080, needing only Dock
 demo-down: ## Stop the demo and delete its data
 	docker compose -f dev/compose.demo.yaml down -v
 
-run-api: db ## Run the API on :8080 against local Postgres with dev tokens
+run-api: go-check db ## Run the API on :8080 against local Postgres with dev tokens
 	$(DEV_ENV) go run ./backend/cmd/altiward-api
 
-run-api-console: db console-build ## Run the API on :8080 serving the built console, as in production
+run-api-console: go-check db console-build ## Run the API on :8080 serving the built console, as in production
 	$(DEV_ENV) ALTIWARD_CONSOLE_DIR=console/dist go run ./backend/cmd/altiward-api
 
 notices: ## Regenerate THIRD_PARTY_NOTICES.md after changing Go or console dependencies
@@ -105,17 +119,17 @@ brand-sync: ## Copy canonical brand assets into the console
 brand-check: ## Check the console's brand assets match the canonical sources
 	scripts/brand/export.sh console console --check
 
-console-install: ## Install console dependencies
+console-install: node-check ## Install console dependencies
 	npm --prefix console ci
 
-console-dev: ## Run the console on :5173 against `make run-api`
+console-dev: node-check ## Run the console on :5173 against `make run-api`
 	npm --prefix console run dev
 
-console-test: ## Type-check and test the console
+console-test: node-check ## Type-check and test the console
 	npm --prefix console run typecheck
 	npm --prefix console test
 
-console-build: ## Build the console into console/dist
+console-build: node-check ## Build the console into console/dist
 	npm --prefix console run build
 
 console-seed: ## Fill `make run-api` with demo Macs, sessions and an enrollment to approve

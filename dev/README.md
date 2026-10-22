@@ -25,7 +25,7 @@ Postgres, and fills it with `seed.mjs`. Nothing is published outside `127.0.0.1:
 
 ## Run from source
 
-You need Go 1.27+, Node 22, Docker with Compose v2 and `make`. Start from the repository
+You need Go 1.27+, Node 22.12+, Docker with Compose v2 and `make`. Start from the repository
 root:
 
 ```sh
@@ -62,6 +62,8 @@ For production, use [`deploy/compose/`](../deploy/compose/) and the
 | `permission denied while trying to connect to the Docker daemon socket` | On Linux, add yourself to the `docker` group (`sudo usermod -aG docker $USER`), then sign out and back in |
 | `Cannot connect to the Docker daemon` | Start Docker Desktop, or the Docker service |
 | `make: command not found` | Install `make` (`sudo apt install make` on Ubuntu), or use the `docker compose` commands above |
+| `does not provide an export named 'styleText'` when the console starts | Node is too old: install Node 22.12 or newer. Ubuntu 24.04's `nodejs` package is 18 |
+| `invalid go version '1.27.0': must match format 1.23` | Go is older than 1.21: install Go 1.27. Ubuntu 22.04's `golang-go` package is 1.18 |
 | `address already in use` or `port is already allocated` for 8080 | Something else is on port 8080, such as `make run-api` or the demo. Stop it, or the demo with `make demo-down` |
 | `Can't reach the API at http://127.0.0.1:8080` from `make console-seed` | Start `make run-api` in another terminal and leave it running |
 | Nothing at `localhost:5173` | `make console-dev` hasn't started: it runs only after `make console-seed` succeeds |
