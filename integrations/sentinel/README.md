@@ -137,10 +137,10 @@ Put the new `password` in `.env` as `ALTIWARD_SENTINEL_CLIENT_SECRET` and run
 
 ### Outside Azure: a certificate instead of a secret
 
-A server that isn't on an Azure VM can sign in with a certificate on the app instead of a
-secret, so `.env` holds no secret. After step 1, on a machine with OpenSSL and the Azure
-CLI, make a certificate, add it to the app next to its secret, and put the certificate and
-its private key in one file:
+A server that isn't on an Azure VM or container app can sign in with a certificate on the
+app instead of a secret, so `.env` holds no secret. After step 1, on a machine with
+OpenSSL and the Azure CLI, make a certificate, add it to the app next to its secret, and
+put the certificate and its private key in one file:
 
 ```sh
 openssl req -x509 -newkey rsa:3072 -nodes -days 365 -subj "/CN=Altiward SIEM export" \
@@ -186,14 +186,40 @@ It creates no app. It gives the VM a system-assigned managed identity, grants th
 *Monitoring Metrics Publisher* on the rule, and prints three lines for `.env`:
 `ALTIWARD_SENTINEL_ENDPOINT`, `ALTIWARD_SENTINEL_DCR_ID` and
 `ALTIWARD_SENTINEL_AUTH=managed-identity`. Leave out the tenant ID, client ID and client
-secret. For a user-assigned identity instead, grant it the role yourself and set
-`ALTIWARD_SENTINEL_CLIENT_ID` to its client ID.
+secret. For a user-assigned identity instead, run the script with `--identity <its client
+ID>` in place of `--vm`, as on Azure Container Apps below.
 
 The server gets its token from the VM's Instance Metadata Service at `169.254.169.254`,
 never through a proxy. The example deployment's containers reach it through Compose's
 default network; `altiward-api diagnose` checks that they can, as `sentinel-identity`.
 A new role assignment can take a few minutes to apply, and until then uploads fail with
 HTTP 403 and are retried.
+
+### On Azure Container Apps: no secret
+
+When the server runs as a container app with a user-assigned managed identity, as the
+Deploy to Azure template sets it up, it can sign in as that identity. Run the script with
+the identity's client ID (the template's `identityClientId` output):
+
+```sh
+bash setup.sh --resource-group <the workspace's resource group> --workspace <the workspace's name> --identity <the client ID>
+```
+
+It creates no app. It grants the identity *Monitoring Metrics Publisher* on the rule, and
+prints four settings: `ALTIWARD_SENTINEL_ENDPOINT`, `ALTIWARD_SENTINEL_DCR_ID`,
+`ALTIWARD_SENTINEL_AUTH=managed-identity` and `ALTIWARD_SENTINEL_CLIENT_ID`. Set them on the
+app's `altiward` container, which starts a new revision:
+
+```sh
+az containerapp update --name <the app> --resource-group <its resource group> --container-name altiward \
+  --set-env-vars ALTIWARD_SENTINEL_ENDPOINT=<…> ALTIWARD_SENTINEL_DCR_ID=<…> \
+  ALTIWARD_SENTINEL_AUTH=managed-identity ALTIWARD_SENTINEL_CLIENT_ID=<…>
+```
+
+The server gets its token from the identity endpoint Container Apps gives the app
+(`IDENTITY_ENDPOINT`), never through a proxy; `altiward-api diagnose` checks that it can
+reach it, as `sentinel-identity`. A new role assignment can take a few minutes to apply,
+and until then uploads fail with HTTP 403 and are retried.
 
 ### Setting it up by hand
 

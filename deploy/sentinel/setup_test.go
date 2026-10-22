@@ -284,3 +284,51 @@ func TestSetupRefusesAVMGroupWithoutAVM(t *testing.T) {
 		t.Errorf("err %v, calls %q, stderr:\n%s", r.err, r.calls, r.stderr)
 	}
 }
+
+func TestSetupWithIdentityUsesItAndNoApp(t *testing.T) {
+	const clientID = "44444444-0000-0000-0000-000000000004"
+	r := runSetup(t, nil, "--resource-group", "rg-sec", "--workspace", "law-sec", "--identity", clientID)
+	if r.err != nil {
+		t.Fatalf("setup.sh failed: %v\n%s", r.err, r.stderr)
+	}
+	want := "ALTIWARD_SENTINEL_ENDPOINT=" + directURL + "\n" +
+		"ALTIWARD_SENTINEL_DCR_ID=dcr-0123456789abcdef0123456789abcdef\n" +
+		"ALTIWARD_SENTINEL_AUTH=managed-identity\n" +
+		"ALTIWARD_SENTINEL_CLIENT_ID=" + clientID + "\n"
+	if r.stdout != want {
+		t.Errorf("stdout:\n%s\nwant:\n%s", r.stdout, want)
+	}
+	if apps := append(r.called("ad app"), r.called("ad sp create-for-rbac")...); len(apps) > 0 {
+		t.Errorf("made app registration calls with --identity: %q", apps)
+	}
+	if vm := r.called("vm "); len(vm) > 0 {
+		t.Errorf("made VM calls with --identity: %q", vm)
+	}
+	role := r.called("role assignment create")
+	if len(role) != 1 || !strings.Contains(role[0], "--assignee-object-id 55555555-0000-0000-0000-000000000005") ||
+		!strings.Contains(role[0], "--scope "+ruleID) || !strings.Contains(role[0], "--role Monitoring Metrics Publisher") {
+		t.Errorf("role assignment: %q", role)
+	}
+	if !strings.Contains(r.stderr, "az containerapp update") {
+		t.Errorf("doesn't say how to set it on a container app:\n%s", r.stderr)
+	}
+}
+
+func TestSetupStopsOnAnUnknownIdentity(t *testing.T) {
+	r := runSetup(t, []string{"FAKE_NO_IDENTITY=1"}, "--resource-group", "rg-sec", "--workspace", "law-sec",
+		"--identity", "44444444-0000-0000-0000-000000000004")
+	if r.err == nil || !strings.Contains(r.stderr, "can't find a managed identity") || r.stdout != "" {
+		t.Errorf("err %v, stdout %q, stderr:\n%s", r.err, r.stdout, r.stderr)
+	}
+	if role := r.called("role assignment create"); len(role) != 0 {
+		t.Errorf("assigned a role: %q", role)
+	}
+}
+
+func TestSetupRefusesAVMAndAnIdentity(t *testing.T) {
+	r := runSetup(t, nil, "--resource-group", "rg-sec", "--workspace", "law-sec", "--vm", "vm-altiward",
+		"--identity", "44444444-0000-0000-0000-000000000004")
+	if r.err == nil || !strings.Contains(r.stderr, "pass one of them") || len(r.calls) > 0 {
+		t.Errorf("err %v, calls %q, stderr:\n%s", r.err, r.calls, r.stderr)
+	}
+}

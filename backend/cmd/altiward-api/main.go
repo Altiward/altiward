@@ -239,7 +239,8 @@ func run(log *slog.Logger) error {
 		var tokens sentinel.TokenSource = cc
 		switch s.Auth {
 		case config.SentinelManagedIdentity:
-			tokens = &sentinel.ManagedIdentity{ClientID: s.ClientID} // its own client: IMDS mustn't go through a proxy
+			// Its own client: neither IMDS nor a container app's identity endpoint may go through a proxy.
+			tokens = &sentinel.ManagedIdentity{ClientID: s.ClientID, Endpoint: s.IdentityEndpoint, Header: s.IdentityHeader}
 		case config.SentinelCertificate:
 			if cc.Certificate, err = sentinel.LoadCertificate(s.CertificateFile); err != nil {
 				return fmt.Errorf("ALTIWARD_SENTINEL_CERTIFICATE_FILE: %w", err)

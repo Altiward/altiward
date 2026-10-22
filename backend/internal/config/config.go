@@ -80,19 +80,23 @@ type Sentinel struct {
 	Auth     string // ALTIWARD_SENTINEL_AUTH: SentinelSecret (default), SentinelCertificate or SentinelManagedIdentity
 	TenantID string // ALTIWARD_SENTINEL_TENANT_ID; secret and certificate only
 	// ALTIWARD_SENTINEL_CLIENT_ID: the app registration's, or with a managed identity, a
-	// user-assigned identity's (empty = the VM's system-assigned identity)
+	// user-assigned identity's (empty = the VM's or container app's system-assigned identity)
 	ClientID     string
 	ClientSecret string // ALTIWARD_SENTINEL_CLIENT_SECRET; secret only
 	// ALTIWARD_SENTINEL_CERTIFICATE_FILE; certificate only: a PEM file with the app's
 	// certificate and its private key
 	CertificateFile string
+	// IDENTITY_ENDPOINT and IDENTITY_HEADER, set by Azure Container Apps for an app with a
+	// managed identity; managed identity only. Empty means a VM's IMDS.
+	IdentityEndpoint string
+	IdentityHeader   string
 }
 
 // How the Sentinel export signs in to Entra ID.
 const (
 	SentinelSecret          = "secret"           // an app registration's client secret
 	SentinelCertificate     = "certificate"      // an app registration's certificate, from a file
-	SentinelManagedIdentity = "managed-identity" // the Azure VM's managed identity, through IMDS
+	SentinelManagedIdentity = "managed-identity" // the Azure VM's or container app's managed identity
 )
 
 // Load reads and validates the environment.
@@ -157,7 +161,7 @@ func Load(getenv func(string) string) (Config, error) {
 		case SentinelSecret:
 			if s.RuleID == "" || s.TenantID == "" || s.ClientID == "" || s.ClientSecret == "" {
 				return c, errors.New("ALTIWARD_SENTINEL_* needs DCR_ID, TENANT_ID, CLIENT_ID and CLIENT_SECRET " +
-					"(or ALTIWARD_SENTINEL_AUTH=certificate, or managed-identity on an Azure VM)")
+					"(or ALTIWARD_SENTINEL_AUTH=certificate, or managed-identity on an Azure VM or container app)")
 			}
 		case SentinelCertificate:
 			if s.RuleID == "" || s.TenantID == "" || s.ClientID == "" || s.CertificateFile == "" {
@@ -166,7 +170,7 @@ func Load(getenv func(string) string) (Config, error) {
 			}
 			if s.ClientSecret != "" {
 				return c, errors.New("ALTIWARD_SENTINEL_CLIENT_SECRET isn't used with ALTIWARD_SENTINEL_AUTH=certificate: " +
-					"remove it from .env")
+					"remove it")
 			}
 		case SentinelManagedIdentity:
 			if s.RuleID == "" {
@@ -174,8 +178,9 @@ func Load(getenv func(string) string) (Config, error) {
 			}
 			if s.ClientSecret != "" {
 				return c, errors.New("ALTIWARD_SENTINEL_CLIENT_SECRET isn't used with ALTIWARD_SENTINEL_AUTH=managed-identity: " +
-					"remove it from .env")
+					"remove it")
 			}
+			s.IdentityEndpoint, s.IdentityHeader = getenv("IDENTITY_ENDPOINT"), getenv("IDENTITY_HEADER")
 		default:
 			return c, fmt.Errorf("ALTIWARD_SENTINEL_AUTH: want secret, certificate or managed-identity, got %q", s.Auth)
 		}

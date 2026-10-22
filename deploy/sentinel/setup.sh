@@ -12,6 +12,9 @@
 #   --vm <name>                  the Altiward server runs on this Azure VM: sign in as its
 #                                managed identity, with no app registration or secret
 #   --vm-resource-group <group>  the VM's resource group, if it isn't the workspace's
+#   --identity <client ID>       sign in as this user-assigned managed identity, with no app
+#                                registration or secret: the Deploy to Azure template's
+#                                identityClientId, or one you gave the server's VM
 #
 # It creates, in the workspace's resource group and region:
 #
@@ -21,6 +24,7 @@
 #   - the app registration, with a one-year secret and Monitoring Metrics Publisher on the
 #     rule, unless an app of that name exists. Then it leaves the app's secrets alone.
 #     With --vm, no app: the VM gets a system-assigned managed identity, and the role.
+#     With --identity, no app: that identity gets the role.
 #
 # It's safe to run again. The .env lines go to standard output and everything else to
 # standard error. The secret is shown once and never written to a file.
@@ -39,12 +43,12 @@ ActivityId:int SeverityId:int DeviceSerial:string UserName:string Message:string
 
 say() { printf '%s\n' "$*" >&2; }
 die() { printf 'setup.sh: %s\n' "$*" >&2; exit 1; }
-usage() { sed -n '5,14s/^# \{0,1\}//p' "$0" >&2; exit "${1:-2}"; }
+usage() { sed -n '5,17s/^# \{0,1\}//p' "$0" >&2; exit "${1:-2}"; }
 
-RG='' WORKSPACE='' SUBSCRIPTION='' APP_NAME="Altiward SIEM export" PRIVATE_LINK='' VM='' VM_RG=''
+RG='' WORKSPACE='' SUBSCRIPTION='' APP_NAME="Altiward SIEM export" PRIVATE_LINK='' VM='' VM_RG='' IDENTITY=''
 while [ $# -gt 0 ]; do
   case "$1" in
-  -g|--resource-group|-w|--workspace|-s|--subscription|--app-name|--vm|--vm-resource-group)
+  -g|--resource-group|-w|--workspace|-s|--subscription|--app-name|--vm|--vm-resource-group|--identity)
     [ $# -ge 2 ] && [ -n "$2" ] || die "$1 needs a value"
     case "$1" in
     -g|--resource-group) RG="$2" ;;
@@ -53,6 +57,7 @@ while [ $# -gt 0 ]; do
     --app-name) APP_NAME="$2" ;;
     --vm) VM="$2" ;;
     --vm-resource-group) VM_RG="$2" ;;
+    --identity) IDENTITY="$2" ;;
     esac
     shift 2 ;;
   --private-link) PRIVATE_LINK=1; shift ;;
@@ -62,6 +67,8 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$RG" ] && [ -n "$WORKSPACE" ] || { say "setup.sh: needs --resource-group and --workspace"; usage; }
 [ -z "$VM_RG" ] || [ -n "$VM" ] || die "--vm-resource-group goes with --vm <name>."
+[ -z "$VM" ] || [ -z "$IDENTITY" ] ||
+  die "--vm signs in as the VM's own identity, and --identity as a user-assigned one: pass one of them."
 VM_RG=${VM_RG:-$RG}
 command -v az >/dev/null || die "needs the Azure CLI (az). Azure Cloud Shell has it."
 
@@ -158,31 +165,45 @@ if [ -z "$PRIVATE_LINK" ]; then
 fi
 say "Rule $RULE: ready ($DCR_IMMUTABLE_ID)."
 
-# 4. Who signs in: the VM's managed identity, or an app. Creating credentials for an app
-# that exists would delete its secrets and cut off a server that's sending, so an existing
-# app keeps them.
+# 4. Who signs in: a managed identity (the VM's own, or a user-assigned one), or an app.
+# Creating credentials for an app that exists would delete its secrets and cut off a
+# server that's sending, so an existing app keeps them.
 SECRET=
-if [ -n "$VM" ]; then
-  principal=$(az vm identity assign --subscription "$SUB_ID" -g "$VM_RG" -n "$VM" --query systemAssignedIdentity -o tsv) ||
-    die "can't give the VM $VM (resource group $VM_RG) a managed identity."
-  [ -n "$principal" ] || die "the VM $VM came back without a system-assigned identity."
+if [ -n "$VM" ] || [ -n "$IDENTITY" ]; then
+  if [ -n "$VM" ]; then
+    who="VM $VM: managed identity"
+    principal=$(az vm identity assign --subscription "$SUB_ID" -g "$VM_RG" -n "$VM" --query systemAssignedIdentity -o tsv) ||
+      die "can't give the VM $VM (resource group $VM_RG) a managed identity."
+    [ -n "$principal" ] || die "the VM $VM came back without a system-assigned identity."
+  else
+    who="Managed identity $IDENTITY"
+    principal=$(az ad sp show --id "$IDENTITY" --query id -o tsv) ||
+      die "can't find a managed identity with client ID $IDENTITY."
+  fi
   if [ -z "$(az role assignment list --assignee "$principal" --role "$ROLE" --scope "$RULE_ID" --query "[].id" -o tsv)" ]; then
     az role assignment create --assignee-object-id "$principal" --assignee-principal-type ServicePrincipal \
       --role "$ROLE" --scope "$RULE_ID" -o none
-    say "VM $VM: managed identity given $ROLE on the rule."
+    say "$who given $ROLE on the rule."
   else
-    say "VM $VM: managed identity has $ROLE on the rule."
+    say "$who has $ROLE on the rule."
   fi
   say ""
-  say "Add these lines to .env in the Altiward deployment directory, then run docker compose up -d."
-  say "Leave out ALTIWARD_SENTINEL_TENANT_ID, _CLIENT_ID and _CLIENT_SECRET."
+  if [ -n "$VM" ]; then
+    say "Add these lines to .env in the Altiward deployment directory, then run docker compose up -d."
+    say "Leave out ALTIWARD_SENTINEL_TENANT_ID, _CLIENT_ID and _CLIENT_SECRET."
+  else
+    say "Add these settings to the Altiward server, and leave out ALTIWARD_SENTINEL_TENANT_ID and _CLIENT_SECRET."
+    say "On Azure Container Apps: az containerapp update --name <app> --resource-group <group> --container-name altiward --set-env-vars <each line>"
+    say "On a VM with this identity assigned: add them to .env and run docker compose up -d."
+  fi
   say ""
   echo "ALTIWARD_SENTINEL_ENDPOINT=$INGEST_URL"
   echo "ALTIWARD_SENTINEL_DCR_ID=$DCR_IMMUTABLE_ID"
   echo "ALTIWARD_SENTINEL_AUTH=managed-identity"
+  [ -z "$IDENTITY" ] || echo "ALTIWARD_SENTINEL_CLIENT_ID=$IDENTITY"
   host=${INGEST_URL#https://}
   say ""
-  say "The server needs outbound HTTPS to ${host%%/*}, and its container must reach 169.254.169.254."
+  say "The server needs outbound HTTPS to ${host%%/*}. On a VM, its container must also reach 169.254.169.254."
   say "A new role assignment can take up to 30 minutes to work; until then the export retries."
   [ -z "$PRIVATE_LINK" ] || say "Add the endpoint $ENDPOINT to the workspace's Azure Monitor private link scope."
   exit 0

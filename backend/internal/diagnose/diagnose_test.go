@@ -174,6 +174,21 @@ func TestSentinelAuthMode(t *testing.T) {
 		t.Fatalf("dialled %q", dialled)
 	}
 
+	// On Azure Container Apps the token comes from the platform's identity endpoint, and the
+	// header that guards it is never reported.
+	r, dialled = run("ALTIWARD_SENTINEL_AUTH=managed-identity", "IDENTITY_ENDPOINT=http://localhost:42356/msi/token",
+		"IDENTITY_HEADER=header-1")
+	if len(r.Sinks) != 3 || r.Sinks[2].Sink != "sentinel-identity" || r.Sinks[2].Endpoint != "http://localhost:42356" ||
+		!r.Sinks[2].Reachable {
+		t.Fatalf("container app: sinks = %+v", r.Sinks)
+	}
+	if len(dialled) != 3 || dialled[2] != "localhost:42356 tls=" {
+		t.Fatalf("dialled %q", dialled)
+	}
+	if out, _ := json.Marshal(r); strings.Contains(string(out), "header-1") || strings.Contains(string(out), "IDENTITY_") {
+		t.Fatalf("report shows the platform's identity settings: %s", out)
+	}
+
 	r, _ = run("ALTIWARD_SENTINEL_AUTH=certificate", "ALTIWARD_SENTINEL_TENANT_ID=t", "ALTIWARD_SENTINEL_CLIENT_ID=c",
 		"ALTIWARD_SENTINEL_CERTIFICATE_FILE=/etc/altiward/certs/sentinel.pem")
 	if !r.Config.Valid || r.Config.Settings["ALTIWARD_SENTINEL_CERTIFICATE_FILE"] != "/etc/altiward/certs/sentinel.pem" {

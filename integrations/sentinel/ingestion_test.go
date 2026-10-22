@@ -188,3 +188,84 @@ func TestManagedIdentityExplainsAMissingIdentity(t *testing.T) {
 		}
 	}
 }
+
+// identityEndpoint stands in for a Container App's identity endpoint: it fails with the
+// given statuses in turn, then issues tokens named ca-<request number><client_id> that
+// expire an hour after now, as unix seconds in a string.
+func identityEndpoint(t *testing.T, requests *atomic.Int32, now time.Time, statuses ...int) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := int(requests.Add(1))
+		q := r.URL.Query()
+		if r.Method != http.MethodGet || r.URL.Path != "/msi/token" || r.Header.Get("X-IDENTITY-HEADER") != "header-1" ||
+			r.Header.Get("Metadata") != "" || q.Get("api-version") != "2019-08-01" || q.Get("resource") != "https://monitor.azure.com/" {
+			t.Errorf("unexpected request %s %s %v", r.Method, r.URL, r.Header)
+			http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
+			return
+		}
+		if n <= len(statuses) {
+			http.Error(w, `{"statusCode":400,"message":"No User Assigned or Delegated Managed Identity found"}`, statuses[n-1])
+			return
+		}
+		fmt.Fprintf(w, `{"access_token":"ca-%d%s","expires_on":"%d","resource":"https://monitor.azure.com/",`+
+			`"token_type":"Bearer","client_id":"%s"}`, n, q.Get("client_id"), now.Add(time.Hour).Unix(), q.Get("client_id"))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestManagedIdentityOnAContainerApp(t *testing.T) {
+	var requests atomic.Int32
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	srv := identityEndpoint(t, &requests, now)
+	mi := &sentinel.ManagedIdentity{Endpoint: srv.URL + "/msi/token", Header: "header-1", Now: func() time.Time { return now }}
+	first, err := mi.Token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _ := mi.Token(context.Background())
+	if first != "ca-1" || second != first || requests.Load() != 1 {
+		t.Fatalf("first=%s second=%s requests=%d", first, second, requests.Load())
+	}
+	now = now.Add(56 * time.Minute) // expires_on is an hour on: inside the 5-minute refresh margin
+	if third, _ := mi.Token(context.Background()); third != "ca-2" {
+		t.Fatalf("token not refreshed: %s", third)
+	}
+}
+
+func TestManagedIdentityOnAContainerAppUserAssigned(t *testing.T) {
+	var requests atomic.Int32
+	srv := identityEndpoint(t, &requests, time.Now())
+	mi := &sentinel.ManagedIdentity{Endpoint: srv.URL + "/msi/token", Header: "header-1", ClientID: "abc"}
+	if tok, err := mi.Token(context.Background()); err != nil || tok != "ca-1abc" {
+		t.Fatalf("token=%s err=%v", tok, err)
+	}
+}
+
+func TestManagedIdentityOnAContainerAppRetriesTransientErrors(t *testing.T) {
+	var requests atomic.Int32
+	srv := identityEndpoint(t, &requests, time.Now(), http.StatusTooManyRequests, http.StatusInternalServerError)
+	mi := &sentinel.ManagedIdentity{Endpoint: srv.URL + "/msi/token", Header: "header-1", RetryDelay: time.Millisecond}
+	if tok, err := mi.Token(context.Background()); err != nil || tok != "ca-3" {
+		t.Fatalf("token=%s err=%v requests=%d", tok, err, requests.Load())
+	}
+}
+
+func TestManagedIdentityOnAContainerAppExplainsAMissingIdentity(t *testing.T) {
+	var requests atomic.Int32
+	srv := identityEndpoint(t, &requests, time.Now(), http.StatusBadRequest)
+	mi := &sentinel.ManagedIdentity{Endpoint: srv.URL + "/msi/token", Header: "header-1", RetryDelay: time.Millisecond}
+	_, err := mi.Token(context.Background())
+	if err == nil || requests.Load() != 1 {
+		t.Fatalf("err=%v requests=%d", err, requests.Load())
+	}
+	for _, want := range []string{"managed identity: identity endpoint HTTP 400", "No User Assigned", "container app",
+		"Monitoring Metrics Publisher", "ALTIWARD_SENTINEL_CLIENT_ID"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error lacks %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "header-1") {
+		t.Errorf("error shows the identity header: %v", err)
+	}
+}

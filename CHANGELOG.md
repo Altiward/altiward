@@ -64,6 +64,10 @@ None.
   secret, for servers outside Azure: `ALTIWARD_SENTINEL_AUTH=certificate` and
   `ALTIWARD_SENTINEL_CERTIFICATE_FILE`, a PEM file in `certs/`
   (`integrations/sentinel/README.md`).
+- The Sentinel export's managed identity also works on Azure Container Apps, through the
+  identity endpoint the platform gives the app, and `setup.sh --identity <client ID>`
+  sets Sentinel up for a user-assigned identity, with no app registration or secret
+  (`integrations/sentinel/README.md`).
 - The install guide, `docs/install.md`, has a diagram of how the parts connect, a picture
   of what to expect after each step, the paths in Jamf Pro and Intune, and troubleshooting
   for a Mac that never appears, grants that show as "Without a grant" and certificate
