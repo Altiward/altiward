@@ -39,7 +39,7 @@ None.
   each attempt the extension blocked on Privileges (deleting, renaming or unloading it)
   is sent as `agent.tamper` with check `privileges_blocked`. Privileges keeps these on
   the Mac; nothing changes without the extension. `sudo altiward-agent privileges-audit`
-  prints what the agent reads.
+  prints what the agent reads. `docs/data-handling.md` lists what is collected.
 - `agent.health` reports Privileges 2.7's daily `AdminBudget` as
   `privileges.admin_budget_minutes`. Privileges enforces it; the agent only reports it.
 

@@ -32,12 +32,13 @@ The agent records changes to admin rights, not what people do with them.
 | The person | macOS short name, and their UPN (sign-in name) if you map one in the MDM profile (`UserPrincipalNames`). Altiward doesn't look UPNs up |
 | Each elevation | When it started and ended, how long it was allowed for, and the reason they typed (up to 2,048 characters) |
 | Who is admin | Every human account in the Mac's `admin` group, checked every 5 minutes, and admin rights that appear without an elevation |
-| Health | Whether the agent, SAP Privileges and their settings are intact, and how many events are waiting to send. While someone holds rights from SAP Privileges, this includes whether Privileges' timer is still running for them: the agent looks for its process in the Mac's process list and sends only the answer |
+| Health | Whether the agent, SAP Privileges and their settings are intact (including Privileges' daily admin budget, if set), and how many events are waiting to send. While someone holds rights from SAP Privileges, this includes whether Privileges' timer is still running for them: the agent looks for its process in the Mac's process list and sends only the answer |
 | Revokes | The results of revokes sent from the console |
+| From SAP Privileges' system extension | Only with Privileges 2.6 or later and its system extension on. For admin rights nobody granted, the process that added the account to `admin`; for each attempt the extension blocked on Privileges, the item and the process that tried. For each process: its path, signing ID, team ID, whether it is part of macOS, its process and parent IDs, and its terminal. Read from the records the extension keeps in the Mac's unified log |
 | What changed while someone was admin | New or changed LaunchDaemons and LaunchAgents (their path, label, program and arguments), new sudoers rules, new SSH keys allowed to log in (their type and fingerprint, never the key), new local accounts (name, ID and whether it is an admin), and Remote Login or Screen Sharing switched on. Only changes made while an elevation was open are sent; the Mac keeps the last snapshot in the agent's own folder |
 
 The agent does **not** collect the Mac's name, IP address, process or command
-history, the contents of people's files, browsing, keystrokes or location. (Your server sees the address each
+history (beyond the one process behind each change above), the contents of people's files, browsing, keystrokes or location. (Your server sees the address each
 connection comes from, as any web server does.)
 
 The event format is published in full in `docs/schema/event.schema.json` in the source
