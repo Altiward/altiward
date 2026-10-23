@@ -42,7 +42,7 @@ decoder rejects unknown fields, so drift fails loudly.
 | | `permanent_admins` | Configured standing admins |
 | | `open_sessions` | `[{user, session_id, source}]` from the agent's ledger |
 | | `queue_depth` | Events still waiting to be sent |
-| | `privileges` | `installed`, `post_change_hook_configured`, `pass_reason_to_executable`, `expiration_interval_minutes`, `expiration_interval_max_minutes`, `enforce_privileges`, `system_extension_enabled` |
+| | `privileges` | `installed`, `post_change_hook_configured`, `pass_reason_to_executable`, `expiration_interval_minutes`, `expiration_interval_max_minutes`, `enforce_privileges`, `system_extension_enabled`, `admin_budget_minutes` (`AdminBudget`, Privileges 2.7+; `null` when unset or 0) |
 | | `integrity` | Each tamper check that applies on this Mac, check → passing (see `agent.tamper`) |
 | | `persistence_unreadable` | Persistence locations that exist but the last snapshot couldn't read, such as a home folder privacy protection covers; empty when all were read. Missing before the first snapshot |
 | `agent.tamper` | `check` | `launch_daemon`, `code_signature` (Altiward.app fails a strict signature check), `settings_managed` (one of the settings it checks comes from /Library/Preferences, not MDM), `privileges_tamper_protection`, `privileges_hook` (Privileges installed: its hook isn't Altiward's, or its checksum doesn't match Altiward's hook), `privileges_timer` (Privileges installed: someone logged in holds rights from a Privileges grant and their Privileges agent, which runs the timer, isn't running), `agent_version` or `privileges_blocked` (Privileges' system extension blocked an attempt to delete, rename, clone, add to or unload Privileges, one event per process and item each heartbeat) |

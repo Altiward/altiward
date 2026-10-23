@@ -13,6 +13,9 @@ public struct PrivilegesSettings: Sendable, Equatable {
     public var expirationIntervalMaxMinutes: Int?
     public var enforcePrivileges: String?
     public var systemExtensionEnabled: Bool?
+    /// `AdminBudget` (Privileges 2.7+): the most minutes a day a user may hold admin rights.
+    /// Reported only; Privileges enforces it before a grant.
+    public var adminBudgetMinutes: Int?
 
     public init(
         postChangeExecutablePath: String? = nil,
@@ -21,7 +24,8 @@ public struct PrivilegesSettings: Sendable, Equatable {
         expirationIntervalMinutes: Int? = nil,
         expirationIntervalMaxMinutes: Int? = nil,
         enforcePrivileges: String? = nil,
-        systemExtensionEnabled: Bool? = nil
+        systemExtensionEnabled: Bool? = nil,
+        adminBudgetMinutes: Int? = nil
     ) {
         self.postChangeExecutablePath = postChangeExecutablePath
         self.postChangeExecutableChecksum = postChangeExecutableChecksum
@@ -30,6 +34,7 @@ public struct PrivilegesSettings: Sendable, Equatable {
         self.expirationIntervalMaxMinutes = expirationIntervalMaxMinutes
         self.enforcePrivileges = enforcePrivileges
         self.systemExtensionEnabled = systemExtensionEnabled
+        self.adminBudgetMinutes = adminBudgetMinutes
     }
 
     public static let domain = "corp.sap.privileges"
@@ -49,7 +54,8 @@ public struct PrivilegesSettings: Sendable, Equatable {
             expirationIntervalMinutes: p.int("ExpirationInterval"),
             expirationIntervalMaxMinutes: p.int("ExpirationIntervalMax"),
             enforcePrivileges: p.string("EnforcePrivileges"),
-            systemExtensionEnabled: p.bool("EnableSystemExtension"))
+            systemExtensionEnabled: p.bool("EnableSystemExtension"),
+            adminBudgetMinutes: p.int("AdminBudget").flatMap { $0 > 0 ? $0 : nil })
     }
 
     /// The expiry Privileges will apply to a grant made at `grantedAt`, and where it came from.
@@ -78,6 +84,7 @@ public struct PrivilegesSettings: Sendable, Equatable {
             "expiration_interval_max_minutes": expirationIntervalMaxMinutes.map { .number(Double($0)) } ?? .null,
             "enforce_privileges": .optional(enforcePrivileges),
             "system_extension_enabled": systemExtensionEnabled.map(JSONValue.bool) ?? .null,
+            "admin_budget_minutes": adminBudgetMinutes.map { .number(Double($0)) } ?? .null,
         ]
     }
 }

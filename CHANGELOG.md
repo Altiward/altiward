@@ -40,6 +40,8 @@ None.
   is sent as `agent.tamper` with check `privileges_blocked`. Privileges keeps these on
   the Mac; nothing changes without the extension. `sudo altiward-agent privileges-audit`
   prints what the agent reads.
+- `agent.health` reports Privileges 2.7's daily `AdminBudget` as
+  `privileges.admin_budget_minutes`. Privileges enforces it; the agent only reports it.
 
 ## Server 0.2.0 - unreleased
 
@@ -92,6 +94,8 @@ None.
   exported as High findings, "SAP Privileges blocked an attempt to tamper with it", and
   shown as Blocked in the Mac's tamper alerts. Both need agent 0.1.1 and Privileges 2.6
   or later with its system extension on.
+- A Mac's details in Fleet show Privileges' daily admin budget (`AdminBudget`, Privileges
+  2.7+) when it is set. Needs agent 0.1.1.
 
 ## Server 0.1.1 - 2026-10-21
 

@@ -25,6 +25,7 @@
       "pass_reason_to_executable": true,
       "enforce_privileges": null,
       "system_extension_enabled": true,
+      "admin_budget_minutes": null,
       "expiration_interval_minutes": 20,
       "expiration_interval_max_minutes": null
     },

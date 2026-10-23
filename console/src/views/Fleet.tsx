@@ -320,6 +320,7 @@ function DeviceInspector({ device: d, severities, onClose }: {
           ["Passes the reason", yesNo(p.pass_reason_to_executable)],
           ["Expires after", p.expiration_interval_minutes != null ? `${p.expiration_interval_minutes} min` : "—"],
           ["Tamper protection", yesNo(p.system_extension_enabled)],
+          ["Daily admin budget", p.admin_budget_minutes != null ? `${p.admin_budget_minutes} min` : "—"],
         ]} />
       </div>
 
