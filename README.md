@@ -33,7 +33,8 @@ and the console shows it:
 - **Who has admin rights now,** and every elevation before: who, on which Mac, for how
   long and with what reason.
 - **Admin rights nobody granted.** Every claim is checked against the real `admin` group,
-  and a regular reading of the group catches anyone added outside the normal route.
+  and a regular reading of the group catches anyone added outside the normal route. With
+  Privileges' system extension on, it says which process added them.
 - **Expiry.** Rights that outlive the expiry Privileges set raise an alert, or, if you
   choose (`ExpiryEnforcement`), the agent removes the user from `admin`.
 - **Revoke from the console,** per session, per account on a Mac, or every admin on a
@@ -42,8 +43,8 @@ and the console shows it:
 - **Tamper and health.** Alerts when the agent's LaunchDaemon or signature is changed, its
   server, permanent admins, expiry enforcement or hook requirement settings are set outside
   MDM, or it is downgraded; when Privileges' own protection is off or Altiward's hook isn't
-  set in Privileges, or someone stops Privileges' timer while holding rights it granted;
-  and when a Mac stops checking in.
+  set in Privileges, someone stops Privileges' timer while holding rights it granted, or
+  Privileges blocks an attempt to remove or unload it; and when a Mac stops checking in.
 - **What changed while someone was admin:** launch items, sudoers, SSH keys, local
   accounts and remote access.
 - **Your SIEM gets every event** as OCSF, along with every console action. Events wait
@@ -89,7 +90,9 @@ Known limits:
 - No settings editor in the console, and no Jamf Pro, Intune, Entra ID or Okta
   integrations beyond single sign-on. Settings come from the `com.altiward.agent` profile.
 - Altiward doesn't have Apple's Endpoint Security entitlement, so it shows what changed
-  during an elevation rather than every process that ran; your EDR covers that.
+  during an elevation rather than every process that ran; your EDR covers that. The
+  process behind admin rights nobody granted comes from Privileges' own system extension,
+  so it needs Privileges 2.6 or later with the extension on, on macOS 14 or later.
 
 ## Quick start
 

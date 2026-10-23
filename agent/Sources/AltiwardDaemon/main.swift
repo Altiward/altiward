@@ -5,6 +5,9 @@
 //   altiward-agent flush          deliver queued events once
 //   altiward-agent status         print queue depth and open sessions
 //   altiward-agent commands       fetch and run remote commands once, then deliver
+//   altiward-agent privileges-audit [HOURS]
+//                                 print what SAP Privileges' system extension logged in the
+//                                 last HOURS (default 24), as the agent reads it (run as root)
 //   altiward-agent simulate-hook USER STATE [REASON]
 //                                 record a change as if the hook had called (development)
 //
@@ -17,6 +20,20 @@ import Foundation
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 let command = arguments.first ?? "run"
+
+if command == "privileges-audit" {
+    // Needs no configuration and changes nothing.
+    let hours = arguments.dropFirst().first.flatMap(Double.init) ?? 24
+    let records = PrivilegesAuditLog.records(since: Date().addingTimeInterval(-hours * 3600))
+    for r in records {
+        let process = r.process.map { "\($0.executable) (\($0.signingID.isEmpty ? "unsigned" : $0.signingID))" } ?? "-"
+        print("\(AltiwardJSON.format(r.date))  \(r.eventType)  \(r.subject)  by \(process)")
+    }
+    if records.isEmpty {
+        print("nothing logged: run as root, with SAP Privileges 2.6 or later and its system extension on")
+    }
+    exit(0)
+}
 
 do {
     let daemon = try Daemon(configuration: .load())

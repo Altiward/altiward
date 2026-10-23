@@ -106,6 +106,7 @@ const integrityChecks: Record<string, string> = {
   privileges_hook: "Privileges reports to Altiward",
   privileges_timer: "Privileges timer running",
   agent_version: "Agent version",
+  privileges_blocked: "Privileges blocked tampering",
 };
 
 /** Words for the agent's tamper checks, sentence case. */
@@ -119,7 +120,10 @@ export function integrityCheckLabel(check: string): string {
 export function tamperStateLabel(state: string, check: string): string {
   if (state === "restored") return "Fixed";
   if (state === "retired") return "No longer checked";
-  if (state === "detected") return check === "agent_version" ? "Downgraded" : "Detected";
+  if (state === "detected") {
+    if (check === "agent_version") return "Downgraded";
+    return check === "privileges_blocked" ? "Blocked" : "Detected";
+  }
   return "Failed";
 }
 

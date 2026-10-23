@@ -1,0 +1,81 @@
+[
+  {
+    "activity_id": 1,
+    "activity_name": "Create",
+    "category_name": "Findings",
+    "category_uid": 2,
+    "class_name": "Detection Finding",
+    "class_uid": 2004,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "finding_info": {
+      "analytic": {
+        "name": "altiward.tamper.privileges_blocked",
+        "type": "Rule",
+        "type_id": 1
+      },
+      "created_time": 1792145400000,
+      "desc": "SAP Privileges blocked an attempt to tamper with it on C02XK0AAJGH5: SAP Privileges blocked /bin/rm from trying to delete /Applications/Privileges.app (2 attempts)",
+      "first_seen_time": 1792145400000,
+      "title": "SAP Privileges blocked an attempt to tamper with it",
+      "types": [
+        "Defense Evasion"
+      ],
+      "uid": "9b4e2d71-3c5a-4f8e-a6d2-7e1f0c9b8a35"
+    },
+    "is_alert": true,
+    "message": "SAP Privileges blocked an attempt to tamper with it on C02XK0AAJGH5: SAP Privileges blocked /bin/rm from trying to delete /Applications/Privileges.app (2 attempts)",
+    "metadata": {
+      "logged_time": 1792145400000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.1.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "9b4e2d71-3c5a-4f8e-a6d2-7e1f0c9b8a35",
+      "version": "1.9.0"
+    },
+    "severity": "High",
+    "severity_id": 4,
+    "status": "New",
+    "status_id": 1,
+    "time": 1792145400000,
+    "type_name": "Detection Finding: Create",
+    "type_uid": 200401,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "attempts": 2,
+          "blocked_action": "DELETE",
+          "check": "privileges_blocked",
+          "first_attempt": "2026-10-16T10:07:12.104Z",
+          "instigator": {
+            "executable": "/bin/rm",
+            "pid": 812,
+            "platform_binary": true,
+            "ppid": 700,
+            "signing_id": "com.apple.rm",
+            "team_id": "",
+            "tty": "/dev/ttys001"
+          },
+          "item": "/Applications/Privileges.app",
+          "last_attempt": "2026-10-16T10:07:20.551Z",
+          "problem": "SAP Privileges blocked /bin/rm from trying to delete /Applications/Privileges.app (2 attempts)",
+          "state": "detected"
+        },
+        "event_type": "agent.tamper"
+      }
+    }
+  }
+]

@@ -41,6 +41,11 @@ function eventNote(e: TimelineEvent): string | null {
   if (d.verified === false) return "Claim didn’t match the admin group";
   if (e.type === "elevation.overdue" && d.enforcement_failed === true) return "Couldn’t remove rights";
   if (e.type === "persistence.detected") return null; // listed below the event
+  if (e.type === "admin.out_of_band") {
+    // Logged by Privileges' system extension, when it is on.
+    const by = (d.instigator as { executable?: string } | undefined)?.executable;
+    return by ? `Added by ${by}` : null;
+  }
   return e.elevation?.reason ?? null;
 }
 

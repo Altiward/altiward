@@ -109,8 +109,26 @@ func TestOutOfBandIsHighSeverityFinding(t *testing.T) {
 	if get(r, "finding_info.title") != "Admin rights without a grant" {
 		t.Fatalf("title = %v", get(r, "finding_info.title"))
 	}
-	if want := "backdoor holds admin rights on C02XK0AAJGH5 that nobody granted through SAP Privileges"; get(r, "finding_info.desc") != want {
+	if want := "backdoor holds admin rights on C02XK0AAJGH5 that nobody granted through SAP Privileges; added by /usr/sbin/dseditgroup"; get(r, "finding_info.desc") != want {
 		t.Fatalf("desc = %v", get(r, "finding_info.desc"))
+	}
+}
+
+// Privileges' system extension said which process added the user: it is the finding's
+// evidence. Without it the finding says only what the agent saw.
+func TestOutOfBandNamesTheProcessThatAddedTheUser(t *testing.T) {
+	r := mapJSON(t, stored(t, "admin-out-of-band"))
+	evidences, _ := r["evidences"].([]any)
+	if len(evidences) != 1 || get(evidences[0].(map[string]any), "process.file.path") != "/usr/sbin/dseditgroup" ||
+		get(evidences[0].(map[string]any), "process.pid") != 5165.0 {
+		t.Fatalf("evidences = %v", r["evidences"])
+	}
+
+	e := stored(t, "admin-out-of-band")
+	e.Detail = map[string]any{"first_observed": "2026-10-16T10:00:00Z"}
+	r = mapJSON(t, e)
+	if r["evidences"] != nil || strings.Contains(r["message"].(string), "added by") {
+		t.Fatalf("without an instigator: evidences %v, message %q", r["evidences"], r["message"])
 	}
 }
 
@@ -422,6 +440,22 @@ func TestTamperRestoredClosesTheFinding(t *testing.T) {
 	// Same uid as the failure it resolves.
 	if get(r, "finding_info.uid") != "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D/code_signature" {
 		t.Fatalf("uid = %v", get(r, "finding_info.uid"))
+	}
+}
+
+// Each attempt Privileges blocked is its own alert, like a downgrade: nothing closes it.
+func TestPrivilegesBlockedIsAOneOffAlert(t *testing.T) {
+	r := mapJSON(t, stored(t, "agent-tamper-privileges-blocked"))
+	if r["activity_name"] != "Create" || r["severity"] != "High" || r["is_alert"] != true {
+		t.Fatalf("activity %v severity %v alert %v", r["activity_name"], r["severity"], r["is_alert"])
+	}
+	if get(r, "finding_info.uid") != "9b4e2d71-3c5a-4f8e-a6d2-7e1f0c9b8a35" ||
+		get(r, "finding_info.analytic.name") != "altiward.tamper.privileges_blocked" {
+		t.Fatalf("uid %v analytic %v", get(r, "finding_info.uid"), get(r, "finding_info.analytic.name"))
+	}
+	want := "SAP Privileges blocked an attempt to tamper with it on C02XK0AAJGH5: SAP Privileges blocked /bin/rm from trying to delete /Applications/Privileges.app (2 attempts)"
+	if r["message"] != want {
+		t.Fatalf("message %q", r["message"])
 	}
 }
 

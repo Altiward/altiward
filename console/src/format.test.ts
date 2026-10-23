@@ -86,6 +86,7 @@ describe("integrity labels", () => {
     ["settings_managed", "Settings from MDM"],
     ["privileges_hook", "Privileges reports to Altiward"],
     ["privileges_timer", "Privileges timer running"],
+    ["privileges_blocked", "Privileges blocked tampering"],
     ["something_new", "Something new"],
   ])("%s is %s", (check, want) => expect(integrityCheckLabel(check)).toBe(want));
 
@@ -94,6 +95,7 @@ describe("integrity labels", () => {
     ["restored", "launch_daemon", "Fixed"],
     ["retired", "privileges_hook", "No longer checked"],
     ["detected", "agent_version", "Downgraded"],
+    ["detected", "privileges_blocked", "Blocked"],
   ])("%s %s is %s", (state, check, want) => expect(tamperStateLabel(state, check)).toBe(want));
 });
 

@@ -8,12 +8,13 @@
 //	admin.out_of_band           → Detection Finding (2004), Create (1), High; an elevation.revoked
 //	                              with trigger permanent_admin closes it (Resolved, Informational),
 //	                              and one with trigger privileges_grant closes it (Other: "Replaced
-//	                              by a Privileges grant", Informational)
+//	                              by a Privileges grant", Informational); the process that added
+//	                              the user, when Privileges' system extension logged it, is evidence
 //	persistence.detected        → Detection Finding (2004), Create (1), High; each new local
 //	                              account is a finding of its own (High for an admin account),
 //	                              and the rest of the persistence one more
-//	agent.tamper                → Detection Finding (2004): Create when a check fails or a downgrade
-//	                              is detected; Close (Resolved, Informational) when it passes again,
+//	agent.tamper                → Detection Finding (2004): Create when a check fails, a downgrade
+//	                              is detected or Privileges blocks an attempt on itself; Close (Resolved, Informational) when it passes again,
 //	                              or Close (Other: "No longer checked") when it stops applying
 //	agent.silent                → Detection Finding (2004): Create, Medium, when a Mac stops checking
 //	                              in; Close (Resolved, Informational) when it checks in again
@@ -144,6 +145,7 @@ var tamperChecks = map[string]struct {
 	"privileges_hook":              {"SAP Privileges no longer reports to Altiward", SeverityHigh},
 	"privileges_timer":             {"SAP Privileges' timer stopped while someone holds admin rights", SeverityHigh},
 	"agent_version":                {"Altiward agent was downgraded", SeverityHigh},
+	"privileges_blocked":           {"SAP Privileges blocked an attempt to tamper with it", SeverityHigh},
 }
 
 // TamperSeverities names the severity a failure of each known tamper check is exported
@@ -304,6 +306,19 @@ func finding(e store.StoredEvent, tenantID string) Record {
 		}
 		if e.Type == event.ElevationExpiredEnforced {
 			desc = fmt.Sprintf("%s held admin rights on %s after they expired; Altiward removed them", userName(e), e.Device.Serial)
+		}
+	}
+	if e.Type == event.AdminOutOfBand {
+		// Privileges' system extension logged which process added them.
+		if p, ok := e.Detail["instigator"].(map[string]any); ok {
+			if exe, _ := p["executable"].(string); exe != "" {
+				desc += "; added by " + exe
+				proc := map[string]any{"file": map[string]any{"name": filepath.Base(exe), "path": exe, "type_id": 1, "type": "Regular File"}}
+				if pid, ok := p["pid"].(float64); ok && pid > 0 {
+					proc["pid"] = int(pid)
+				}
+				evidences = append(evidences, map[string]any{"process": proc})
+			}
 		}
 	}
 	uid := e.EventID
