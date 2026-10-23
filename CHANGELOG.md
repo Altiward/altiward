@@ -9,12 +9,17 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
-## Agent 0.1.1 - unreleased
+## Agent 0.1.1 - 2026-10-23
 
 ### Upgrade order
 
 Upgrade the server to 0.2.0 first. An older server ends the replaced session as `revoked`
 and doesn't close its finding.
+
+Deploy this release's `corp.sap.privileges.plist` keys to your Privileges profile with the
+package: its `PostChangeExecutableChecksum` is this build's hook. With the old checksum,
+Privileges stops running the hook and Altiward raises "SAP Privileges no longer reports to
+Altiward".
 
 ### Breaking changes
 
@@ -43,7 +48,7 @@ None.
 - `agent.health` reports Privileges 2.7's daily `AdminBudget` as
   `privileges.admin_budget_minutes`. Privileges enforces it; the agent only reports it.
 
-## Server 0.2.0 - unreleased
+## Server 0.2.0 - 2026-10-23
 
 ### Upgrade order
 
