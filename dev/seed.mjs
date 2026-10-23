@@ -77,6 +77,27 @@ await send(d, [grant(d, ben, 190, 20, "Homebrew upgrade", s4),
     detail: { trigger: "hook", claimed_state: "user", observed_admin: false, verified: true } }),
   health(d, 41, ["itadmin"])]);
 
+// Later on the same Mac, someone made an account and added it to admin by hand. Privileges'
+// system extension logged who did it, then blocked an attempt to move Privileges aside, and
+// the account was revoked from the console.
+const s6 = randomUUID(), backdoor = ["svc-backup"];
+const dseditgroup = { executable: "/usr/sbin/dseditgroup", signing_id: "com.apple.dseditgroup", team_id: "",
+  platform_binary: true, pid: 4127, ppid: 4120, tty: "/dev/ttys002" };
+const outOfBand = { reason: null, expires: null, source: "out_of_band" };
+await send(d, [event(d, "admin.out_of_band", ago(38), { user: backdoor, session: s6, elevation: outOfBand,
+    detail: { first_observed: ago(38), instigator: { ...dseditgroup, logged_at: ago(38.5) } } }),
+  event(d, "persistence.detected", ago(37.9), { user: backdoor, session: s6, elevation: outOfBand,
+    detail: { since: ago(39), truncated: 0, findings: [
+      { kind: "local_account", change: "added", name: "svc-backup", uid: 503, admin: true }] } }),
+  event(d, "agent.tamper", ago(36), { detail: { check: "privileges_blocked", state: "detected",
+    problem: "SAP Privileges blocked /bin/mv from trying to rename /Applications/Privileges.app",
+    blocked_action: "RENAME", item: "/Applications/Privileges.app", attempts: 1,
+    instigator: { ...dseditgroup, executable: "/bin/mv", signing_id: "com.apple.mv", pid: 4133 },
+    first_attempt: ago(36.5), last_attempt: ago(36.5) } }),
+  event(d, "elevation.revoked", ago(33), { user: backdoor, session: s6, elevation: outOfBand,
+    detail: { trigger: "command", command_id: randomUUID(), observed_admin: false, verified: true } }),
+  health(d, 2, ["itadmin"])]);
+
 const s5 = randomUUID();
 await send(e, [grant(e, mia, 1500, 60, "Configuring a VPN client", s5),
   event(e, "elevation.revoked", ago(1490), { user: mia, session: s5, elevation: privileges(null, null),
@@ -113,5 +134,5 @@ function backdate(serial, at) {
 await request("POST", `/v1/devices/${b.serial}/revoke`, { bearer: CONSOLE, body: {} });
 await request("PUT", "/v1/settings", { bearer: CONSOLE, body: { reenrollment_requires_approval: true } });
 const again = await enroll(a.serial);
-console.log(`Seeded 6 Macs (${silent ? 1 : 0} silent), 5 sessions, 2 tamper alerts, 1 queued revoke; ${a.serial} re-enrolled (${again.status}).`);
+console.log(`Seeded 6 Macs (${silent ? 1 : 0} silent), 6 sessions, 3 tamper alerts, 1 queued revoke; ${a.serial} re-enrolled (${again.status}).`);
 console.log("Re-enrollment approval is now on; turn it off in Settings if you prefer.");
