@@ -37,17 +37,22 @@ decoder rejects unknown fields, so drift fails loudly.
 | `elevation.expired_enforced` | `trigger`, `expired_at`, `grace_seconds` | As for `elevation.overdue` |
 | | `observed_admin`, `verified` | `false`, `true`: the daemon removed the rights and confirmed it |
 | `admin.out_of_band` | `first_observed` | When the agent raised these rights: at a heartbeat, or at the check every 15 seconds once they had gone 30 seconds without a grant |
+| | `instigator` | The process that added the user to `admin`, from SAP Privileges' system extension log (Privileges 2.6+, extension on, macOS 14+): `executable`, `signing_id`, `team_id` (empty for Apple's own), `platform_binary`, `pid`, `ppid`, `tty` (empty when not from a terminal) and `logged_at`. Absent when the extension logged nothing for this user in the last heartbeat interval plus 10 minutes |
 | `agent.health` | `admin_members` | Every human account that is admin right now |
 | | `permanent_admins` | Configured standing admins |
 | | `open_sessions` | `[{user, session_id, source}]` from the agent's ledger |
 | | `queue_depth` | Events still waiting to be sent |
-| | `privileges` | `installed`, `post_change_hook_configured`, `pass_reason_to_executable`, `expiration_interval_minutes`, `expiration_interval_max_minutes`, `enforce_privileges`, `system_extension_enabled` |
+| | `privileges` | `installed`, `post_change_hook_configured`, `pass_reason_to_executable`, `expiration_interval_minutes`, `expiration_interval_max_minutes`, `enforce_privileges`, `system_extension_enabled`, `admin_budget_minutes` (`AdminBudget`, Privileges 2.7+; `null` when unset or 0) |
 | | `integrity` | Each tamper check that applies on this Mac, check → passing (see `agent.tamper`) |
 | | `persistence_unreadable` | Persistence locations that exist but the last snapshot couldn't read, such as a home folder privacy protection covers; empty when all were read. Missing before the first snapshot |
-| `agent.tamper` | `check` | `launch_daemon`, `code_signature` (Altiward.app fails a strict signature check), `settings_managed` (one of the settings it checks comes from /Library/Preferences, not MDM), `privileges_tamper_protection`, `privileges_hook` (Privileges installed: its hook isn't Altiward's, or its checksum doesn't match Altiward's hook), `privileges_timer` (Privileges installed: someone logged in holds rights from a Privileges grant and their Privileges agent, which runs the timer, isn't running) or `agent_version` |
-| | `state` | `failed` (the check started failing, or fails the first time it runs), `restored` (it passes again), `retired` (it was failing and no longer applies, so its alert closes) or `detected` (a one-off: a downgrade) |
+| `agent.tamper` | `check` | `launch_daemon`, `code_signature` (Altiward.app fails a strict signature check), `settings_managed` (one of the settings it checks comes from /Library/Preferences, not MDM), `privileges_tamper_protection`, `privileges_hook` (Privileges installed: its hook isn't Altiward's, or its checksum doesn't match Altiward's hook), `privileges_timer` (Privileges installed: someone logged in holds rights from a Privileges grant and their Privileges agent, which runs the timer, isn't running), `agent_version` or `privileges_blocked` (Privileges' system extension blocked an attempt to delete, rename, clone, add to or unload Privileges, one event per process and item each heartbeat) |
+| | `state` | `failed` (the check started failing, or fails the first time it runs), `restored` (it passes again), `retired` (it was failing and no longer applies, so its alert closes) or `detected` (a one-off: a downgrade, or an attempt Privileges blocked) |
 | | `problem` | What is wrong; for `retired`, why the check no longer applies (`SAP Privileges isn't installed now`); `null` when `restored` |
 | | `previous_version`, `current_version` | The versions either side of a downgrade (`agent_version` only) |
+| | `blocked_action`, `item` | What Privileges blocked (`DELETE`, `RENAME`, `CLONE`, `CREATE` or `EXEC`, which is unloading its launchd items) and the item's path (`privileges_blocked` only) |
+| | `instigator` | The process that tried, as for `admin.out_of_band` without `logged_at`; `null` when the extension didn't say (`privileges_blocked` only) |
+| | `attempts`, `first_attempt`, `last_attempt` | How many times that process tried on that item since the last heartbeat, and when (`privileges_blocked` only) |
+| | `truncated` | On the last of a heartbeat's 20 `privileges_blocked` events, how many more were left out; absent otherwise |
 | `persistence.detected` | `findings` | What is new or changed since the last snapshot, in a stable order. Each has `kind` and `change` (`added` or `modified`), plus fields by kind, below |
 | | `since` | When the last snapshot was taken: the changes happened between then and `timestamp` |
 | | `truncated` | Findings left out to keep the event small; `0` when all were sent |

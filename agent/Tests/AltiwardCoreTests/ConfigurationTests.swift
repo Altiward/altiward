@@ -43,4 +43,14 @@ struct ConfigurationTests {
             #expect(base.changedSettings(c).count == 1)
         }
     }
+
+    /// Privileges 2.7's daily budget is read and reported; 0 means off, as in Privileges.
+    @Test func adminBudgetIsReadAndZeroMeansOff() {
+        let set = PrivilegesSettings.settings(from: Preferences(values: ["AdminBudget": 90]))
+        #expect(set.adminBudgetMinutes == 90)
+        guard case .object(let fields) = set.healthDetail else { Issue.record("not an object"); return }
+        #expect(fields["admin_budget_minutes"] == 90)
+        #expect(PrivilegesSettings.settings(from: Preferences(values: ["AdminBudget": 0])).adminBudgetMinutes == nil)
+        #expect(PrivilegesSettings.settings(from: Preferences(values: [:])).adminBudgetMinutes == nil)
+    }
 }

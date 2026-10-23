@@ -18,6 +18,19 @@
       },
       "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
     },
+    "evidences": [
+      {
+        "process": {
+          "file": {
+            "name": "dseditgroup",
+            "path": "/usr/sbin/dseditgroup",
+            "type": "Regular File",
+            "type_id": 1
+          },
+          "pid": 5165
+        }
+      }
+    ],
     "finding_info": {
       "analytic": {
         "name": "altiward.admin_out_of_band",
@@ -25,7 +38,7 @@
         "type_id": 1
       },
       "created_time": 1792144800000,
-      "desc": "backdoor holds admin rights on C02XK0AAJGH5 that nobody granted through SAP Privileges",
+      "desc": "backdoor holds admin rights on C02XK0AAJGH5 that nobody granted through SAP Privileges; added by /usr/sbin/dseditgroup",
       "first_seen_time": 1792144800000,
       "title": "Admin rights without a grant",
       "types": [
@@ -34,7 +47,7 @@
       "uid": "7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f"
     },
     "is_alert": true,
-    "message": "backdoor holds admin rights on C02XK0AAJGH5 that nobody granted through SAP Privileges",
+    "message": "backdoor holds admin rights on C02XK0AAJGH5 that nobody granted through SAP Privileges; added by /usr/sbin/dseditgroup",
     "metadata": {
       "correlation_uid": "7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f",
       "logged_time": 1792144800000,
@@ -65,7 +78,17 @@
     "unmapped": {
       "altiward": {
         "detail": {
-          "first_observed": "2026-10-16T10:00:00Z"
+          "first_observed": "2026-10-16T10:00:00Z",
+          "instigator": {
+            "executable": "/usr/sbin/dseditgroup",
+            "logged_at": "2026-10-16T09:59:41.212Z",
+            "pid": 5165,
+            "platform_binary": true,
+            "ppid": 606,
+            "signing_id": "com.apple.dseditgroup",
+            "team_id": "",
+            "tty": "/dev/ttys001"
+          }
         },
         "event_type": "admin.out_of_band",
         "source": "out_of_band"

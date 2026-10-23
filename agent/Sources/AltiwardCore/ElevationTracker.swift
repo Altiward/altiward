@@ -23,6 +23,9 @@ public struct AgentEnvironment: Sendable {
     /// Whether the user's Privileges agent, which runs their timer, is running; nil when
     /// they aren't logged in (``PrivilegesAgentProcess``).
     public var privilegesAgentRunning: @Sendable (_ user: String) -> Bool?
+    /// What Privileges' system extension logged since the given time, oldest first
+    /// (``PrivilegesAuditLog``).
+    public var privilegesAudit: @Sendable (_ since: Date) -> [PrivilegesAuditRecord]
 
     public init(
         device: @escaping @Sendable () -> DeviceInfo,
@@ -35,7 +38,8 @@ public struct AgentEnvironment: Sendable {
         persistence: (@Sendable () -> PersistenceSnapshot)? = nil,
         waitForDirectory: @escaping @Sendable () -> Void = {},
         privilegesTimer: @escaping @Sendable (_ user: String, _ grantedAt: Date) -> Date? = { _, _ in nil },
-        privilegesAgentRunning: @escaping @Sendable (_ user: String) -> Bool? = { _ in nil }
+        privilegesAgentRunning: @escaping @Sendable (_ user: String) -> Bool? = { _ in nil },
+        privilegesAudit: @escaping @Sendable (_ since: Date) -> [PrivilegesAuditRecord] = { _ in [] }
     ) {
         self.device = device
         self.privileges = privileges
@@ -48,6 +52,7 @@ public struct AgentEnvironment: Sendable {
         self.waitForDirectory = waitForDirectory
         self.privilegesTimer = privilegesTimer
         self.privilegesAgentRunning = privilegesAgentRunning
+        self.privilegesAudit = privilegesAudit
     }
 
     /// The real system.
@@ -64,7 +69,8 @@ public struct AgentEnvironment: Sendable {
             persistence: { sources.snapshot() },
             waitForDirectory: { Thread.sleep(forTimeInterval: 0.5) },
             privilegesTimer: { PrivilegesTimer.wait(user: $0, grantedAt: $1) },
-            privilegesAgentRunning: { PrivilegesAgentProcess.running(user: $0) })
+            privilegesAgentRunning: { PrivilegesAgentProcess.running(user: $0) },
+            privilegesAudit: { PrivilegesAuditLog.records(since: $0) })
     }
 }
 
@@ -181,6 +187,8 @@ public final class ElevationTracker: Sendable {
         let settings = env.privileges()
         // Read outside the transaction: it checks the bundle's signature.
         var integrity = env.integrity()
+        // So is the unified log, which can take a moment.
+        let audit = env.privilegesAudit(try auditStart(now: now))
 
         return try store.transaction {
             let admins = env.admins.adminMembers()
@@ -221,13 +229,14 @@ public final class ElevationTracker: Sendable {
             events += expiryEvents
 
             for user in untracked(admins: admins, open: open).sorted() {
-                events.append(try openOutOfBand(user, now: now, device: device))
+                events.append(try openOutOfBand(user, now: now, device: device, audit: audit))
             }
 
             if device.privilegesVersion != nil {
                 integrity[.privilegesTimer] = privilegesTimerCheck(open, admins: admins.subtracting(demoted))
             }
             events += try tamperEvents(integrity, now: now, device: device)
+            events += try blockedEvents(audit, now: now, device: device)
 
             var privileges = settings.healthDetail
             if case .object(var fields) = privileges {
@@ -355,8 +364,10 @@ public final class ElevationTracker: Sendable {
                 return Set(since.filter { now.timeIntervalSince($0.value) >= Self.untrackedGrace }.keys)
             }
             var events: [AltiwardEvent] = []
+            // Rare, so the log is read here, only when there is something to attribute.
+            let audit = confirmed.isEmpty ? [] : env.privilegesAudit(now.addingTimeInterval(-auditLookback))
             for user in confirmed.sorted() {
-                let event = try openOutOfBand(user, now: now, device: device)
+                let event = try openOutOfBand(user, now: now, device: device, audit: audit)
                 try store.enqueue(event, now: now)
                 events.append(event)
             }
@@ -370,16 +381,21 @@ public final class ElevationTracker: Sendable {
     }
 
     /// Opens an out-of-band session for `user` and returns its `admin.out_of_band` event,
-    /// for the caller to enqueue.
-    private func openOutOfBand(_ user: String, now: Date, device: DeviceInfo) throws -> AltiwardEvent {
+    /// for the caller to enqueue. `audit` says which process added them, when Privileges'
+    /// system extension logged it.
+    private func openOutOfBand(_ user: String, now: Date, device: DeviceInfo, audit: [PrivilegesAuditRecord])
+        throws -> AltiwardEvent
+    {
         let sessionID = newID()
         try store.upsertOpenSession(
             OpenSession(user: user, sessionID: sessionID, source: .outOfBand, startedAt: now, expiresAt: nil))
+        var detail: [String: JSONValue] = ["first_observed": .date(now)]
+        if let instigator = instigator(of: user, in: audit) { detail["instigator"] = instigator }
         return AltiwardEvent(
             type: .adminOutOfBand, sessionID: sessionID, timestamp: now, device: device,
             user: UserInfo(localName: user, upn: env.config.upn(for: user)),
             elevation: ElevationInfo(source: .outOfBand),
-            detail: ["first_observed": .date(now)])
+            detail: detail)
     }
 
     static let stillAdmin = "still an admin after removal from the admin group (nested group membership?)"

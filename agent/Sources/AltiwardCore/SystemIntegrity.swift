@@ -15,6 +15,9 @@ public enum IntegrityCheck: String, Sendable, CaseIterable, Comparable {
     case privilegesTimer = "privileges_timer"
     /// Not a standing check: a downgrade is reported once, as `detected`.
     case agentVersion = "agent_version"
+    /// Not a standing check: each attempt Privileges' system extension blocked is reported
+    /// once, as `detected` (``PrivilegesAuditRecord``).
+    case privilegesBlocked = "privileges_blocked"
 
     public static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
 }

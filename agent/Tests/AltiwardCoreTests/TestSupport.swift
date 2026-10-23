@@ -119,7 +119,8 @@ func makeEnvironment(
     device: @escaping @Sendable () -> DeviceInfo = { testDevice },
     integrity: @escaping @Sendable () -> [IntegrityCheck: IntegrityResult] = { [:] },
     waitForDirectory: @escaping @Sendable () -> Void = {},
-    privilegesTimer: @escaping @Sendable (_ user: String, _ grantedAt: Date) -> Date? = { _, _ in nil }
+    privilegesTimer: @escaping @Sendable (_ user: String, _ grantedAt: Date) -> Date? = { _, _ in nil },
+    privilegesAudit: @escaping @Sendable (_ since: Date) -> [PrivilegesAuditRecord] = { _ in [] }
 ) -> AgentEnvironment {
     AgentEnvironment(
         device: device,
@@ -130,7 +131,8 @@ func makeEnvironment(
         now: { clock.now },
         integrity: integrity,
         waitForDirectory: waitForDirectory,
-        privilegesTimer: privilegesTimer)
+        privilegesTimer: privilegesTimer,
+        privilegesAudit: privilegesAudit)
 }
 
 // Whole milliseconds: the wire format keeps no more precision than that.

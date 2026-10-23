@@ -34,7 +34,9 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
   the same transaction as the ledger, and removed only once the server acknowledges it.
 - **Raises admin rights nobody granted** as `admin.out_of_band`, once they have gone 30
   seconds without a grant, checked every 15 seconds; the wait is longer than a Privileges
-  hook can take to report a grant. Accounts in `PermanentAdmins` are left out.
+  hook can take to report a grant. Accounts in `PermanentAdmins` are left out. With
+  Privileges 2.6+ and its system extension on (macOS 14+), the event names the process
+  that added them (`detail.instigator`), read from the extension's unified log entries.
 - **Sends a heartbeat** every 5 minutes (`HeartbeatInterval`). It reconciles the `admin`
   group with the ledger, closing sessions whose revoke never arrived and raising anything
   the 15-second check missed, and sends `agent.health`.
@@ -50,7 +52,10 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
   LaunchDaemon plist, the app's code signature, five settings set outside MDM
   (`ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`,
   `HookCodeRequirement`), a downgrade, and, with Privileges installed, its tamper protection, its hook setting, and its timer
-  stopped while someone holds rights it granted.
+  stopped while someone holds rights it granted. It also reports each attempt Privileges'
+  system extension blocked on Privileges since the last heartbeat (`privileges_blocked`),
+  which Privileges itself only logs on the Mac. `sudo altiward-agent privileges-audit [HOURS]`
+  prints what the agent reads from that log.
 - **Reports what changed while someone was admin.** It snapshots launch items, sudoers,
   SSH keys, local accounts and remote access after each grant and end and on each
   heartbeat, and reports changes on the sessions open in between (`persistence.detected`).

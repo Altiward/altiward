@@ -9,10 +9,22 @@
     "hardware_uuid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
     "os_version": "26.1.0",
     "agent_version": "0.1.0",
-    "privileges_version": "2.5.3"
+    "privileges_version": "2.6.0"
   },
   "user": { "local_name": "backdoor", "upn": null },
   "elevation": { "reason": null, "expires": null, "source": "out_of_band" },
   "delayed": false,
-  "detail": { "first_observed": "2026-10-16T10:00:00Z" }
+  "detail": {
+    "first_observed": "2026-10-16T10:00:00Z",
+    "instigator": {
+      "executable": "/usr/sbin/dseditgroup",
+      "signing_id": "com.apple.dseditgroup",
+      "team_id": "",
+      "platform_binary": true,
+      "pid": 5165,
+      "ppid": 606,
+      "tty": "/dev/ttys001",
+      "logged_at": "2026-10-16T09:59:41.212Z"
+    }
+  }
 }

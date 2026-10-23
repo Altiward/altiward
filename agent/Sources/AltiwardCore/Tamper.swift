@@ -3,7 +3,8 @@ import Foundation
 /// Tamper reporting. The heartbeat runs the integrity checks and sends `agent.tamper`
 /// when one changes: `failed` when it starts failing (or fails the first time it runs),
 /// `restored` when it passes again, `retired` when a failing check stops applying (so its
-/// alert doesn't stay open), and `detected` for a one-off finding, a downgrade.
+/// alert doesn't stay open), and `detected` for a one-off finding: a downgrade, or an
+/// attempt Privileges blocked (``blockedEvents(_:now:device:)``).
 /// The last result of each check is kept in the store, so a restart doesn't repeat alerts.
 extension ElevationTracker {
     static let integrityKey = "integrity_state"
@@ -65,7 +66,7 @@ extension ElevationTracker {
         }
     }
 
-    private func tamper(
+    func tamper(
         _ check: String, _ state: TamperState, problem: String?, extra: [String: JSONValue] = [:], now: Date,
         device: DeviceInfo
     ) -> AltiwardEvent {

@@ -33,6 +33,15 @@ None.
   "Without a grant" session, with trigger `privileges_grant`, before it starts the
   Privileges one. The grant carries `replaced_out_of_band: true`. Before, the session stayed
   open and its `admin.out_of_band` finding never closed.
+- With SAP Privileges 2.6 or later and its system extension on (macOS 14+), the agent
+  reads what the extension logs. Admin rights nobody granted carry the process that
+  added the user (`detail.instigator`: executable, signing ID, team ID, PID, TTY), and
+  each attempt the extension blocked on Privileges (deleting, renaming or unloading it)
+  is sent as `agent.tamper` with check `privileges_blocked`. Privileges keeps these on
+  the Mac; nothing changes without the extension. `sudo altiward-agent privileges-audit`
+  prints what the agent reads. `docs/data-handling.md` lists what is collected.
+- `agent.health` reports Privileges 2.7's daily `AdminBudget` as
+  `privileges.admin_budget_minutes`. Privileges enforces it; the agent only reports it.
 
 ## Server 0.2.0 - unreleased
 
@@ -79,6 +88,14 @@ None.
   of what to expect after each step, the paths in Jamf Pro and Intune, and troubleshooting
   for a Mac that never appears, grants that show as "Without a grant" and certificate
   errors. The bundle includes its pictures.
+- Admin rights without a grant show the process that added the user, "Added by
+  /usr/sbin/dseditgroup", on the session's timeline, and the SIEM export puts it in the
+  finding's description and evidence. Attempts SAP Privileges blocked on itself are
+  exported as High findings, "SAP Privileges blocked an attempt to tamper with it", and
+  shown as Blocked in the Mac's tamper alerts. Both need agent 0.1.1 and Privileges 2.6
+  or later with its system extension on.
+- A Mac's details in Fleet show Privileges' daily admin budget (`AdminBudget`, Privileges
+  2.7+) when it is set. Needs agent 0.1.1.
 
 ## Server 0.1.1 - 2026-10-21
 
