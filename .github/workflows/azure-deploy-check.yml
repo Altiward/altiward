@@ -4,8 +4,7 @@ name: Azure deploy check
 # the server works through the ingress and caddy as a Mac and an admin would use it, then
 # deletes everything it made. It runs after each server release, deploying the template
 # from GitHub at the commit the release built, as the button does, and by hand with a
-# release tag or on main. Deploy to Azure stays labelled Preview until this has passed on
-# a release.
+# release tag or on main. It first passed on server 0.2.0.
 #
 # Never on pull requests: it signs in to Azure. The azure-test environment holds only IDs
 # (AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID); the sign-in is GitHub OIDC
