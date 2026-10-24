@@ -214,7 +214,7 @@ public struct AgentConfiguration: Sendable, Equatable {
             c.commandPollInterval = max(15, TimeInterval(s))
         }
         if let m = p.int("ExpiryGraceMinutes") {
-            c.expiryGracePeriod = TimeInterval(max(0, m) * 60)
+            c.expiryGracePeriod = TimeInterval(max(0, m)) * 60
         }
         // An unrecognised value keeps the default, alert, rather than removing anyone's rights
         // on a setting nobody meant.
@@ -223,7 +223,7 @@ public struct AgentConfiguration: Sendable, Equatable {
         }
         // At least a minute, so a grant whose hook is still on its way isn't removed.
         if let m = p.int("OutOfBandGraceMinutes") {
-            c.outOfBandGracePeriod = TimeInterval(max(1, m) * 60)
+            c.outOfBandGracePeriod = TimeInterval(max(1, m)) * 60
         }
         return c
     }

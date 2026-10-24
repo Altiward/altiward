@@ -41,14 +41,18 @@ None.
   minutes unless it is in `PermanentAdmins`. Without SAP Privileges, that is every admin who
   isn't a permanent admin. Before turning it on, check **Admins now** for the rows marked
   **Without a grant** on the Macs in scope, and pilot it on a small group first.
-- Safeguards in `enforce` mode: the agent never removes a permanent admin, and never leaves
-  a Mac with no admin (it keeps the account it has seen longest; admins still in their grace
-  period, or not yet raised, don't count as remaining). It pauses all removals while the
-  `privileges_hook` tamper check fails, because then every Privileges grant would look like
-  rights nobody granted. A kept, paused or failed removal leaves the finding open, retries
-  at every heartbeat and is logged on the Mac. A Privileges grant whose hook never reached
-  the agent looks like rights nobody granted and can be removed; the person can request
-  again.
+- Safeguards in `enforce` mode: the agent never removes a permanent admin, and keeps at
+  least one standing admin: a permanent admin, or else the account nobody granted it has
+  seen longest (of accounts raised at the same moment, the one whose short name sorts
+  last). Someone holding admin through a Privileges grant doesn't count, and nor do admins
+  still in their grace period or not yet raised. It pauses all removals while the
+  `privileges_hook` tamper check (**Privileges reports to Altiward**) fails, because then
+  every Privileges grant would look like rights nobody granted. That doesn't cover a
+  `HookCodeRequirement` that doesn't match the hook: check it names the right Team ID
+  before turning `enforce` on. A kept, paused or failed removal leaves the finding open,
+  retries at every heartbeat and is logged on the Mac. A Privileges grant whose hook never
+  reached the agent looks like rights nobody granted and can be removed; the person can
+  request again.
 - `OutOfBandEnforcement` and `OutOfBandGraceMinutes` are covered by the tamper check:
   `agent.tamper` reports either set outside MDM (`settings_managed`). Changing either
   restarts the agent. `docs/data-handling.md` lists what the agent collects.

@@ -17,6 +17,7 @@ final class FakeAdmins: AdminMembershipReading, AdminGroupEditing, Sendable {
         var members: Set<String> = []
         var removalAttempts = 0
         var failRemovals = false
+        var failRemovalsFor: Set<String> = []
         var removalsHaveNoEffect = false
         var removalsThrowAfterTakingEffect = false
         var removalsTakeEffectLater = false
@@ -58,6 +59,11 @@ final class FakeAdmins: AdminMembershipReading, AdminGroupEditing, Sendable {
         get { state.withLock { $0.failRemovals } }
         set { state.withLock { $0.failRemovals = newValue } }
     }
+    /// Removal throws for these users only.
+    var failRemovalsFor: Set<String> {
+        get { state.withLock { $0.failRemovalsFor } }
+        set { state.withLock { $0.failRemovalsFor = newValue } }
+    }
     /// Removal succeeds but the user stays admin, as with nested-group membership.
     var removalsHaveNoEffect: Bool {
         get { state.withLock { $0.removalsHaveNoEffect } }
@@ -88,7 +94,7 @@ final class FakeAdmins: AdminMembershipReading, AdminGroupEditing, Sendable {
     func removeAdmin(user: String) throws {
         try state.withLock { s in
             s.removalAttempts += 1
-            if s.failRemovals { throw RemovalFailed() }
+            if s.failRemovals || s.failRemovalsFor.contains(user) { throw RemovalFailed() }
             if s.removalsTakeEffectLater {
                 s.pendingRemovals.insert(user)
             } else if !s.removalsHaveNoEffect {

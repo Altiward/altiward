@@ -58,13 +58,21 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
   with a UID of 500 or more, and any direct member of `admin` other than `root` and `_`
   accounts, hidden ones included. So `enforce` also removes the LAPS account your MDM manages, and any hidden
   management account with a low UID, unless it is in `PermanentAdmins`. It never removes a
-  permanent admin and never leaves a Mac with no admin (it keeps the account it has seen
-  longest; admins still in their grace period, or not yet raised, don't count as remaining).
-  It pauses all removals while the `privileges_hook` tamper check fails, because then every
-  Privileges grant would look like rights nobody granted. A kept, paused or failed removal
-  leaves the finding open, retries at every heartbeat and is logged on the Mac. A Privileges
-  grant whose hook never reached the agent looks like rights nobody granted and can be
-  removed; the person can request again. Upgrade the server to 0.3.0 first.
+  permanent admin and keeps at least one standing admin: a permanent admin who is admin now,
+  or else the out-of-band admin it has seen longest. Someone holding admin through a
+  Privileges grant doesn't count, since those rights end too, and nor do admins still in
+  their grace period or not yet raised. Of admins raised at the same moment, as on a fresh
+  install, it keeps the one whose short name sorts last.
+  It pauses all removals while the `privileges_hook` tamper check (**Privileges reports to
+  Altiward**) fails: Privileges' hook path or checksum isn't Altiward's, so Privileges won't
+  run the hook and every Privileges grant would look like rights nobody granted. A
+  `HookCodeRequirement` that doesn't match the hook isn't covered: the daemon rejects the
+  hook's calls, so in `enforce` mode real Privileges grants are removed after the grace
+  period. Check that `HookCodeRequirement` names the right Team ID before turning `enforce`
+  on. A kept, paused or failed removal leaves the finding open, retries at every heartbeat
+  and is logged on the Mac. A Privileges grant whose hook never reached the agent looks like
+  rights nobody granted and can be removed; the person can request again. Upgrade the
+  server to 0.3.0 first.
 - **Runs revokes from the console** (below), removing the user from `admin` itself.
   Permanent admins are never removed.
 - **Runs tamper checks** each heartbeat and sends `agent.tamper` when one changes: the
@@ -112,8 +120,18 @@ goes into `detail.caller_uid`. `HookCodeRequirement` and Privileges' checksum pi
 hook, but that is defence in depth. Every 5 minutes the heartbeat reconciles the `admin`
 group with the ledger: it closes sessions whose revoke never arrived and raises admins
 nobody granted, and, with `OutOfBandEnforcement` on `enforce`, removes those admins once the
-grace period has passed. A hook that isn't reporting pauses that, because the agent can no
-longer tell a grant from rights nobody granted.
+grace period has passed. That pauses while the **Privileges reports to Altiward** check
+fails (Privileges' hook path or checksum isn't Altiward's), because the agent can no longer
+tell a grant from rights nobody granted. A `HookCodeRequirement` that doesn't match the hook
+isn't covered: the daemon rejects the hook's calls, so in `enforce` mode real Privileges
+grants are removed after the grace period.
+
+**A hand-run hook can claim a grant.** Someone holding admin rights nobody granted can run
+the hook by hand to claim a Privileges grant. That turns their out-of-band session into a
+Privileges session, which `OutOfBandEnforcement` no longer removes. It shows in the console
+as **Followed rights without a grant** and in the SIEM as "Replaced by a Privileges grant".
+With `ExpiryEnforcement` set to `enforce` and an expiry from Privileges' settings, the
+rights still end at expiry.
 
 **Privileges stays at the edge.** Altiward depends on a project it doesn't control, and
 must keep working when Privileges' timer is stopped or Privileges is removed. So expiry,

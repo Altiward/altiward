@@ -201,6 +201,42 @@ struct OutOfBandEnforcementTests {
         #expect(try store.openSession(user: "jdoe")?.source == .outOfBand)
     }
 
+    @Test func aPrivilegesGrantHolderDoesNotCountAsRemaining() throws {
+        // alice holds admin through a Privileges grant, still within its expiry. Those rights
+        // end too, so she isn't a standing admin: jdoe, the only one, stays.
+        admins.set(["jdoe", "alice"])
+        let (tracker, store) = try tracker(.enforce, permanent: [])
+        _ = try tracker.record(HookInvocation(user: "alice", state: .admin, reason: "work", invokedAt: clock.now))
+        _ = try raise(tracker)
+
+        clock.advance(300)  // past jdoe's grace, within alice's 20-minute expiry
+        #expect(types(try tracker.heartbeat()) == [.agentHealth])
+        #expect(admins.removalAttempts == 0)
+        #expect(admins.adminMembers() == ["jdoe", "alice"])
+        #expect(try store.openSession(user: "jdoe")?.source == .outOfBand)
+        #expect(try store.openSession(user: "alice")?.source == .privileges)
+    }
+
+    @Test func aFailedNewerRemovalStillLetsTheOlderGo() throws {
+        // itadmin is a permanent admin, so both out-of-band admins are due. backdoor's
+        // removal, tried first, fails; jdoe's still goes ahead.
+        let (tracker, store) = try tracker(.enforce)
+        _ = try raise(tracker)
+        clock.advance(60)
+        admins.set(["jdoe", "itadmin", "backdoor"])
+        let backdoor = try raise(tracker, "backdoor")
+        admins.failRemovalsFor = ["backdoor"]
+
+        clock.advance(300)  // past the grace period for both
+        let events = try tracker.heartbeat()
+        try #require(types(events) == [.adminOutOfBandRemoved, .agentHealth])
+        #expect(events[0].user?.localName == "jdoe")
+        #expect(admins.removalAttempts == 2)
+        #expect(admins.adminMembers() == ["itadmin", "backdoor"])
+        #expect(try store.openSession(user: "jdoe") == nil)
+        #expect(try store.openSession(user: "backdoor")?.sessionID == backdoor.sessionID)
+    }
+
     @Test func nothingIsRemovedWhilePrivilegesHookFails() throws {
         let hookOK = OSAllocatedUnfairLock(initialState: false)
         let (tracker, store) = try tracker(

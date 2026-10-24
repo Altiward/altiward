@@ -173,15 +173,29 @@ Create these in your MDM and scope them to a pilot group first.
    > turning it on, check **Admins now** for the rows marked **Without a grant** on the
    > Macs in scope, and pilot it on a small group first.
 
-   In `enforce` mode the agent never removes a permanent admin, and never leaves a Mac
-   with no admin: it keeps the account it has seen longest, and admins still in their grace
-   period or not yet raised don't count as remaining. It pauses every removal while
-   Privileges' hook isn't reporting to Altiward (the **Privileges reports to Altiward**
-   check fails), because then every real Privileges grant would look like rights nobody
-   granted. A removal that is kept, paused or fails leaves the finding open, is retried at
-   every heartbeat and is logged on the Mac. A Privileges grant whose hook never reached
-   the agent looks like rights nobody granted and can be removed; the person can request
-   it again.
+   In `enforce` mode the agent never removes a permanent admin, and keeps at least one
+   standing admin: a permanent admin, or else the account nobody granted it has seen
+   longest. Someone holding admin through a Privileges grant doesn't count, and nor do
+   admins still in their grace period or not yet raised. Of accounts raised at the same
+   moment, as on a fresh install, it keeps the one whose short name sorts last. It pauses
+   every removal while the **Privileges reports to Altiward** check fails (Privileges'
+   hook path or checksum isn't Altiward's), because then every real Privileges grant would
+   look like rights nobody granted. A removal that is kept, paused or fails leaves the
+   finding open, is retried at every heartbeat and is logged on the Mac. A Privileges grant
+   whose hook never reached the agent looks like rights nobody granted and can be removed;
+   the person can request it again.
+
+   > **Warning:** The pause doesn't cover a `HookCodeRequirement` that doesn't match the
+   > hook. The daemon then rejects the hook's calls, so in `enforce` mode real Privileges
+   > grants are removed after the grace period. Check that `HookCodeRequirement` names the
+   > right Team ID before turning `enforce` on.
+
+   Someone holding admin rights nobody granted can run the hook by hand to claim a
+   Privileges grant. That turns their session into a Privileges session, which
+   `OutOfBandEnforcement` no longer removes. The console shows it as **Followed rights
+   without a grant** and the SIEM as "Replaced by a Privileges grant". With
+   `ExpiryEnforcement` set to `enforce` and an expiry from Privileges' settings, the rights
+   still end at expiry.
 
    Deliver the profile through MDM rather than `defaults write`: Altiward reports
    `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`,

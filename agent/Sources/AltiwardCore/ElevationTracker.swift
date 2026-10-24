@@ -232,8 +232,7 @@ public final class ElevationTracker: Sendable {
                 open.filter { admins.contains($0.user) }, now: now, device: device)
             events += expiryEvents
 
-            // Admins with no open session: raised out-of-band below, so they don't count as
-            // remaining admins for out-of-band enforcement.
+            // Admins with no open session: raised out-of-band below.
             let untrackedAdmins = untracked(admins: admins, open: open)
 
             // Sessions closed above are left out: the not-admin ones by `admins`, the
@@ -243,8 +242,7 @@ public final class ElevationTracker: Sendable {
                     $0.source == .outOfBand && admins.contains($0.user)
                         && !env.config.permanentAdmins.contains($0.user)
                 },
-                admins: admins, demoted: demoted, untracked: untrackedAdmins, integrity: integrity, now: now,
-                device: device)
+                demoted: demoted, integrity: integrity, now: now, device: device)
             events += outOfBandEvents
             // So agent.health's admin_members and the timer check leave them out.
             demoted.formUnion(removed)
@@ -374,26 +372,29 @@ public final class ElevationTracker: Sendable {
     /// Safeguards:
     /// - while Privileges' hook check fails, nothing is removed: grants it doesn't report
     ///   would look like rights nobody granted;
-    /// - the last admin is kept: a removal that would leave no admin is skipped. Remaining
-    ///   admins are permanent admins, holders of a Privileges session not removed at expiry
-    ///   (`demoted`), and out-of-band admins past their grace that this pass keeps.
-    ///   Out-of-band admins still in their grace period, and admins with no session yet
-    ///   (`untracked`, raised out-of-band later in this heartbeat), don't count: they are
-    ///   due for removal too. Newest first, so the admin kept is the one seen longest.
+    /// - a standing admin is kept: a removal that would leave none is skipped. Standing
+    ///   admins are permanent admins who are admin now, and out-of-band admins past their
+    ///   grace that this pass keeps. Holders of a Privileges session don't count, since
+    ///   their rights end too, and nor do out-of-band admins still in their grace period or
+    ///   admins with no session yet (raised out-of-band later in this heartbeat): they are
+    ///   due for removal as well. Membership is read again here, after ``enforceExpiry``'s
+    ///   removals, and the users it removed (`demoted`) are left out in case the read lags.
+    ///   Newest first, then by short name, so the admin kept is the one seen longest, or of
+    ///   those raised at the same moment the one whose short name sorts last.
     ///
-    /// A removal that fails keeps the session and is retried on the next heartbeat. Returns
-    /// the events and the users removed.
+    /// A removal that fails keeps the session and is retried on the next heartbeat; it
+    /// doesn't stop older ones. Returns the events and the users removed.
     private func enforceOutOfBand(
-        _ sessions: [OpenSession], admins: Set<String>, demoted: Set<String>, untracked: Set<String>,
-        integrity: [IntegrityCheck: IntegrityResult], now: Date, device: DeviceInfo
+        _ sessions: [OpenSession], demoted: Set<String>, integrity: [IntegrityCheck: IntegrityResult], now: Date,
+        device: DeviceInfo
     ) throws -> (events: [AltiwardEvent], removed: Set<String>) {
         guard env.config.outOfBandEnforcement == .enforce else { return ([], []) }
+        let current = env.admins.adminMembers().subtracting(demoted)
         let grace = env.config.outOfBandGracePeriod
         let isDue = { (s: OpenSession) in now >= s.startedAt.addingTimeInterval(grace) }
         let candidates = sessions.filter(isDue).sorted {
             $0.startedAt != $1.startedAt ? $0.startedAt > $1.startedAt : $0.user < $1.user
         }
-        let inGrace = Set(sessions.filter { !isDue($0) }.map(\.user))
         guard !candidates.isEmpty else { return ([], []) }
 
         if integrity[.privilegesHook]?.ok == false {
@@ -403,14 +404,15 @@ public final class ElevationTracker: Sendable {
             return ([], [])
         }
 
+        let permanent = current.intersection(env.config.permanentAdmins)
+        let due = current.intersection(candidates.map(\.user))
         var events: [AltiwardEvent] = []
         var removed = Set<String>()
         for session in candidates {
-            let remaining = admins.subtracting(demoted).subtracting(removed).subtracting(inGrace)
-                .subtracting(untracked)
+            let remaining = permanent.union(due.subtracting(removed))
             if remaining.subtracting([session.user]).isEmpty {
                 log.notice(
-                    "keeping \(session.user, privacy: .public)'s out-of-band admin rights: the only admin on this Mac")
+                    "keeping \(session.user, privacy: .public)'s out-of-band admin rights: the only standing admin on this Mac")
                 continue
             }
             if let failure = removeFromAdminGroup(session.user) {

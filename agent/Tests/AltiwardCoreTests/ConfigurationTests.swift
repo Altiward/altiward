@@ -71,6 +71,14 @@ struct ConfigurationTests {
         #expect(grace(15) == 900)
     }
 
+    /// Minutes are converted to seconds as a TimeInterval: in Int, a huge value would trap.
+    @Test func hugeGraceMinutesDoNotCrash() {
+        let p = Preferences(values: ["ExpiryGraceMinutes": Int.max, "OutOfBandGraceMinutes": Int.max])
+        let c = AgentConfiguration.load(environment: [:], preferences: p)
+        #expect(c.expiryGracePeriod == TimeInterval(Int.max) * 60)
+        #expect(c.outOfBandGracePeriod == TimeInterval(Int.max) * 60)
+    }
+
     /// Privileges 2.7's daily budget is read and reported; 0 means off, as in Privileges.
     @Test func adminBudgetIsReadAndZeroMeansOff() {
         let set = PrivilegesSettings.settings(from: Preferences(values: ["AdminBudget": 90]))

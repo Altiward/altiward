@@ -87,8 +87,10 @@ Known limits:
 - `OutOfBandEnforcement` defaults to `alert`. If you set it to `enforce`, the agent removes
   every admin nobody granted, within minutes, including the LAPS account your MDM manages
   if it isn't in `PermanentAdmins`, and, without Privileges, every admin who isn't a
-  permanent admin. It never removes a permanent admin, never leaves a Mac with no admin,
-  and pauses while Privileges' hook isn't reporting; a removed Privileges grant whose hook
+  permanent admin. It never removes a permanent admin, and keeps at least one standing
+  admin: a permanent admin, or else the admin nobody granted it has seen longest (someone
+  holding admin through a Privileges grant doesn't count). It pauses while the
+  **Privileges reports to Altiward** check fails; a removed Privileges grant whose hook
   never reached the agent can be requested again. Pilot it on a small group first
   ([the settings](docs/install.md#2-deploy-the-agent)).
 - Expiry comes from Privileges. A grant Privileges gives no expiry never counts as past
@@ -154,8 +156,8 @@ to a pilot group first:
    `profiles/`, with at least `ServerURL`, `EnrollmentToken` and `PermanentAdmins`. Set
    `ExpiryEnforcement` to `enforce` if the agent should remove rights past their expiry;
    by default it only alerts. `OutOfBandEnforcement` works the same way for admins nobody
-   granted, and needs server 0.3.0 and a `PermanentAdmins` list that covers your MDM's
-   admin accounts.
+   granted, and needs server 0.3.0, altiward-siem 0.3.0 and a `PermanentAdmins` list that
+   covers your MDM's admin accounts.
 2. The login items profile, `altiward-login-items.mobileconfig`.
 3. The keys from `corp.sap.privileges.plist` in the **matching agent release** added
    to your Privileges profile, so Privileges reports each change to the agent.
