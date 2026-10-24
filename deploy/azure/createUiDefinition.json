@@ -5,7 +5,7 @@
   "parameters": {
     "config": {
       "basics": {
-        "description": "**Altiward server (Preview).** Creates an Altiward server in your subscription: a container app running Altiward with caddy beside it, Postgres on a private network, a key vault holding the database URL and tokens, and a Log Analytics workspace for the logs. Roughly US$75–100 a month in UK South. You need Owner, or Contributor and Role Based Access Control Administrator, on the resource group: the template grants its identity and you access to the key vault. [What it creates and what to do next](https://github.com/Altiward/altiward/blob/main/deploy/azure/README.md)."
+        "description": "**Altiward server.** Creates an Altiward server in your subscription: a container app running Altiward with caddy beside it, Postgres on a private network, a key vault holding the database URL and tokens, and a Log Analytics workspace for the logs. Roughly US$75–100 a month in UK South. You need Owner, or Contributor and Role Based Access Control Administrator, on the resource group: the template grants its identity and you access to the key vault. [What it creates and what to do next](https://github.com/Altiward/altiward/blob/main/deploy/azure/README.md)."
       }
     },
     "basics": [

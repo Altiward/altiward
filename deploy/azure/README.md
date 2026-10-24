@@ -1,4 +1,4 @@
-# Deploy to Azure (Preview)
+# Deploy to Azure
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v0.2.0%2Fdeploy%2Fazure%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v0.2.0%2Fdeploy%2Fazure%2FcreateUiDefinition.json)
 
@@ -6,8 +6,9 @@ The button creates an Altiward server in your own Azure subscription, running on
 Container Apps, with nothing to install on a VM. It is the third way to run the server, next to the
 Compose bundle and your own infrastructure in the [install guide](../../docs/install.md),
 which covers everything else: the agent, your SIEM and single sign-on. This page covers
-what differs on Azure. The button works from server 0.2.0's release. It stays labelled
-Preview until an automated deployment check has passed on a release.
+what differs on Azure. The button works from server 0.2.0's release. After each server release, an automated
+check deploys it from the release tag, tests it as a Mac and an admin would, and deletes it
+again ([docs/releasing.md](../../docs/releasing.md#deploy-to-azure-check)).
 
 The button deploys `azuredeploy.json` at a release tag, and the template runs that
 release's image. `main.bicep` is its source.

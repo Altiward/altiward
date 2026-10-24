@@ -117,9 +117,8 @@ checks that a Mac can enroll, send a signed event and hold a long poll; that the
 answers only the allowed networks, including against a forged `X-Forwarded-For`; and that
 the server runs the release. Then it deletes everything it made. Run it by hand from the
 Actions tab, on `main` or with a release tag: the `azure-test` environment allows nothing
-else, so branch code never gets the Azure sign-in. Deploy to Azure stays labelled
-Preview until this has passed on a release; then take "Preview" out of `README.md`,
-`docs/install.md`, `deploy/azure/README.md` and `deploy/azure/createUiDefinition.json`.
+else, so branch code never gets the Azure sign-in. It first passed on server 0.2.0, which
+took Deploy to Azure out of Preview.
 
 Set it up once:
 
