@@ -32,7 +32,7 @@ runs the console with example data on your own computer, needing only Docker.
 Altiward is the same software however you run it. Pick the setup that
 matches what you already have:
 
-| | The bundle | Your own infrastructure | Azure Container Apps (Preview) |
+| | The bundle | Your own infrastructure | Azure Container Apps |
 | --- | --- | --- | --- |
 | For | A site that wants Altiward to bring everything it needs | A site with a managed database and its own load balancer or certificates | A site on Azure that wants no server or VM to look after |
 | Database | Postgres in the bundle, backed up by you ([Backups](#backups)) | Your managed Postgres ([An existing Postgres](#an-existing-postgres)) | Azure Database for PostgreSQL on a private network, with Azure's backups |
@@ -46,7 +46,7 @@ in `.env`. If you run Kubernetes,
 [open an issue](https://github.com/Altiward/altiward/issues): manifests or a Helm chart
 come when someone needs them.
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v0.2.0%2Fdeploy%2Fazure%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v0.2.0%2Fdeploy%2Fazure%2FcreateUiDefinition.json) (Preview: [what it creates](../deploy/azure/README.md))
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v0.2.0%2Fdeploy%2Fazure%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v0.2.0%2Fdeploy%2Fazure%2FcreateUiDefinition.json) ([what it creates](../deploy/azure/README.md))
 
 ## Before you start
 
