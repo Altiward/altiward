@@ -370,8 +370,9 @@ public final class ElevationTracker: Sendable {
     /// - while Privileges' hook check fails, nothing is removed: grants it doesn't report
     ///   would look like rights nobody granted;
     /// - the last admin is kept: counting out those removed at expiry (`demoted`) and
-    ///   earlier in this pass, a removal that would leave no admin is skipped. Newest
-    ///   first, so the admin kept is the one seen longest.
+    ///   earlier in this pass, a removal that would leave no admin is skipped. Out-of-band
+    ///   admins still in their grace period don't count as remaining either, since they
+    ///   are due for removal too. Newest first, so the admin kept is the one seen longest.
     ///
     /// A removal that fails keeps the session and is retried on the next heartbeat. Returns
     /// the events and the users removed.
@@ -381,10 +382,11 @@ public final class ElevationTracker: Sendable {
     ) throws -> (events: [AltiwardEvent], removed: Set<String>) {
         guard env.config.outOfBandEnforcement == .enforce else { return ([], []) }
         let grace = env.config.outOfBandGracePeriod
-        let candidates =
-            sessions
-            .filter { now >= $0.startedAt.addingTimeInterval(grace) }
-            .sorted { $0.startedAt != $1.startedAt ? $0.startedAt > $1.startedAt : $0.user < $1.user }
+        let isDue = { (s: OpenSession) in now >= s.startedAt.addingTimeInterval(grace) }
+        let candidates = sessions.filter(isDue).sorted {
+            $0.startedAt != $1.startedAt ? $0.startedAt > $1.startedAt : $0.user < $1.user
+        }
+        let inGrace = Set(sessions.filter { !isDue($0) }.map(\.user))
         guard !candidates.isEmpty else { return ([], []) }
 
         if integrity[.privilegesHook]?.ok == false {
@@ -397,7 +399,8 @@ public final class ElevationTracker: Sendable {
         var events: [AltiwardEvent] = []
         var removed = Set<String>()
         for session in candidates {
-            if admins.subtracting(demoted).subtracting(removed).subtracting([session.user]).isEmpty {
+            let remaining = admins.subtracting(demoted).subtracting(removed).subtracting(inGrace)
+            if remaining.subtracting([session.user]).isEmpty {
                 log.notice(
                     "keeping \(session.user, privacy: .public)'s out-of-band admin rights: the only admin on this Mac")
                 continue

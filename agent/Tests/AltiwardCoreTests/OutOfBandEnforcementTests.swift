@@ -143,6 +143,29 @@ struct OutOfBandEnforcementTests {
         #expect(events[1].detail["admin_members"] == .strings(["jdoe"]))
     }
 
+    @Test func keepsTheAdminSeenLongestAcrossHeartbeats() throws {
+        // jdoe's grace ends a heartbeat before backdoor's. backdoor, still in its grace, is
+        // due for removal too, so it doesn't count as an admin who would remain.
+        admins.set(["jdoe"])
+        let (tracker, store) = try tracker(.enforce, permanent: [])
+        _ = try raise(tracker)
+        clock.advance(60)
+        admins.set(["jdoe", "backdoor"])
+        let backdoor = try raise(tracker, "backdoor")
+
+        clock.advance(240)  // t0+300: jdoe past its grace, backdoor not
+        #expect(types(try tracker.heartbeat()) == [.agentHealth])
+        #expect(admins.removalAttempts == 0)
+        #expect(admins.adminMembers() == ["jdoe", "backdoor"])
+
+        clock.advance(60)  // t0+360: both past their grace
+        let events = try tracker.heartbeat()
+        try #require(types(events) == [.adminOutOfBandRemoved, .agentHealth])
+        #expect(events[0].sessionID == backdoor.sessionID)
+        #expect(admins.adminMembers() == ["jdoe"])
+        #expect(try store.openSession(user: "jdoe")?.source == .outOfBand)
+    }
+
     @Test func adminRemovedAtExpiryDoesNotCountAsRemaining() throws {
         // alice's Privileges grant expires after 20 minutes and is removed 5 minutes later;
         // jdoe's 25-minute grace ends in that same heartbeat. Without alice, jdoe is the
