@@ -1,0 +1,61 @@
+[
+  {
+    "activity_id": 1,
+    "activity_name": "Logon",
+    "category_name": "Identity \u0026 Access Management",
+    "category_uid": 3,
+    "class_name": "Authentication",
+    "class_uid": 3002,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "logon_type": "Interactive",
+    "logon_type_id": 2,
+    "message": "breakglass signed in at the Mac",
+    "metadata": {
+      "correlation_uid": "a7d2c4e1-5b3f-4a86-9e0d-2f6b8c1d4e57",
+      "logged_time": 1792141205000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.3.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "3b8e5d21-7a4c-4f19-9d62-0c1e8a7b5f34",
+      "version": "1.9.0"
+    },
+    "severity": "Informational",
+    "severity_id": 1,
+    "start_time": 1792141200000,
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792141205000,
+    "type_name": "Authentication: Logon",
+    "type_uid": 300201,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "method": "console",
+          "source": "utmpx",
+          "started": "2026-10-16T09:00:00Z",
+          "state": "started",
+          "tty": "console",
+          "use_id": "a7d2c4e1-5b3f-4a86-9e0d-2f6b8c1d4e57"
+        },
+        "event_type": "admin.permanent_use"
+      }
+    },
+    "user": {
+      "name": "breakglass"
+    }
+  }
+]

@@ -1,0 +1,69 @@
+[
+  {
+    "activity_id": 2,
+    "activity_name": "Logoff",
+    "category_name": "Identity \u0026 Access Management",
+    "category_uid": 3,
+    "class_name": "Authentication",
+    "class_uid": 3002,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "end_time": 1792143720000,
+    "is_remote": true,
+    "logon_type": "Remote Interactive",
+    "logon_type_id": 10,
+    "message": "breakglass signed out of SSH from 10.0.0.5",
+    "metadata": {
+      "correlation_uid": "d1f6a8b3-2c7e-4d95-8b41-6e0a3c9f7d12",
+      "logged_time": 1792143730000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.3.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "9d4f1a72-e6c8-4b35-a1d9-7c3e5b2f8a60",
+      "version": "1.9.0"
+    },
+    "severity": "Informational",
+    "severity_id": 1,
+    "src_endpoint": {
+      "ip": "10.0.0.5"
+    },
+    "start_time": 1792143000000,
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792143730000,
+    "type_name": "Authentication: Logoff",
+    "type_uid": 300202,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "end_basis": "logged",
+          "ended": "2026-10-16T09:42:00Z",
+          "method": "ssh",
+          "remote_host": "10.0.0.5",
+          "source": "utmpx",
+          "started": "2026-10-16T09:30:00Z",
+          "state": "ended",
+          "tty": "ttys003",
+          "use_id": "d1f6a8b3-2c7e-4d95-8b41-6e0a3c9f7d12"
+        },
+        "event_type": "admin.permanent_use"
+      }
+    },
+    "user": {
+      "name": "breakglass"
+    }
+  }
+]

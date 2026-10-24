@@ -8,7 +8,7 @@
     "serial": "C02XK0AAJGH5",
     "hardware_uuid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
     "os_version": "26.1.0",
-    "agent_version": "0.4.0",
+    "agent_version": "0.3.0",
     "privileges_version": null
   },
   "user": { "local_name": "breakglass", "upn": null },
