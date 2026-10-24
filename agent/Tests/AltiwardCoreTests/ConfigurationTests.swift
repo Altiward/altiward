@@ -46,6 +46,19 @@ struct ConfigurationTests {
         }
     }
 
+    /// `URL(fileURLWithPath:)` adds a trailing slash only once the folder exists, so a data directory
+    /// the agent had just created used to look like a changed setting and restart the daemon.
+    @Test func dataDirectoryOverrideIsStableOnceCreated() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("altiward-datadir-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let environment = ["ALTIWARD_DATA_DIR": dir]
+        let before = AgentConfiguration.load(environment: environment, preferences: Preferences(values: [:]))
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let after = AgentConfiguration.load(environment: environment, preferences: Preferences(values: [:]))
+        #expect(before.changedSettings(after).isEmpty)
+    }
+
     @Test func outOfBandEnforcementDefaultsToAlert() {
         let c = AgentConfiguration.load(environment: [:], preferences: Preferences(values: [:], forced: []))
         #expect(c.outOfBandEnforcement == .alert)

@@ -195,7 +195,9 @@ public struct AgentConfiguration: Sendable, Equatable {
         c.serverURL = (environment["ALTIWARD_SERVER_URL"] ?? p.string("ServerURL")).flatMap(URL.init(string:))
         c.enrollmentToken = environment["ALTIWARD_TOKEN"] ?? p.string("EnrollmentToken")
         if let dir = environment["ALTIWARD_DATA_DIR"] {
-            c.dataDirectory = URL(fileURLWithPath: dir)
+            // Say it is a folder: without that the URL gains a trailing slash once the folder exists,
+            // and the daemon would read its own new data directory as a changed setting.
+            c.dataDirectory = URL(fileURLWithPath: dir, isDirectory: true)
         }
         if let s = environment["ALTIWARD_HEARTBEAT_SECONDS"].flatMap(TimeInterval.init) ?? p.int("HeartbeatInterval").map(TimeInterval.init) {
             c.heartbeatInterval = max(30, s)
