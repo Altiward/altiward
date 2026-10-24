@@ -82,8 +82,9 @@ Each connection exists only if you configure it.
 
 **What your SIEM receives:** each event as an OCSF record, with the Mac's serial and
 macOS version, the person's short name and UPN, the reason they typed, and the event's
-details. That includes every use of a permanent admin account the agent records: sign-in
-times, terminals and SSH addresses, and who approved or ran what, as listed above. Console actions go there too, naming the person who made them.
+details. That includes every permanent admin use event the agent sends: sign-in
+times, terminals and SSH addresses, and who approved or ran what, as listed above. Console
+actions go there too, naming the person who made them.
 
 In the example deployment, Caddy also asks Let's Encrypt for TLS certificates unless you
 provide your own. If you pull the image from the registry instead of loading the file,
@@ -127,7 +128,7 @@ Everything is in your Postgres database.
 | --- | --- |
 | Every event from every Mac, in full | Forever, for now |
 | Elevation sessions, including the person's UPN and reason | Forever, for now |
-| Each Mac's latest state: versions, admins, health, and the newest 20 uses of its permanent admin accounts (the console shows the newest 10) | Forever, replaced as it changes |
+| Each Mac's latest state: versions, admins, health, and the newest 20 permanent admin use events (the console shows the newest 10) | Forever, replaced as it changes |
 | Each Mac's enrollment: serial, hardware UUID, **public** key, and whether the Mac says its key is in its Secure Enclave | Forever; revoking stops the Mac reporting |
 | Commands sent from the console, who sent them, and their results | Forever |
 | Activity: every change made in the console, and every sign-in | Forever by default; or from 365 days, with `ALTIWARD_AUDIT_RETENTION_DAYS` |

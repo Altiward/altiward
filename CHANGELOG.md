@@ -50,8 +50,8 @@ None.
   most 20 such events, and the last says how many more groups it left out.
 - New command: `sudo altiward-agent permanent-uses [HOURS]` prints what the agent reads
   about permanent admins (default 24 hours; run as root).
-- `docs/data-handling.md` lists what the agent collects. The server keeps the newest 20
-  uses per Mac for the console, and the SIEM gets them all.
+- `docs/data-handling.md` lists what the agent collects. The SIEM gets every event the
+  agent sends, and the server keeps the newest 20 of them per Mac for the console.
 
 ## Server 0.4.0 - unreleased
 
@@ -77,8 +77,8 @@ None.
   and its newest 20 other uses, and shows up to 10 under **Permanent admins** in the
   Mac's details, open sign-ins first: who, how (signed in at the Mac, in Terminal or over
   SSH, approved a prompt, ran sudo or su), from where, and whether the sign-in is still
-  open. The SIEM gets every use. The server and console also accept and show screen
-  sharing, which Agent 0.3.0 doesn't send yet.
+  open. The SIEM gets every event the agent sends. The server and console also accept and
+  show screen sharing, which Agent 0.3.0 doesn't send yet.
   `docs/data-handling.md` lists what is kept and sent.
 
 ## Agent 0.2.0 - 2026-10-24

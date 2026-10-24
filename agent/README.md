@@ -100,8 +100,8 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
     one-off commands (`scp`, `ssh host command`) that open no terminal.
   - `sudo altiward-agent permanent-uses [HOURS]` prints what the agent reads (default 24
     hours; run as root).
-  - Needs server 0.4.0. The server keeps the newest 20 uses per Mac for the console; the
-    SIEM gets them all.
+  - Needs server 0.4.0. The SIEM gets every event the agent sends; the server keeps
+    the newest 20 per Mac for the console.
 - **Runs revokes from the console** (below), removing the user from `admin` itself.
   Permanent admins are never removed.
 - **Runs tamper checks** each heartbeat and sends `agent.tamper` when one changes: the
