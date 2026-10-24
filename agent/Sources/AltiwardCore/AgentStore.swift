@@ -330,6 +330,18 @@ public final class AgentStore: @unchecked Sendable {
         }
     }
 
+    /// Uses by `method`, open or ended (ended ones are kept a day), oldest first.
+    public func permanentUses(method: PermanentUseMethod) throws -> [PermanentUseRow] {
+        try locked {
+            try db.query(
+                """
+                SELECT use_id, user, method, tty, host, pid, started_at, ended_at FROM permanent_uses
+                WHERE method = ? ORDER BY started_at, use_id
+                """, [.text(method.rawValue)]
+            ).map(Self.permanentUse(from:))
+        }
+    }
+
     /// Records a use. A use already recorded, open or ended, is left as it is.
     public func insertPermanentUse(_ row: PermanentUseRow) throws {
         try locked {

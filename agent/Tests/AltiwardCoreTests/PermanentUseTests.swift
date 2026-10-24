@@ -220,6 +220,122 @@ struct PermanentUseTests {
         #expect(ended[0].detail["remote_host"] == "10.0.0.5")
     }
 
+    // MARK: Terminal tabs
+
+    /// Each Terminal tab of an account signed in at the Mac gets its own utmpx entry (a tty
+    /// with no host). It is part of the console sign-in, which already covers the time.
+    @Test func terminalTabsInsideConsoleUseNotRecorded() throws {
+        let console = signIn(pid: 501, ago: 600)
+        let t = tracker()
+        let started = try t.checkPermanentUses()
+        try #require(started.count == 1)
+        expectUse(started[0], state: "started", method: "console", started: console.started)
+
+        let tabs = (0..<3).map { i in signIn(tty: "ttys00\(i + 1)", pid: 800 + Int32(i), ago: 300 - Double(i) * 60) }
+        clock.advance(15)
+        #expect(try t.checkPermanentUses().isEmpty)
+        clock.advance(120)
+        signOut(tabs[0])
+        #expect(try t.checkPermanentUses().isEmpty)
+        clock.advance(300)
+        #expect(try t.heartbeat().filter { $0.type == .adminPermanentUse }.isEmpty)
+
+        // Signing out of the Mac closes the other tabs, whose records can follow a moment
+        // later: only the console sign-in ends.
+        clock.advance(300)
+        let ended = signOut(console)
+        clock.advance(1)
+        for tab in tabs.dropFirst() { signOut(tab) }
+        var events = try t.checkPermanentUses()
+        clock.advance(300)
+        events += try t.heartbeat().filter { $0.type == .adminPermanentUse }
+        try #require(events.count == 1)
+        expectUse(events[0], state: "ended", method: "console", started: console.started)
+        #expect(events[0].detail["ended"] == .date(ended))
+        #expect(try store.pending(limit: 100).filter { $0.event.detail["method"] == "terminal" }.isEmpty)
+    }
+
+    /// `login breakglass` in someone else's Terminal, with no console sign-in of its own, is a use.
+    @Test func terminalLoginWithoutConsoleUseRecorded() throws {
+        // The account signed in at the Mac earlier, and signed out before.
+        let earlier = signIn(pid: 500, ago: 7200)
+        let t = tracker()
+        #expect(try t.checkPermanentUses().count == 1)
+        signOut(earlier, ago: 3600)
+        #expect(try t.checkPermanentUses().count == 1)
+
+        signIn("jdoe", pid: 502, ago: 1800)
+        let login = signIn(tty: "ttys004", pid: 810, ago: 60)
+        let events = try t.checkPermanentUses()
+        try #require(events.count == 1)
+        expectUse(events[0], state: "started", method: "terminal", started: login.started)
+        #expect(events[0].detail["tty"] == "ttys004")
+
+        clock.advance(120)
+        signOut(login)
+        let ended = try t.checkPermanentUses()
+        try #require(ended.count == 1)
+        expectUse(ended[0], state: "ended", method: "terminal", started: login.started)
+    }
+
+    /// The catch-up and the heartbeat's history scan skip tabs inside a console sign-in too.
+    @Test func historyTerminalInsideConsoleUseSkipped() throws {
+        // While the agent was stopped: a console sign-in with two tabs, all ended.
+        let console = signIn(pid: 501, ago: 7200)
+        let tab = signIn(tty: "ttys001", pid: 820, ago: 6000)
+        let tab2 = signIn(tty: "ttys002", pid: 821, ago: 5000)
+        signOut(tab, ago: 4000)
+        let ended = signOut(console, ago: 3600)
+        signOut(tab2, ago: 3599)  // closed by the sign-out, a moment after it
+
+        let t = tracker()
+        let caught = try t.catchUpPermanentUses()
+        try #require(caught.count == 1)
+        expectUse(caught[0], state: "ended", method: "console", started: console.started)
+        #expect(caught[0].detail["ended"] == .date(ended))
+
+        // While it runs: the account signs in at the Mac, and a tab opens and closes
+        // between two checks.
+        _ = try t.heartbeat()
+        let again = signIn(pid: 530, ago: 0)
+        #expect(try t.checkPermanentUses().count == 1)
+        clock.advance(300)
+        let shortStarted = clock.now.addingTimeInterval(-20)
+        wtmp.withLock {
+            $0.append(UtmpxEntry(kind: .login, user: "breakglass", tty: "ttys003", host: "", pid: 830, time: shortStarted))
+            $0.append(UtmpxEntry(kind: .logout, user: "", tty: "", host: "", pid: 830, time: shortStarted.addingTimeInterval(8)))
+        }
+        #expect(try t.checkPermanentUses().isEmpty)
+        #expect(try t.heartbeat().filter { $0.type == .adminPermanentUse }.isEmpty)
+        #expect(try tracker().catchUpPermanentUses().isEmpty)
+        #expect(try store.openPermanentUses().map(\.startedAt) == [again.started])
+    }
+
+    /// A console sign-in macOS still lists after its process has gone doesn't hide a short
+    /// Terminal sign-in from the heartbeat's history scan.
+    @Test func historyTerminalDuringStaleConsoleIsRecorded() throws {
+        let console = signIn(pid: 501, ago: 3600)
+        processGoes(console)
+        let t = tracker()
+        #expect(try t.checkPermanentUses().isEmpty)
+        _ = try t.heartbeat()
+
+        clock.advance(300)
+        let started = clock.now.addingTimeInterval(-20)
+        let ended = started.addingTimeInterval(8)
+        wtmp.withLock {
+            $0.append(UtmpxEntry(kind: .login, user: "breakglass", tty: "ttys005", host: "", pid: 840, time: started))
+            $0.append(UtmpxEntry(kind: .logout, user: "", tty: "", host: "", pid: 840, time: ended))
+        }
+        #expect(try t.checkPermanentUses().isEmpty)
+
+        let events = try t.heartbeat().filter { $0.type == .adminPermanentUse }
+        try #require(events.count == 1)
+        expectUse(events[0], state: "ended", method: "terminal", started: started)
+        #expect(events[0].detail["ended"] == .date(ended))
+        #expect(events[0].detail["end_basis"] == "logged")
+    }
+
     // MARK: Restarts and the catch-up
 
     @Test func restartDoesNotRepeatStarted() throws {

@@ -4,7 +4,9 @@ import Foundation
 public enum PermanentUseMethod: String, Sendable {
     /// Signed in at the Mac: the login window or fast user switching.
     case console
-    /// Signed in on a terminal with no remote host, such as `login` in Terminal.
+    /// Signed in on a terminal with no remote host, such as `login` in Terminal. Not
+    /// recorded while the same account is signed in at the Mac: each Terminal tab gets a
+    /// sign-in of its own, which is part of the console one.
     case terminal
     case ssh
     case screenSharing = "screen_sharing"
@@ -32,6 +34,9 @@ public enum PermanentUseMethod: String, Sendable {
 ///   while the agent wasn't running;
 /// - the heartbeat does the same for one that began and ended between two checks, then moves
 ///   the cursor both read from and prunes old rows.
+///
+/// None of them records a `terminal` sign-in that overlaps a console sign-in by the same
+/// account (see ``insideConsoleUse(_:consoles:now:)``).
 extension ElevationTracker {
     static let permanentUseCursorKey = "permanent_use_logins_until"
     /// How far back the catch-up reads at most, and how long ended rows are kept.
@@ -56,9 +61,11 @@ extension ElevationTracker {
 
         return try store.transaction {
             var events: [AltiwardEvent] = []
+            let consoles = try consoleSpans(logins)
             for record in logins {
                 let id = useID(record, device: device)
-                guard env.config.permanentAdmins.contains(record.user), !(try store.hasPermanentUse(id: id))
+                guard env.config.permanentAdmins.contains(record.user), !(try store.hasPermanentUse(id: id)),
+                    !insideConsoleUse(record, consoles: consoles, now: now)
                 else { continue }
                 let row = PermanentUseRow(
                     useID: id, user: record.user, method: .of(record), tty: record.tty, host: record.host,
@@ -115,8 +122,10 @@ extension ElevationTracker {
         -> [AltiwardEvent]
     {
         var events: [AltiwardEvent] = []
+        let consoles = try consoleSpans(history)
         for record in history {
-            guard let ended = record.ended, ended >= since, env.config.permanentAdmins.contains(record.user)
+            guard let ended = record.ended, ended >= since, env.config.permanentAdmins.contains(record.user),
+                !insideConsoleUse(record, consoles: consoles, now: now)
             else { continue }
             let id = useID(record, device: device)
             // Open rows are left for the check, which ends them.
@@ -128,6 +137,44 @@ extension ElevationTracker {
             events.append(signInEvent(row, basis: "logged", now: now, device: device))
         }
         return events
+    }
+
+    /// Whether `record` is a `terminal` sign-in that overlaps a console sign-in by the same
+    /// account. Each Terminal tab opened while the account is signed in at the Mac gets a
+    /// utmpx entry of its own (a tty with no host); it is part of the console sign-in, which
+    /// already covers the time, so it isn't recorded as a use. Overlap rather than lying
+    /// within, because the tabs' records end a moment after the console's when the account
+    /// signs out. SSH and console sign-ins are always recorded, and so is `login` in someone
+    /// else's Terminal while the account isn't signed in at the Mac.
+    func insideConsoleUse(_ record: LoginRecord, consoles: [ConsoleSpan], now: Date) -> Bool {
+        guard PermanentUseMethod.of(record) == .terminal else { return false }
+        let ended = record.ended ?? now
+        return consoles.contains {
+            $0.user == record.user && $0.started <= ended && ($0.ended ?? .distantFuture) >= record.started
+        }
+    }
+
+    /// The console sign-ins among `records` (utmpx's or wtmp's), and those the store has rows
+    /// for: open, or ended within the last day. A sign-in wtmp has no end for, whose process
+    /// has gone, isn't a span: macOS left it behind, so it doesn't cover later Terminal
+    /// sign-ins. Runs inside the caller's transaction.
+    func consoleSpans(_ records: [LoginRecord]) throws -> [ConsoleSpan] {
+        let read = records.filter {
+            PermanentUseMethod.of($0) == .console && ($0.ended != nil || env.processExists($0.pid))
+        }.map {
+            ConsoleSpan(user: $0.user, started: $0.started, ended: $0.ended)
+        }
+        let recorded = try store.permanentUses(method: .console).map {
+            ConsoleSpan(user: $0.user, started: $0.startedAt, ended: $0.endedAt)
+        }
+        return read + recorded
+    }
+
+    /// When an account was signed in at the Mac; `ended` is nil while it is.
+    struct ConsoleSpan: Sendable {
+        let user: String
+        let started: Date
+        let ended: Date?
     }
 
     /// The same for a sign-in seen in utmpx and in wtmp, before and after a restart.
