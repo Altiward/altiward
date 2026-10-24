@@ -22,6 +22,7 @@ const (
 	ElevationExpiredEnforced Type = "elevation.expired_enforced"
 	ElevationOverdue         Type = "elevation.overdue"
 	AdminOutOfBand           Type = "admin.out_of_band"
+	AdminOutOfBandRemoved    Type = "admin.out_of_band_removed"
 	Activity                 Type = "activity"
 	PersistenceDetected      Type = "persistence.detected"
 	AgentHealth              Type = "agent.health"
@@ -31,8 +32,8 @@ const (
 
 var knownTypes = map[Type]bool{
 	ElevationGranted: true, ElevationRevoked: true, ElevationExpiredEnforced: true, ElevationOverdue: true,
-	AdminOutOfBand: true, Activity: true, PersistenceDetected: true, AgentHealth: true, AgentTamper: true,
-	AgentSilent: true,
+	AdminOutOfBand: true, AdminOutOfBandRemoved: true, Activity: true, PersistenceDetected: true, AgentHealth: true,
+	AgentTamper: true, AgentSilent: true,
 }
 
 // Silence states for agent.silent.
@@ -84,8 +85,8 @@ type Elevation struct {
 // IsSessionEvent reports whether events of this type belong to an elevation session.
 func (t Type) IsSessionEvent() bool {
 	switch t {
-	case ElevationGranted, ElevationRevoked, ElevationExpiredEnforced, ElevationOverdue, AdminOutOfBand, Activity,
-		PersistenceDetected:
+	case ElevationGranted, ElevationRevoked, ElevationExpiredEnforced, ElevationOverdue, AdminOutOfBand,
+		AdminOutOfBandRemoved, Activity, PersistenceDetected:
 		return true
 	}
 	return false
@@ -174,7 +175,8 @@ func (e *Event) Validate(now time.Time) error {
 		}
 	}
 	switch e.Type {
-	case ElevationGranted, ElevationRevoked, ElevationExpiredEnforced, ElevationOverdue, AdminOutOfBand:
+	case ElevationGranted, ElevationRevoked, ElevationExpiredEnforced, ElevationOverdue, AdminOutOfBand,
+		AdminOutOfBandRemoved:
 		if e.SessionID == nil || e.User == nil || e.Elevation == nil {
 			return fmt.Errorf("%s requires session_id, user and elevation", e.Type)
 		}

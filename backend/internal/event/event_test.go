@@ -55,6 +55,8 @@ func TestValidate(t *testing.T) {
 		{"grant without user", "elevation-granted", func(e *event.Event) { e.User = nil }, "requires session_id, user"},
 		{"overdue without session", "elevation-overdue", func(e *event.Event) { e.SessionID = nil }, "requires session_id"},
 		{"overdue without user", "elevation-overdue", func(e *event.Event) { e.User = nil }, "requires session_id, user"},
+		{"out of band removed", "admin-out-of-band-removed", func(e *event.Event) {}, ""},
+		{"out of band removed without session", "admin-out-of-band-removed", func(e *event.Event) { e.SessionID = nil }, "requires session_id, user and elevation"},
 		{"bad source", "elevation-granted", func(e *event.Event) { e.Elevation.Source = "sudo" }, "elevation.source"},
 		{"long reason", "elevation-granted", func(e *event.Event) {
 			e.Elevation.Reason = testfixture.Ptr(strings.Repeat("x", event.MaxReasonLength+1))

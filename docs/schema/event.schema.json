@@ -16,6 +16,7 @@
         "elevation.expired_enforced",
         "elevation.overdue",
         "admin.out_of_band",
+        "admin.out_of_band_removed",
         "activity",
         "persistence.detected",
         "agent.health",
@@ -24,7 +25,7 @@
       ]
     },
     "session_id": {
-      "description": "Elevation session this event belongs to. Required for elevation.* and admin.out_of_band; absent for agent.health, agent.tamper and agent.silent.",
+      "description": "Elevation session this event belongs to. Required for elevation.* and admin.out_of_band*; absent for agent.health, agent.tamper and agent.silent.",
       "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }]
     },
     "timestamp": { "type": "string", "format": "date-time", "description": "When the event happened on the device (RFC 3339, UTC); for agent.silent, when the backend raised it." },
