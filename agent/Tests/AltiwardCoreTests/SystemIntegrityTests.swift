@@ -65,6 +65,11 @@ struct SystemIntegrityTests {
         #expect(integrity(forced: ["ExpiryEnforcement", "PermanentAdmins"]).run()[.settingsManaged] == .ok)
         let r = integrity(local: ["PermanentAdmins", "ExpiryEnforcement"], forced: ["ServerURL"]).run()
         #expect(r[.settingsManaged] == .failed("set outside MDM: PermanentAdmins, ExpiryEnforcement"))
+        // Removing rights nobody granted is policy too: switching it off locally keeps them.
+        for key in ["OutOfBandEnforcement", "OutOfBandGraceMinutes"] {
+            #expect(integrity(local: [key]).run()[.settingsManaged] == .failed("set outside MDM: \(key)"))
+            #expect(integrity(forced: [key]).run()[.settingsManaged] == .ok)
+        }
         // Keys that aren't policy don't count.
         #expect(integrity(local: ["FlushInterval"]).run()[.settingsManaged] == .ok)
     }

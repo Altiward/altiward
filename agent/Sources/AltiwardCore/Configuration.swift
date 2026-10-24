@@ -99,6 +99,16 @@ public enum ExpiryEnforcement: String, Sendable, Equatable {
     case enforce
 }
 
+/// What the daemon does about admin rights nobody granted (`admin.out_of_band`) once they
+/// have lasted the grace period.
+public enum OutOfBandEnforcement: String, Sendable, Equatable {
+    /// Report them; leave the rights in place.
+    case alert
+    /// Remove the user from `admin` and report `admin.out_of_band_removed`, unless that
+    /// would leave the Mac without an admin.
+    case enforce
+}
+
 /// Agent settings from the `com.altiward.agent` domain (MDM profile), with
 /// `ALTIWARD_*` environment overrides for local development.
 public struct AgentConfiguration: Sendable, Equatable {
@@ -116,6 +126,10 @@ public struct AgentConfiguration: Sendable, Equatable {
     public var expiryEnforcement: ExpiryEnforcement
     /// How long past expiry rights may persist before expiry enforcement acts.
     public var expiryGracePeriod: TimeInterval
+    public var outOfBandEnforcement: OutOfBandEnforcement
+    /// How long rights nobody granted may last, from when they were raised, before
+    /// out-of-band enforcement acts.
+    public var outOfBandGracePeriod: TimeInterval
     /// Seconds between polls for remote commands.
     public var commandPollInterval: TimeInterval
 
@@ -133,6 +147,8 @@ public struct AgentConfiguration: Sendable, Equatable {
         hookCodeRequirement: String? = nil,
         expiryEnforcement: ExpiryEnforcement = .alert,
         expiryGracePeriod: TimeInterval = 300,
+        outOfBandEnforcement: OutOfBandEnforcement = .alert,
+        outOfBandGracePeriod: TimeInterval = 300,
         commandPollInterval: TimeInterval = 60
     ) {
         self.serverURL = serverURL
@@ -145,6 +161,8 @@ public struct AgentConfiguration: Sendable, Equatable {
         self.hookCodeRequirement = hookCodeRequirement
         self.expiryEnforcement = expiryEnforcement
         self.expiryGracePeriod = expiryGracePeriod
+        self.outOfBandEnforcement = outOfBandEnforcement
+        self.outOfBandGracePeriod = outOfBandGracePeriod
         self.commandPollInterval = commandPollInterval
     }
 
@@ -162,6 +180,8 @@ public struct AgentConfiguration: Sendable, Equatable {
             ("HookCodeRequirement", hookCodeRequirement != other.hookCodeRequirement),
             ("ExpiryEnforcement", expiryEnforcement != other.expiryEnforcement),
             ("ExpiryGraceMinutes", expiryGracePeriod != other.expiryGracePeriod),
+            ("OutOfBandEnforcement", outOfBandEnforcement != other.outOfBandEnforcement),
+            ("OutOfBandGraceMinutes", outOfBandGracePeriod != other.outOfBandGracePeriod),
             ("CommandPollInterval", commandPollInterval != other.commandPollInterval),
         ]
         return differs.filter(\.1).map(\.0).sorted()
@@ -195,6 +215,15 @@ public struct AgentConfiguration: Sendable, Equatable {
         }
         if let m = p.int("ExpiryGraceMinutes") {
             c.expiryGracePeriod = TimeInterval(max(0, m) * 60)
+        }
+        // An unrecognised value keeps the default, alert, rather than removing anyone's rights
+        // on a setting nobody meant.
+        if let mode = p.string("OutOfBandEnforcement").flatMap(OutOfBandEnforcement.init(rawValue:)) {
+            c.outOfBandEnforcement = mode
+        }
+        // At least a minute, so a grant whose hook is still on its way isn't removed.
+        if let m = p.int("OutOfBandGraceMinutes") {
+            c.outOfBandGracePeriod = TimeInterval(max(1, m) * 60)
         }
         return c
     }
