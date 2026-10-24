@@ -307,7 +307,7 @@ struct OutOfBandEnforcementTests {
         let raised = try raise(tracker)
         clock.advance(61)
         let pending = try store.pendingCount()
-        let error = #expect(throws: ElevationTracker.GrantClaimRefused.self) {
+        let error = #expect(throws: ElevationTracker.ClaimRefused.self) {
             try tracker.record(HookInvocation(user: "jdoe", state: .admin, reason: "work", invokedAt: clock.now))
         }
         #expect(error?.reason == .late(seconds: 61))
@@ -336,7 +336,7 @@ struct OutOfBandEnforcementTests {
         let raised = try raise(tracker)
         clock.advance(10)
         let pending = try store.pendingCount()
-        let error = #expect(throws: ElevationTracker.GrantClaimRefused.self) {
+        let error = #expect(throws: ElevationTracker.ClaimRefused.self) {
             try tracker.record(HookInvocation(user: "jdoe", state: .admin, reason: "work", invokedAt: clock.now))
         }
         #expect(error?.reason == .privilegesNotInstalled)
@@ -361,6 +361,62 @@ struct OutOfBandEnforcementTests {
         let session = try #require(try store.openSession(user: "jdoe"))
         #expect(session.source == .privileges)
         #expect(session.sessionID == granted.sessionID)
+    }
+
+    @Test func aGiveBackClaimWhileStillAdminDoesNotEndAnOutOfBandSession() throws {
+        // jdoe still holds admin nobody granted and claims to have given it back, which would
+        // close the session so that a grant claim next finds none to replace.
+        let (tracker, store) = try tracker(.enforce)
+        let raised = try raise(tracker)
+        clock.advance(30)
+        let pending = try store.pendingCount()
+        let error = #expect(throws: ElevationTracker.ClaimRefused.self) {
+            try tracker.record(HookInvocation(user: "jdoe", state: .user, reason: nil, invokedAt: clock.now))
+        }
+        #expect(error?.reason == .stillAdmin)
+        let message = error.map { String(describing: $0) } ?? ""
+        #expect(message.contains("jdoe"))
+        #expect(message.contains("still an admin"))
+        var session = try #require(try store.openSession(user: "jdoe"))
+        #expect(session.source == .outOfBand)
+        #expect(session.sessionID == raised.sessionID)
+        #expect(session.startedAt == raised.timestamp)
+        #expect(try store.pendingCount() == pending)
+
+        // The grant claim that would follow, 61 s after the raise, is refused too.
+        clock.advance(31)
+        let late = #expect(throws: ElevationTracker.ClaimRefused.self) {
+            try tracker.record(HookInvocation(user: "jdoe", state: .admin, reason: "work", invokedAt: clock.now))
+        }
+        #expect(late?.reason == .late(seconds: 61))
+        session = try #require(try store.openSession(user: "jdoe"))
+        #expect(session.source == .outOfBand)
+        #expect(session.sessionID == raised.sessionID)
+        #expect(try store.pendingCount() == pending)
+
+        clock.advance(300 - 61)
+        let events = try tracker.heartbeat()
+        #expect(types(events) == [.adminOutOfBandRemoved, .agentHealth])
+        #expect(events.first?.sessionID == raised.sessionID)
+        #expect(!admins.isAdmin(user: "jdoe"))
+        #expect(try store.openSession(user: "jdoe") == nil)
+    }
+
+    @Test func aGiveBackClaimAfterTheRightsWentStillEndsTheSession() throws {
+        let (tracker, store) = try tracker(.enforce)
+        let raised = try raise(tracker)
+        clock.advance(30)
+        admins.set(["itadmin"])
+        let pending = try store.pendingCount()
+        let revoked = try tracker.record(
+            HookInvocation(user: "jdoe", state: .user, reason: nil, invokedAt: clock.now))
+        #expect(revoked.type == .elevationRevoked)
+        #expect(revoked.sessionID == raised.sessionID)
+        #expect(revoked.elevation?.source == .outOfBand)
+        #expect(revoked.detail["trigger"] == "hook")
+        #expect(revoked.detail["verified"] == true)
+        #expect(try store.openSession(user: "jdoe") == nil)
+        #expect(try store.pendingCount() == pending + 1)
     }
 
     @Test func graceCountsFromWhenTheRightsWereRaisedAcrossRestarts() throws {

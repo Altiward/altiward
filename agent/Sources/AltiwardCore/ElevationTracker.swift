@@ -99,25 +99,31 @@ public final class ElevationTracker: Sendable {
     /// running the hook by hand to keep rights nobody granted.
     static let grantReplacementWindow: TimeInterval = 60
 
-    /// Why ``record(_:callerUID:)`` refused a grant claim: in `OutOfBandEnforcement` `enforce`
-    /// mode, a claim can't turn rights nobody granted into a Privileges grant once it is
-    /// later than ``grantReplacementWindow``, or on a Mac without SAP Privileges.
-    public struct GrantClaimRefused: Error, CustomStringConvertible {
+    /// Why ``record(_:callerUID:)`` refused a hook claim about rights nobody granted, in
+    /// `OutOfBandEnforcement` `enforce` mode: a grant claim can't turn them into a Privileges
+    /// grant once it is later than ``grantReplacementWindow`` or on a Mac without SAP
+    /// Privileges, and a give-back claim can't end them while the user is still an admin.
+    public struct ClaimRefused: Error, CustomStringConvertible {
         public enum Reason: Sendable, Equatable {
-            /// Seconds between Altiward raising the rights and the claim.
+            /// A grant claim, this many seconds after Altiward raised the rights.
             case late(seconds: Int)
+            /// A grant claim on a Mac without SAP Privileges.
             case privilegesNotInstalled
+            /// A give-back claim while the daemon still sees the user in `admin`.
+            case stillAdmin
         }
         public let user: String
         public let reason: Reason
 
         public var description: String {
-            let when =
-                switch reason {
-                case .late(let seconds): "\(seconds) s after Altiward raised rights nobody granted"
-                case .privilegesNotInstalled: "on a Mac without SAP Privileges, while they hold rights nobody granted"
-                }
-            return "a Privileges grant claimed for \(user) \(when); OutOfBandEnforcement keeps them out of band"
+            switch reason {
+            case .late(let seconds):
+                "a Privileges grant claimed for \(user) \(seconds) s after Altiward raised rights nobody granted; OutOfBandEnforcement keeps them out of band"
+            case .privilegesNotInstalled:
+                "a Privileges grant claimed for \(user) on a Mac without SAP Privileges, while they hold rights nobody granted; OutOfBandEnforcement keeps them out of band"
+            case .stillAdmin:
+                "a give-back claimed for \(user), who is still an admin; OutOfBandEnforcement keeps the rights out of band"
+            }
         }
     }
 
@@ -125,9 +131,10 @@ public final class ElevationTracker: Sendable {
     ///
     /// The hook runs as the user, so its claim is only a claim: the event carries what the
     /// daemon observed in the `admin` group and whether the two agree (`detail.verified`).
-    /// In `OutOfBandEnforcement` `enforce` mode a grant claim that would replace an
-    /// out-of-band session too late, or without Privileges installed, throws
-    /// ``GrantClaimRefused`` and records nothing, so the rights are still removed.
+    /// In `OutOfBandEnforcement` `enforce` mode a claim about an out-of-band session throws
+    /// ``ClaimRefused`` and records nothing, so the rights are still removed, when it is a
+    /// grant that comes too late or without Privileges installed, or a give-back while the
+    /// user is still an admin.
     ///
     /// Membership is read inside the transaction, so a grant can't commit between the read
     /// and the decision.
@@ -193,6 +200,13 @@ public final class ElevationTracker: Sendable {
                     elevation: ElevationInfo(reason: invocation.reason, expires: expiresAt, source: .privileges),
                     detail: detail)
             case .user:
+                // A give-back while still admin would close the session, and a grant claimed
+                // next would find none to replace. Checked before any write.
+                if let open = existing, open.source == .outOfBand, observedAdmin,
+                    env.config.outOfBandEnforcement == .enforce
+                {
+                    throw ClaimRefused(user: invocation.user, reason: .stillAdmin)
+                }
                 if existing == nil { detail["orphan"] = true }
                 try store.closeSession(user: invocation.user)
                 event = AltiwardEvent(
@@ -206,7 +220,7 @@ public final class ElevationTracker: Sendable {
         }
     }
 
-    /// Throws ``GrantClaimRefused`` when, in `enforce` mode, a grant claim may not replace the
+    /// Throws ``ClaimRefused`` when, in `enforce` mode, a grant claim may not replace the
     /// out-of-band session `replaced`. Times are the daemon's: the session's start and the
     /// claim's `invokedAt`, which the XPC handler sets on arrival.
     private func checkReplacement(of replaced: OpenSession, by invocation: HookInvocation, device: DeviceInfo)
@@ -214,11 +228,11 @@ public final class ElevationTracker: Sendable {
     {
         guard env.config.outOfBandEnforcement == .enforce else { return }
         if device.privilegesVersion == nil {
-            throw GrantClaimRefused(user: invocation.user, reason: .privilegesNotInstalled)
+            throw ClaimRefused(user: invocation.user, reason: .privilegesNotInstalled)
         }
         let elapsed = invocation.invokedAt.timeIntervalSince(replaced.startedAt)
         if elapsed > Self.grantReplacementWindow {
-            throw GrantClaimRefused(user: invocation.user, reason: .late(seconds: Int(elapsed.rounded())))
+            throw ClaimRefused(user: invocation.user, reason: .late(seconds: Int(elapsed.rounded())))
         }
     }
 
