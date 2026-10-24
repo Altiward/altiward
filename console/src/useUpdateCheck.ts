@@ -34,7 +34,7 @@ export function useUpdateCheck(): UpdateCheck | null {
         return;
       }
       if (live) setResult({ ...where, state: "checking", running: about.version });
-      const check = await checkReleases();
+      const check = await checkReleases(Date.now(), { running: about.version });
       if (live) setResult({ ...where, state: "done", running: about.version, check });
     })();
     return () => { live = false; };

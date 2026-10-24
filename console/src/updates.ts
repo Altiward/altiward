@@ -187,19 +187,29 @@ const trim = (r: GitHubRelease): GitHubRelease => ({
   assets: Array.isArray(r.assets) ? r.assets.map((a) => ({ name: String(a.name ?? ""), browser_download_url: String(a.browser_download_url ?? "") })) : [],
 });
 
+/** Whether the list predates the running server: it's newer than every server release
+ *  listed. A server that isn't X.Y.Z, such as dev, never is. */
+function predates(releases: GitHubRelease[], running: string): boolean {
+  if (!isVersion(running)) return false;
+  const newest = latestRelease(releases, "server", { prereleases: true });
+  return !newest || compareVersions(running, newest.version) > 0;
+}
+
 /** Asks GitHub for the release list: at most once a day per browser after a successful
  *  check (the answer is kept in localStorage, or in memory for the tab when storage is
- *  blocked), and at most once an hour while GitHub can't be reached. A failure is quiet.
- *  It sends no cookies, no referrer and no versions. */
-export async function checkReleases(now = Date.now()): Promise<Check> {
+ *  blocked), and at most once an hour while GitHub can't be reached. A list that predates
+ *  the running server, as after an upgrade, is asked for again at most once an hour, and
+ *  kept if that fails. A failure is quiet. It sends no cookies, no referrer and no
+ *  versions. */
+export async function checkReleases(now = Date.now(), { running }: { running?: string } = {}): Promise<Check> {
   const cache = read<Cache>(CACHE_KEY) ?? {};
   const lastSuccess = cache.checkedAt ?? null;
-  if (cache.releases && lastSuccess && now - Date.parse(lastSuccess) < DAY && now >= Date.parse(lastSuccess)) {
-    return { releases: cache.releases, checkedAt: lastSuccess, failed: false };
-  }
-  if (cache.failedAt && now - Date.parse(cache.failedAt) < RETRY_AFTER && now >= Date.parse(cache.failedAt)) {
-    return { releases: null, checkedAt: lastSuccess, failed: true };
-  }
+  const within = (at: string | null | undefined, ms: number) => !!at && now >= Date.parse(at) && now - Date.parse(at) < ms;
+  const cached: Check | null = cache.releases && within(lastSuccess, DAY)
+    ? { releases: cache.releases, checkedAt: lastSuccess, failed: false } : null;
+  const failed: Check = { releases: null, checkedAt: lastSuccess, failed: true };
+  if (cached && !(running && predates(cache.releases!, running) && !within(lastSuccess, RETRY_AFTER))) return cached;
+  if (within(cache.failedAt, RETRY_AFTER)) return cached ?? failed;
   try {
     const res = await fetch(RELEASES_URL, {
       credentials: "omit", referrerPolicy: "no-referrer", headers: { Accept: "application/vnd.github+json" },
@@ -213,7 +223,7 @@ export async function checkReleases(now = Date.now()): Promise<Check> {
     return { releases, checkedAt, failed: false };
   } catch {
     write(CACHE_KEY, { ...cache, failedAt: new Date(now).toISOString() } satisfies Cache);
-    return { releases: null, checkedAt: lastSuccess, failed: true };
+    return cached ?? failed;
   }
 }
 

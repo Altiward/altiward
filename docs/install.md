@@ -420,8 +420,9 @@ problem, a link to its notes, and the `upgrade.sh` command below with the versio
 in. It only tells: it never upgrades anything. The admin's browser makes the check, not
 the server, so it works when the server has no internet access but browsers do. It asks
 `api.github.com` for the release list at most once a day per admin's browser after a
-successful check, and at most once an hour while GitHub can't be reached, sending nothing
-about your fleet ([Data handling](data-handling.md#in-the-browser)). A notice can be
+successful check, and at most once an hour while GitHub can't be reached or the list
+doesn't include your server's version yet, sending nothing about your fleet
+([Data handling](data-handling.md#in-the-browser)). A notice can be
 dismissed until the next version. Settings always shows the latest versions and when
 they were last checked, or "Couldn’t check for updates" when a firewall or proxy blocks
 GitHub. To turn the check off for everyone, set `ALTIWARD_UPDATE_CHECK=false` in `.env`

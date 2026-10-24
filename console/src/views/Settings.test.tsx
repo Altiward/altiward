@@ -250,6 +250,14 @@ describe("Settings updates", () => {
     expect(within(server).getByText("Up to date")).toBeInTheDocument();
   });
 
+  it("says a server newer than the latest release is newer, not up to date", async () => {
+    githubFetch();
+    renderView(withCheck("0.2.1"));
+    const server = await screen.findByRole("group", { name: "Server" });
+    expect(within(server).getByText("You’re running 0.2.1, newer than the latest release, 0.2.0.")).toBeInTheDocument();
+    expect(within(server).queryByText("Up to date")).toBeNull();
+  });
+
   it("says it couldn’t check, and when it last could", async () => {
     githubFetch();
     const before = await checkReleases(Date.now() - 2 * 24 * 60 * 60 * 1000);

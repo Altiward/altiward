@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { dateTime } from "../format";
-import { type GitHubRelease, type Latest, available, dismiss, isDismissed, isVersion } from "../updates";
+import { type GitHubRelease, type Latest, available, compareVersions, dismiss, isDismissed, isVersion } from "../updates";
 import { type Deployment, useUpdateCheck } from "../useUpdateCheck";
 import { AttentionGlyph, UpdateGlyph } from "./Icons";
 import { StateBadge } from "./StateBadge";
@@ -158,8 +158,10 @@ function LatestVersions({ running, fleetAgents, releases, checkedAt, azureApp }:
   running: string; fleetAgents: string[] | null; releases: GitHubRelease[]; checkedAt: string | null;
 }) {
   const a = available(running, fleetAgents ?? [], releases);
-  const serverLine = a.server ? `You’re running ${running}. The latest release is ${a.server.version}.`
-    : `You’re running ${running}. No server release is published yet.`;
+  const ahead = a.server !== null && isVersion(running) && compareVersions(running, a.server.version) > 0;
+  const serverLine = !a.server ? `You’re running ${running}. No server release is published yet.`
+    : ahead ? `You’re running ${running}, newer than the latest release, ${a.server.version}.`
+    : `You’re running ${running}. The latest release is ${a.server.version}.`;
   const agentLatest = a.agent ? `The latest release is ${a.agent.version}.` : "No agent release is published yet.";
   const agentLine = fleetAgents === null ? agentLatest
     : a.fleetAgent ? `The newest agent in your fleet is ${a.fleetAgent}. ${agentLatest}`
@@ -169,7 +171,7 @@ function LatestVersions({ running, fleetAgents, releases, checkedAt, azureApp }:
       <div className="box">
         <div className="row" role="group" aria-label="Server">
           <span><span>Server</span><p className="hint">{serverLine}</p></span>
-          {a.newerServer ? <UpdateAvailable /> : a.server && isVersion(running) && <StateBadge state="verified" label="Up to date" />}
+          {a.newerServer ? <UpdateAvailable /> : a.server && isVersion(running) && !ahead && <StateBadge state="verified" label="Up to date" />}
         </div>
         <div className="row" role="group" aria-label="Agent">
           <span><span>Agent</span><p className="hint">{agentLine}</p></span>
@@ -178,7 +180,8 @@ function LatestVersions({ running, fleetAgents, releases, checkedAt, azureApp }:
       </div>
       <p className="hint">
         Last checked {dateTime(checkedAt)}. Your browser asks api.github.com for the release list at most once a
-        day after a successful check, and at most once an hour while it can’t reach GitHub. It sends no versions and
+        day after a successful check, and at most once an hour while it can’t reach GitHub or the list doesn’t include
+        this server’s version yet. It sends no versions and
         nothing about your Macs. <code>ALTIWARD_UPDATE_CHECK=false</code> {whereSettingsLive(azureApp)} turns it off.
       </p>
       {a.newerServer && <ServerNotice running={running} latest={a.newerServer} azureApp={azureApp} />}

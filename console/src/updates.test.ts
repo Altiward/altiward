@@ -188,6 +188,41 @@ describe("checkReleases", () => {
     });
   });
 
+  describe("for a server newer than every server release listed", () => {
+    const before = [release("server-v0.1.1"), release("server-v0.2.0-rc.2"), release("agent-v0.1.0")];
+
+    it("asks again within the day, at most once an hour, until the list has it", async () => {
+      const fetch = githubFetch(before);
+      await checkReleases(t0, { running: "0.2.0" });
+      await checkReleases(t0 + 59 * 60_000, { running: "0.2.0" });
+      expect(fetch).toHaveBeenCalledTimes(1);
+      await checkReleases(t0 + 61 * 60_000, { running: "0.2.0" });
+      expect(fetch).toHaveBeenCalledTimes(2);
+
+      const after = githubFetch([release("server-v0.2.0"), ...before]);
+      const check = await checkReleases(t0 + 3 * 60 * 60_000, { running: "0.2.0" });
+      expect(check.releases?.map((r) => r.tag_name)).toContain("server-v0.2.0");
+      await checkReleases(t0 + 5 * 60 * 60_000, { running: "0.2.0" });
+      expect(after).toHaveBeenCalledTimes(1);
+    });
+
+    it("doesn't ask again for a server the list has, an older one or a dev build", async () => {
+      const fetch = githubFetch(before);
+      await checkReleases(t0);
+      for (const running of ["0.1.1", "0.1.0", "0.2.0-rc.2", "dev"]) await checkReleases(t0 + 2 * 60 * 60_000, { running });
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the list it has when asking again fails", async () => {
+      githubFetch(before);
+      const first = await checkReleases(t0);
+      const fetch = githubFetch("offline");
+      expect(await checkReleases(t0 + 2 * 60 * 60_000, { running: "0.2.0" })).toEqual(first);
+      expect(await checkReleases(t0 + 2 * 60 * 60_000 + 30 * 60_000, { running: "0.2.0" })).toEqual(first);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("asks again an hour after a failure, not sooner", async () => {
     const fetch = githubFetch("offline");
     await checkReleases(t0);

@@ -9,6 +9,28 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Server 0.3.0 - unreleased
+
+### Upgrade order
+
+None.
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+- After an upgrade, the console's update check no longer says "Up to date" from a release
+  list fetched before the release. When the list doesn't include the running server's
+  version, the admin's browser asks GitHub again, at most once an hour, and keeps the list
+  it has if that fails. A server newer than every release, such as a build that isn't
+  released, says "newer than the latest release" (`docs/data-handling.md`).
+
 ## Agent 0.1.1 - 2026-10-23
 
 ### Upgrade order
