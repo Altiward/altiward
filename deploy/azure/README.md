@@ -1,6 +1,6 @@
 # Deploy to Azure
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v0.2.0%2Fdeploy%2Fazure%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v0.2.0%2Fdeploy%2Fazure%2FcreateUiDefinition.json)
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v0.3.0%2Fdeploy%2Fazure%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v0.3.0%2Fdeploy%2Fazure%2FcreateUiDefinition.json)
 
 The button creates an Altiward server in your own Azure subscription, running on Azure
 Container Apps, with nothing to install on a VM. It is the third way to run the server, next to the
@@ -69,7 +69,7 @@ With the Azure CLI instead:
 ```sh
 az group create --name rg-altiward --location uksouth
 az deployment group create --resource-group rg-altiward \
-  --template-uri https://raw.githubusercontent.com/Altiward/altiward/server-v0.2.0/deploy/azure/azuredeploy.json \
+  --template-uri https://raw.githubusercontent.com/Altiward/altiward/server-v0.3.0/deploy/azure/azuredeploy.json \
   --parameters organisationName=yourcompany consoleAllowedNetworks="203.0.113.0/24" \
   postgresAdminPassword='<a strong password>'
 ```

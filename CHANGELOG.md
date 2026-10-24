@@ -9,7 +9,7 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
-## Agent 0.2.0 - unreleased
+## Agent 0.2.0 - 2026-10-24
 
 ### Upgrade order
 
@@ -80,7 +80,7 @@ server 0.2.0. A server before 0.3.0 ignores where the Mac says its key is kept.
   an hour during a long outage. Before, only a network change on the Mac cut the wait
   short. A server that answered with an error is still retried with backoff.
 
-## Server 0.3.0 - unreleased
+## Server 0.3.0 - 2026-10-24
 
 ### Upgrade order
 
