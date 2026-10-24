@@ -93,7 +93,10 @@ None.
 - The server records where each Mac says its key is kept, which agent 0.2.0 sends when it
   enrolls: `key_storage` on each enrollment in `GET /v1/enrollments` is `secure_enclave`,
   `software`, or empty for older agents and enrollments from before this release. It's the
-  Mac's own claim; the server can't check it (`docs/data-handling.md`).
+  Mac's own claim; the server can't check it (`docs/data-handling.md`). **Enrollments**
+  shows it under each key's fingerprint as Secure Enclave, File or Not reported, suggests
+  revoking an active file key so the Mac enrolls again with a new one, and says so when a
+  Mac waiting for approval would swap a Secure Enclave key for one that isn't.
 - After an upgrade, the console's update check no longer says "Up to date" from a release
   list fetched before the release. When the list doesn't include the running server's
   version, the admin's browser asks GitHub again, at most once an hour, and keeps the list

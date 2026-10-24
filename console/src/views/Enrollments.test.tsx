@@ -11,7 +11,7 @@ import { EnrollmentsView } from "./Enrollments";
 
 const pending: Enrollment = {
   device_id: "d-pending", serial: "C02XK0AAJGH5", hardware_uuid: "HW-1", public_key: btoa("abc"),
-  status: "pending", created_at: "2026-10-16T11:00:00Z", activated_at: null, revoked_at: null,
+  key_storage: "secure_enclave", status: "pending", created_at: "2026-10-16T11:00:00Z", activated_at: null, revoked_at: null,
 };
 
 function renderView(api: ReturnType<typeof fakeApi>, view: JSX.Element) {
@@ -67,6 +67,41 @@ describe("Enrollments, telling new Macs from re-enrollments", () => {
     const inspector = await openPending();
     expect(within(inspector).getByRole("button", { name: "Approve" })).toBeEnabled();
     expect(inspector).toHaveTextContent("This Mac enrolled again with a new key.");
+  });
+});
+
+describe("Enrollments, where each key is kept", () => {
+  const macs: Enrollment[] = [
+    { ...pending, device_id: "d-se", serial: "SERIAL-SE", status: "active", activated_at: "2026-10-01T00:00:00Z" },
+    { ...pending, device_id: "d-file", serial: "SERIAL-FILE", key_storage: "software", status: "active",
+      activated_at: "2026-10-01T00:00:00Z" },
+    { ...pending, device_id: "d-old", serial: "SERIAL-OLD", key_storage: "", status: "active", activated_at: "2026-10-01T00:00:00Z" },
+  ];
+  const row = (serial: string) => screen.getByText(serial).closest("tr")!;
+
+  it("shows a word for each, and suggests revoking a file key", async () => {
+    renderView(fakeApi({ enrollments: vi.fn(async () => macs) }), <EnrollmentsView />);
+    await screen.findByText("SERIAL-SE");
+    expect(row("SERIAL-SE")).toHaveTextContent("Secure Enclave");
+    expect(row("SERIAL-FILE")).toHaveTextContent("File");
+    expect(row("SERIAL-OLD")).toHaveTextContent("Not reported");
+
+    await userEvent.click(screen.getByText("SERIAL-FILE"));
+    const inspector = screen.getByRole("complementary", { name: "Enrollment details" });
+    expect(inspector).toHaveTextContent("This key is in a file");
+    await userEvent.click(within(inspector).getByRole("button", { name: "Close details" }));
+    await userEvent.click(screen.getByText("SERIAL-SE"));
+    expect(screen.getByRole("complementary", { name: "Enrollment details" })).not.toHaveTextContent("This key is in a file");
+  });
+
+  it("warns when a new file key would replace a Secure Enclave key", async () => {
+    const active: Enrollment = { ...pending, device_id: "d-active", status: "active", activated_at: "2026-10-01T00:00:00Z" };
+    const fileKey: Enrollment = { ...pending, key_storage: "software" };
+    renderView(fakeApi({ enrollments: vi.fn(async () => [fileKey, active]) }), <EnrollmentsView />);
+    const rows = await screen.findAllByText("C02XK0AAJGH5");
+    await userEvent.click(rows.find((r) => r.closest("tr")?.textContent?.includes("Waiting"))!);
+    expect(screen.getByRole("complementary", { name: "Enrollment details" }))
+      .toHaveTextContent("The key this Mac uses now is in the Secure Enclave, but this new one isn’t.");
   });
 });
 

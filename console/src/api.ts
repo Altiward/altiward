@@ -82,12 +82,15 @@ export interface TamperAlert {
 }
 
 export type CredentialStatus = "active" | "pending" | "revoked";
+/** Where the Mac said its key is kept when it enrolled; empty from agents before 0.2.0. */
+export type KeyStorage = "secure_enclave" | "software" | "";
 
 export interface Enrollment {
   device_id: string;
   serial: string;
   hardware_uuid: string;
   public_key: string;
+  key_storage: KeyStorage;
   status: CredentialStatus;
   created_at: string;
   activated_at: string | null;

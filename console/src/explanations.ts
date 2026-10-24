@@ -27,6 +27,10 @@ export const explanations = {
   givenBackEarly: "Ended at least a minute before the rights would have expired.",
   agentVersions:
     "An unsupported agent is older than the oldest release this server supports. Update it with the latest package.",
+  keyStorage:
+    "Where the Mac said its key is kept when it enrolled; Altiward can’t check it. A key in the Secure Enclave " +
+    "can’t be copied off the Mac. A key in a file can be copied by someone with admin rights on the Mac. " +
+    "Agents before 0.2.0 don’t say, and keep their key in a file.",
   siemState:
     "Delivering: keeping up. Behind: events have waited more than 15 minutes. Failing: sending failed, and " +
     "Settings shows the error. Nothing sent yet: no events since the SIEM was set up.",

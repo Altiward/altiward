@@ -430,7 +430,7 @@ report and never raises a "not checking in" alert.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/install/enrollments-dark.png">
-  <img src="images/install/enrollments-light.png" width="720" alt="Enrollments in the console: a Mac waiting for approval is selected, with its key fingerprint, Approve and Reject buttons, and a note that it enrolled again with a new key.">
+  <img src="images/install/enrollments-light.png" width="720" alt="Enrollments in the console: each key shows its fingerprint and whether it is kept in the Secure Enclave, in a file, or not reported. A Mac waiting for approval is selected, with Approve and Reject buttons and a note that it enrolled again with a new key.">
 </picture>
 
 **Activity** keeps every change made in the console forever, and sends each one to your
