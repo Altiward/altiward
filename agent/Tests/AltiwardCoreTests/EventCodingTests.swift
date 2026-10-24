@@ -10,7 +10,8 @@ struct EventCodingTests {
         "elevation-granted", "elevation-revoked", "elevation-overdue", "elevation-expired-enforced",
         "admin-out-of-band", "admin-out-of-band-removed", "agent-health", "agent-tamper", "agent-silent", "persistence-detected",
         "elevation-revoked-permanent-admin", "agent-tamper-retired", "elevation-revoked-privileges-grant",
-        "agent-tamper-privileges-blocked",
+        "agent-tamper-privileges-blocked", "admin-permanent-use-started", "admin-permanent-use-ended",
+        "admin-permanent-use-prompt",
     ]
 
     @Test(arguments: fixtures)
@@ -29,6 +30,14 @@ struct EventCodingTests {
         let reencoded =
             try JSONSerialization.jsonObject(with: AltiwardJSON.encoder().encode(event)) as! NSDictionary
         #expect(normalizeDates(reencoded) == normalizeDates(original))
+    }
+
+    /// RFC 9562 style name-based UUID: the same name always gives the same ID, so a restart can't
+    /// double-report a use. The vector is the URL-namespace UUIDv5 of this name.
+    @Test func nameBasedIDMatchesVector() {
+        #expect(
+            nameBasedID("altiward:permanent_use:C02TEST:console:501:1761300000000")
+                == "ae8cc499-74d9-51d0-9805-b5465eff9734")
     }
 
     @Test func grantedFixtureFields() throws {

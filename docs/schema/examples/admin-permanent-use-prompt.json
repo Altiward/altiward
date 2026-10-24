@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "event_id": "e2a95c60-1d8b-4f73-b6e4-5a0c7d3f9b18",
+  "type": "admin.permanent_use",
+  "session_id": null,
+  "timestamp": "2026-10-16T10:20:30Z",
+  "device": {
+    "serial": "C02XK0AAJGH5",
+    "hardware_uuid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+    "os_version": "26.1.0",
+    "agent_version": "0.4.0",
+    "privileges_version": null
+  },
+  "user": { "local_name": "breakglass", "upn": null },
+  "elevation": null,
+  "delayed": false,
+  "detail": {
+    "use_id": "5c9e1b47-8f2a-4d60-a3b7-1e4d6f0c8a29",
+    "method": "prompt",
+    "state": "single",
+    "source": "unified_log",
+    "started": "2026-10-16T10:20:00Z",
+    "on_session_of": "alex",
+    "right": "com.apple.ServiceManagement.daemons.modify",
+    "client": "/System/Applications/System Settings.app",
+    "count": 1,
+    "last": "2026-10-16T10:20:00Z"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "event_id": "9d4f1a72-e6c8-4b35-a1d9-7c3e5b2f8a60",
+  "type": "admin.permanent_use",
+  "session_id": null,
+  "timestamp": "2026-10-16T09:42:10Z",
+  "device": {
+    "serial": "C02XK0AAJGH5",
+    "hardware_uuid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+    "os_version": "26.1.0",
+    "agent_version": "0.4.0",
+    "privileges_version": null
+  },
+  "user": { "local_name": "breakglass", "upn": null },
+  "elevation": null,
+  "delayed": false,
+  "detail": {
+    "use_id": "d1f6a8b3-2c7e-4d95-8b41-6e0a3c9f7d12",
+    "method": "ssh",
+    "state": "ended",
+    "source": "utmpx",
+    "started": "2026-10-16T09:30:00Z",
+    "ended": "2026-10-16T09:42:00Z",
+    "end_basis": "logged",
+    "tty": "ttys003",
+    "remote_host": "10.0.0.5"
+  }
+}
