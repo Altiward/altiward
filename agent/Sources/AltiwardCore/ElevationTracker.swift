@@ -36,9 +36,13 @@ public struct AgentEnvironment: Sendable {
     /// Sign-ins from wtmp that ended at or after the given time or haven't ended, each with
     /// its end when wtmp has one (``LoginRecords``).
     public var loginHistory: @Sendable (_ since: Date) -> [LoginRecord]
-    /// Prompts, sudo and su by accounts the log names, since the given time, oldest first
+    /// Prompts and screen sharing by accounts the log names, since the given time, oldest first
     /// (``PermanentUseLog``).
     public var permanentUseLog: @Sendable (_ since: Date) -> [PermanentUseLogRecord]
+    /// An account's full name, as the directory holds it; nil when it has none.
+    public var fullName: @Sendable (_ shortName: String) -> String?
+    /// Whether the directory has an account with this short name.
+    public var accountExists: @Sendable (_ shortName: String) -> Bool
 
     public init(
         device: @escaping @Sendable () -> DeviceInfo,
@@ -56,7 +60,9 @@ public struct AgentEnvironment: Sendable {
         logins: @escaping @Sendable () -> [LoginRecord] = { [] },
         processExists: @escaping @Sendable (_ pid: Int32) -> Bool = { _ in true },
         loginHistory: @escaping @Sendable (_ since: Date) -> [LoginRecord] = { _ in [] },
-        permanentUseLog: @escaping @Sendable (_ since: Date) -> [PermanentUseLogRecord] = { _ in [] }
+        permanentUseLog: @escaping @Sendable (_ since: Date) -> [PermanentUseLogRecord] = { _ in [] },
+        fullName: @escaping @Sendable (_ shortName: String) -> String? = { _ in nil },
+        accountExists: @escaping @Sendable (_ shortName: String) -> Bool = { _ in false }
     ) {
         self.device = device
         self.privileges = privileges
@@ -74,6 +80,8 @@ public struct AgentEnvironment: Sendable {
         self.processExists = processExists
         self.loginHistory = loginHistory
         self.permanentUseLog = permanentUseLog
+        self.fullName = fullName
+        self.accountExists = accountExists
     }
 
     /// The real system.
@@ -95,7 +103,9 @@ public struct AgentEnvironment: Sendable {
             logins: { LoginRecords.current() },
             processExists: { LoginRecords.processExists($0) },
             loginHistory: { LoginRecords.history(since: $0) },
-            permanentUseLog: { PermanentUseLog.records(since: $0) })
+            permanentUseLog: { PermanentUseLog.records(since: $0) },
+            fullName: { PermanentUseLog.fullName(of: $0) },
+            accountExists: { PermanentUseLog.accountExists($0) })
     }
 }
 
@@ -285,7 +295,7 @@ public final class ElevationTracker: Sendable {
         // And wtmp: sign-ins by permanent admins too short for the checks to see.
         let loginsFrom = try permanentUseHistoryStart(now: now)
         let loginHistory = env.loginHistory(loginsFrom)
-        // And the unified log again, for their prompts, sudo and su. Left unread with no
+        // And the unified log again, for their prompts and screen sharing. Left unread with no
         // permanent admins, as nothing it holds would be reported.
         let useLogFrom = try permanentUseLogStart(now: now)
         let useLog = env.config.permanentAdmins.isEmpty ? [] : env.permanentUseLog(useLogFrom)

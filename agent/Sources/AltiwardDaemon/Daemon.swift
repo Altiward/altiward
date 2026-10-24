@@ -101,7 +101,7 @@ final class Daemon: Sendable {
                         }
                         log.error("tamper:\(what, privacy: .public)")
                     }
-                    // Sign-ins the scan found, and prompts, sudo and su from the log.
+                    // Sign-ins the scan found, and prompts and screen sharing from the log.
                     Self.logPermanentUses(events.filter { $0.type == .adminPermanentUse })
                     for event in events
                     where event.type == .elevationExpiredEnforced || event.type == .elevationOverdue {

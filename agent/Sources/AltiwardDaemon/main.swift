@@ -9,7 +9,7 @@
 //                                 print what SAP Privileges' system extension logged in the
 //                                 last HOURS (default 24), as the agent reads it (run as root)
 //   altiward-agent permanent-uses [HOURS]
-//                                 print the sign-ins and the prompts, sudo and su by accounts in
+//                                 print the sign-ins, prompts and screen sharing by accounts in
 //                                 PermanentAdmins in the last HOURS (default 24), as the agent
 //                                 reads them (run as root)
 //   altiward-agent simulate-hook USER STATE [REASON]
@@ -57,14 +57,15 @@ if command == "permanent-uses" {
         let end = r.ended.map { "ended \(AltiwardJSON.format($0))" } ?? "still signed in"
         lines.append((r.started, "\(AltiwardJSON.format(r.started))  sign-in  \(r.user)  tty=\(r.tty)\(host)  \(end)"))
     }
-    for r in PermanentUseLog.records(since: since) where admins.contains(r.account) {
+    for case let r? in PermanentUseLog.records(since: since).map({
+        $0.resolved(
+            admins: admins, fullName: PermanentUseLog.fullName(of:), accountExists: PermanentUseLog.accountExists)
+    }) {
         lines.append((r.date, r.summary))
     }
     for line in lines.sorted(by: { $0.date < $1.date }) { print(line.text) }
     if lines.isEmpty {
-        print(
-            "nothing found: run as root; the log keeps sudo and su lines only on some Macs, so their absence proves little"
-        )
+        print("nothing found: run as root; macOS keeps no log line for sudo, su or SSH file copies, so none is listed")
     }
     exit(0)
 }

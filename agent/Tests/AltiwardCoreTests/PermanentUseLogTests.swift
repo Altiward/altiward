@@ -5,7 +5,7 @@ import os
 @testable import AltiwardCore
 
 /// admin.permanent_use from the unified log: prompts typed with a permanent admin's password,
-/// and sudo and su by the account.
+/// and screen sharing sign-ins by the account. macOS keeps no log line for sudo or su.
 struct PermanentUseLogTests {
     let clock = TestClock()
     let store: AgentStore
@@ -18,7 +18,11 @@ struct PermanentUseLogTests {
         store = try makeStore()
     }
 
-    func tracker(permanent: Set<String> = ["breakglass"], on store: AgentStore? = nil) -> ElevationTracker {
+    func tracker(
+        permanent: Set<String> = ["breakglass"], on store: AgentStore? = nil,
+        fullName: @escaping @Sendable (String) -> String? = { _ in nil },
+        accountExists: @escaping @Sendable (String) -> Bool = { _ in false }
+    ) -> ElevationTracker {
         let (logged, reads) = (logged, reads)
         let config = AgentConfiguration(
             permanentAdmins: permanent, userPrincipalNames: ["breakglass": "breakglass@example.com"])
@@ -27,18 +31,17 @@ struct PermanentUseLogTests {
             permanentUseLog: { since in
                 reads.withLock { $0.append(since) }
                 return logged.withLock { $0.filter { $0.date >= since } }
-            })
+            }, fullName: fullName, accountExists: accountExists)
         return ElevationTracker(store: store ?? self.store, environment: env)
     }
 
     func log(
         _ method: PermanentUseMethod, _ account: String = "breakglass", ago: TimeInterval = 5,
-        onSessionOf: String? = nil, right: String? = nil, client: String? = nil, tty: String? = nil,
-        runAs: String? = nil
+        onSessionOf: String? = nil, right: String? = nil, client: String? = nil, remoteHost: String? = nil
     ) {
         let record = PermanentUseLogRecord(
             method: method, account: account, date: clock.now.addingTimeInterval(-ago), onSessionOf: onSessionOf,
-            right: right, client: client, tty: tty, runAs: runAs, remoteHost: nil)
+            right: right, client: client, remoteHost: remoteHost)
         logged.withLock { $0.append(record) }
     }
 
@@ -53,12 +56,11 @@ struct PermanentUseLogTests {
     /// As authd logged it on a real Mac, with the accounts renamed.
     static let prompt =
         "UID 501 authenticated as user breakglass (UID 502) for right 'com.apple.ServiceManagement.daemons.modify'"
-    /// sudo's refusal, as logged on a real Mac.
-    static let sudoRefused =
-        "philchatham : user NOT in sudoers ; TTY=ttys004 ; PWD=/Users/philchatham ; USER=root ; COMMAND=/usr/bin/true"
-    /// sudo's standard format for a command it allowed.
-    static let sudoAllowed =
-        "breakglass : TTY=ttys003 ; PWD=/Users/breakglass/secret-project ; USER=root ; COMMAND=/usr/sbin/installer -pkg /tmp/x.pkg -target /"
+    /// screensharingd's lines at Default level, as logged on a real Mac (macOS 27.0.1).
+    static let sharingSucceeded =
+        "Authentication: SUCCEEDED :: User Name: breakglass :: Viewer Address: fe80::67:3da0:bab9:1a8e :: Type: DH"
+    static let sharingFailed =
+        "Authentication: FAILED :: User Name: breakglass :: Viewer Address: fe80::67:3da0:bab9:1a8e :: Type: DH"
 
     @Test func parsesPromptApproval() throws {
         let date = Date(timeIntervalSince1970: 1_792_000_000)
@@ -98,71 +100,56 @@ struct PermanentUseLogTests {
         }
     }
 
-    @Test func parsesSudoWithoutCommand() throws {
-        let record = try #require(PermanentUseLogRecord.parseSudo(message: Self.sudoAllowed, date: Date()))
-        #expect(record.method == .sudo)
+    @Test func parsesScreenSharingSucceeded() throws {
+        let date = Date(timeIntervalSince1970: 1_792_000_000)
+        let record = try #require(PermanentUseLogRecord.parseScreenSharing(message: Self.sharingSucceeded, date: date))
+        #expect(record.method == .screenSharing)
         #expect(record.account == "breakglass")
-        #expect(record.tty == "ttys003")
-        #expect(record.runAs == "root")
-        let text = String(describing: record)
-        #expect(!text.contains("installer") && !text.contains("/tmp/x.pkg"))
-        #expect(!text.contains("secret-project") && !text.contains("COMMAND=") && !text.contains("PWD="))
+        #expect(record.remoteHost == "fe80::67:3da0:bab9:1a8e")
+        #expect(record.date == date)
+        #expect(record.onSessionOf == nil && record.right == nil && record.client == nil)
     }
 
-    @Test func sudoRefusalSkipped() {
-        #expect(PermanentUseLogRecord.parseSudo(message: Self.sudoRefused, date: Date()) == nil)
-        let wrong = "breakglass : 3 incorrect password attempts ; TTY=ttys003 ; PWD=/ ; USER=root ; COMMAND=/bin/ls"
-        #expect(PermanentUseLogRecord.parseSudo(message: wrong, date: Date()) == nil)
-        let refused = "breakglass : command not allowed ; TTY=ttys003 ; PWD=/ ; USER=root ; COMMAND=/bin/ls"
-        #expect(PermanentUseLogRecord.parseSudo(message: refused, date: Date()) == nil)
-        #expect(PermanentUseLogRecord.parseSudo(message: "pam_opendirectory: authenticated", date: Date()) == nil)
-    }
-
-    @Test func sudoRunAsStopsAtTheCommand() throws {
-        let message = "breakglass : TTY=ttys003 ; PWD=/ ; USER=alex ; COMMAND=/bin/sh -c echo ; USER=root"
-        #expect(try #require(PermanentUseLogRecord.parseSudo(message: message, date: Date())).runAs == "alex")
-    }
-
-    @Test func sudoWithGroupKeepsRunAs() throws {
-        let message = "breakglass : TTY=ttys003 ; PWD=/ ; USER=root ; GROUP=staff ; COMMAND=/bin/ls"
-        let record = try #require(PermanentUseLogRecord.parseSudo(message: message, date: Date()))
-        #expect(record.runAs == "root" && record.tty == "ttys003" && record.account == "breakglass")
-    }
-
-    @Test func sudoWithEnvKeepsRunAs() throws {
-        let message = "breakglass : TTY=ttys003 ; PWD=/ ; USER=root ; ENV=FOO=bar BAZ=1 ; COMMAND=/bin/ls"
-        let record = try #require(PermanentUseLogRecord.parseSudo(message: message, date: Date()))
-        #expect(record.runAs == "root" && record.tty == "ttys003")
-        #expect(!String(describing: record).contains("FOO"))
-    }
-
-    @Test func forgedWorkingDirectoryNeverDropsTheUse() throws {
-        for pwd in ["x ; USER=a b ; COMMAND=z", "x ; USER= ; COMMAND=z", "x ; USER=a=b ; COMMAND=z", "x ; PWD=y"] {
-            let message = "breakglass : TTY=ttys003 ; PWD=\(pwd) ; USER=root ; COMMAND=/bin/ls"
-            let record = try #require(PermanentUseLogRecord.parseSudo(message: message, date: Date()), "\(pwd)")
-            #expect(record.account == "breakglass" && record.tty == "ttys003", "\(pwd)")
-            #expect(record.runAs == nil || record.runAs == "root", "\(pwd)")
-            #expect(!String(describing: record).contains("COMMAND"), "\(pwd)")
+    @Test func screenSharingFailedIsNotAUse() {
+        #expect(PermanentUseLogRecord.parseScreenSharing(message: Self.sharingFailed, date: Date()) == nil)
+        for message in [
+            "", "Authentication: SUCCEEDED", "SSDaemon_LoginwindowLogoutNotification called pid 412 logout 502",
+            "Authentication: SUCCEEDED :: User Name:  :: Viewer Address: 10.0.0.5 :: Type: DH",
+        ] {
+            #expect(PermanentUseLogRecord.parseScreenSharing(message: message, date: Date()) == nil, "\(message)")
         }
     }
 
-    @Test func sudoWithoutReadableFieldsIsStillAUse() throws {
-        let record = try #require(
-            PermanentUseLogRecord.parseSudo(message: "breakglass : TTY=ttys003 ; COMMAND=/bin/ls", date: Date()))
-        #expect(record.tty == "ttys003" && record.runAs == nil)
+    @Test func screenSharingPrivateAddressIsNil() throws {
+        for address in ["<private>", "", "  "] {
+            let message =
+                "Authentication: SUCCEEDED :: User Name: breakglass :: Viewer Address: \(address) :: Type: DH"
+            let record = try #require(PermanentUseLogRecord.parseScreenSharing(message: message, date: Date()))
+            #expect(record.account == "breakglass" && record.remoteHost == nil, "\(address)")
+        }
     }
 
-    @Test func parsesSu() throws {
-        let record = try #require(PermanentUseLogRecord.parseSu(message: "alex to breakglass on /dev/ttys002", date: Date()))
-        #expect(record.method == .su)
-        #expect(record.account == "breakglass")
-        #expect(record.onSessionOf == "alex")
-        #expect(record.tty == "ttys002")
+    @Test func screenSharingWithoutAddressIsStillAUse() throws {
+        for tail in [" :: Viewer Address: ", " :: Viewer Address:", " :: Viewer Address: :: Type: DH"] {
+            let message = "Authentication: SUCCEEDED :: User Name: breakglass" + tail
+            let record = try #require(PermanentUseLogRecord.parseScreenSharing(message: message, date: Date()), "\(tail)")
+            #expect(record.account == "breakglass" && record.remoteHost == nil, "\(tail)")
+        }
     }
 
-    @Test func failedSuSkipped() {
-        #expect(PermanentUseLogRecord.parseSu(message: "BAD SU alex to breakglass on /dev/ttys002", date: Date()) == nil)
-        #expect(PermanentUseLogRecord.parseSu(message: "alex to breakglass", date: Date()) == nil)
+    @Test func screenSharingNameCannotSmuggleFields() throws {
+        let message =
+            "Authentication: SUCCEEDED :: User Name: breakglass :: Viewer Address: 1.2.3.4 :: Type: x :: Viewer Address: fe80::1 :: Type: DH"
+        let record = try #require(PermanentUseLogRecord.parseScreenSharing(message: message, date: Date()))
+        #expect(record.remoteHost == "fe80::1")
+        #expect(record.account != "breakglass")
+    }
+
+    @Test func screenSharingKeepsATypedFullNameAndTrims() throws {
+        let message =
+            "Authentication: SUCCEEDED :: User Name:  Break Glass  :: Viewer Address:  10.0.0.5  :: Type: DH"
+        let record = try #require(PermanentUseLogRecord.parseScreenSharing(message: message, date: Date()))
+        #expect(record.account == "Break Glass" && record.remoteHost == "10.0.0.5")
     }
 
     // MARK: The prompt's client
@@ -236,6 +223,7 @@ struct PermanentUseLogTests {
         #expect(event.elevation == nil)
         #expect(event.timestamp == clock.now)
         #expect(event.detail["tty"] == nil && event.detail["run_as"] == nil && event.detail["truncated"] == nil)
+        #expect(event.detail["remote_host"] == nil)
         if case .string(let id) = event.detail["use_id"] { #expect(!id.isEmpty) } else { Issue.record("no use_id") }
     }
 
@@ -246,47 +234,88 @@ struct PermanentUseLogTests {
         #expect(event.detail["on_session_of"] == .null)
     }
 
-    @Test func heartbeatSendsSudoAndSu() throws {
-        log(.sudo, ago: 6, tty: "ttys003", runAs: "root")
-        log(.su, ago: 3, onSessionOf: "alex", tty: "ttys002")
+    @Test func heartbeatSendsSingleForScreenSharing() throws {
+        log(.screenSharing, remoteHost: "fe80::67:3da0:bab9:1a8e")
         let events = try uses(tracker())
-        #expect(events.count == 2)
-        #expect(events[0].detail["method"] == "sudo")
-        #expect(events[0].detail["tty"] == "ttys003")
-        #expect(events[0].detail["run_as"] == "root")
-        #expect(events[0].detail["on_session_of"] == nil && events[0].detail["right"] == nil)
-        #expect(events[1].detail["method"] == "su")
-        #expect(events[1].detail["tty"] == "ttys002")
-        #expect(events[1].detail["on_session_of"] == "alex")
-        #expect(events[1].detail["run_as"] == nil)
+        let event = try #require(events.first)
+        #expect(events.count == 1)
+        #expect(event.detail["method"] == "screen_sharing")
+        #expect(event.detail["source"] == "unified_log")
+        #expect(event.detail["state"] == "single")
+        #expect(event.detail["remote_host"] == "fe80::67:3da0:bab9:1a8e")
+        #expect(event.detail["count"] == 1)
+        #expect(event.detail["started"] == .date(clock.now.addingTimeInterval(-5)))
+        #expect(event.detail["last"] == .date(clock.now.addingTimeInterval(-5)))
+        #expect(event.detail["on_session_of"] == nil && event.detail["right"] == nil && event.detail["ended"] == nil)
+        #expect(event.user?.localName == "breakglass")
+        if case .string(let id) = event.detail["use_id"] { #expect(!id.isEmpty) } else { Issue.record("no use_id") }
+    }
+
+    @Test func screenSharingWithoutAnAddressSendsNull() throws {
+        log(.screenSharing)
+        #expect(try #require(try uses(tracker()).first).detail["remote_host"] == .null)
+    }
+
+    @Test func screenSharingFullNameMatchesPermanentAdmin() throws {
+        log(.screenSharing, "Break Glass", ago: 9, remoteHost: "10.0.0.5")
+        log(.screenSharing, "BREAKGLASS", ago: 8, remoteHost: "10.0.0.5")
+        log(.screenSharing, "break glass", ago: 7, remoteHost: "10.0.0.5")
+        let t = tracker(fullName: { $0 == "breakglass" ? "Break Glass" : nil })
+        let events = try uses(t)
+        // All three are the same account from the same address: one group, under the short name.
+        #expect(events.count == 1)
+        #expect(events[0].detail["count"] == 3)
+        #expect(events[0].user?.localName == "breakglass")
+        #expect(events[0].user?.upn == "breakglass@example.com")
+    }
+
+    @Test func screenSharingOtherAccountSkipped() throws {
+        log(.screenSharing, "Jane Doe", remoteHost: "10.0.0.5")
+        log(.screenSharing, "jdoe", remoteHost: "10.0.0.5")
+        // A full name is matched only for a permanent admin, and a short name only as typed.
+        log(.screenSharing, "Break Glass", remoteHost: "10.0.0.5")
+        let t = tracker(fullName: { $0 == "jdoe" ? "Jane Doe" : $0 == "breakglass" ? "Break Glass II" : nil })
+        #expect(try uses(t).isEmpty)
+    }
+
+    @Test func screenSharingOtherAccountsShortNameNotMatchedByFullName() throws {
+        // A non-admin account `admin` signs in; the permanent admin's full name is "Admin".
+        log(.screenSharing, "admin", remoteHost: "10.0.0.5")
+        let fullName: @Sendable (String) -> String? = { $0 == "breakglass" ? "Admin" : nil }
+        #expect(try uses(tracker(fullName: fullName, accountExists: { $0 == "admin" })).isEmpty)
+    }
+
+    @Test func screenSharingFullNameIsNotMatchedWithoutALookup() throws {
+        log(.screenSharing, "Break Glass", remoteHost: "10.0.0.5")
+        #expect(try uses(tracker()).isEmpty)
     }
 
     @Test func eventsAreQueuedInTheHeartbeat() throws {
-        log(.sudo, tty: "ttys003", runAs: "root")
+        log(.prompt, right: "system.preferences")
         let sent = try uses(tracker())
         let pending = try store.pending(limit: 50).map(\.event.eventID)
         #expect(pending.contains(sent[0].eventID))
     }
 
     @Test func nonPermanentAccountSkipped() throws {
-        log(.sudo, "jdoe", tty: "ttys003", runAs: "root")
         log(.prompt, "jdoe", onSessionOf: "alex", right: "system.preferences")
+        log(.screenSharing, "jdoe", remoteHost: "10.0.0.5")
         #expect(try uses(tracker()).isEmpty)
     }
 
     @Test func reportedOnce() throws {
-        log(.sudo, tty: "ttys003", runAs: "root")
+        log(.prompt, right: "system.preferences")
         let t = tracker()
         #expect(try uses(t).count == 1)
         clock.advance(300)
         #expect(try uses(t).isEmpty)
         clock.advance(300)
-        log(.sudo, ago: 1, tty: "ttys003", runAs: "root")
+        log(.prompt, ago: 1, right: "system.preferences")
         #expect(try uses(t).count == 1)
     }
 
     @Test func recordsAfterNowWaitForTheNextHeartbeat() throws {
-        log(.sudo, ago: -10, tty: "ttys003", runAs: "root")
+        log(.prompt, ago: -10, right: "system.preferences")
         let t = tracker()
         #expect(try uses(t).isEmpty)
         clock.advance(300)
@@ -297,12 +326,12 @@ struct PermanentUseLogTests {
         let t = tracker()
         #expect(try uses(t).isEmpty)
         clock.advance(7200)
-        log(.sudo, ago: 3600, tty: "ttys003", runAs: "root")
+        log(.prompt, ago: 3600, right: "system.preferences")
         #expect(try uses(t).count == 1)
     }
 
-    @Test func sudoBurstGrouped() throws {
-        for i in 0..<300 { log(.sudo, ago: 200 - Double(i) / 2, tty: "ttys003", runAs: "root") }
+    @Test func promptBurstGrouped() throws {
+        for i in 0..<300 { log(.prompt, ago: 200 - Double(i) / 2, onSessionOf: "alex", right: "system.preferences") }
         let events = try uses(tracker())
         let event = try #require(events.first)
         #expect(events.count == 1)
@@ -312,26 +341,35 @@ struct PermanentUseLogTests {
         #expect(event.detail["truncated"] == nil)
     }
 
-    @Test func groupsSplitByTtyAndTarget() throws {
-        log(.sudo, ago: 9, tty: "ttys003", runAs: "root")
-        log(.sudo, ago: 8, tty: "ttys004", runAs: "root")
-        log(.sudo, ago: 7, tty: "ttys003", runAs: "alex")
-        log(.sudo, ago: 6, tty: "ttys003", runAs: "root")
+    @Test func groupsSplitByRightAndSession() throws {
+        log(.prompt, ago: 9, onSessionOf: "alex", right: "system.preferences")
+        log(.prompt, ago: 8, onSessionOf: "alex", right: "system.install.software")
+        log(.prompt, ago: 7, onSessionOf: "jdoe", right: "system.preferences")
+        log(.prompt, ago: 6, onSessionOf: "alex", right: "system.preferences")
         let events = try uses(tracker())
         #expect(events.count == 3)
         #expect(events[0].detail["count"] == 2)
         #expect(events[1].detail["count"] == 1 && events[2].detail["count"] == 1)
     }
 
+    @Test func screenSharingGroupsSplitByAddress() throws {
+        log(.screenSharing, ago: 9, remoteHost: "10.0.0.5")
+        log(.screenSharing, ago: 8, remoteHost: "10.0.0.6")
+        log(.screenSharing, ago: 7, remoteHost: "10.0.0.5")
+        let events = try uses(tracker())
+        #expect(events.count == 2)
+        #expect(events[0].detail["count"] == 2 && events[1].detail["count"] == 1)
+    }
+
     @Test func eachEventHasItsOwnUseID() throws {
-        log(.sudo, ago: 9, tty: "ttys003", runAs: "root")
-        log(.sudo, ago: 8, tty: "ttys004", runAs: "root")
+        log(.prompt, ago: 9, right: "system.preferences")
+        log(.prompt, ago: 8, right: "system.install.software")
         let ids = try uses(tracker()).map { $0.detail["use_id"] }
         #expect(ids.count == 2 && ids[0] != ids[1])
     }
 
     @Test func cappedAtTwentyWithTruncated() throws {
-        for i in 0..<27 { log(.sudo, ago: 100 - Double(i), tty: "ttys\(100 + i)", runAs: "root") }
+        for i in 0..<27 { log(.prompt, ago: 100 - Double(i), right: "system.right.\(i)") }
         let events = try uses(tracker())
         #expect(events.count == 20)
         #expect(events.dropLast().allSatisfy { $0.detail["truncated"] == nil })
@@ -339,7 +377,7 @@ struct PermanentUseLogTests {
     }
 
     @Test func exactlyTwentyGroupsAreNotTruncated() throws {
-        for i in 0..<20 { log(.sudo, ago: 100 - Double(i), tty: "ttys\(100 + i)", runAs: "root") }
+        for i in 0..<20 { log(.prompt, ago: 100 - Double(i), right: "system.right.\(i)") }
         let events = try uses(tracker())
         #expect(events.count == 20)
         #expect(events.last?.detail["truncated"] == nil)
@@ -358,7 +396,7 @@ struct PermanentUseLogTests {
     }
 
     @Test func noLogReadWithoutPermanentAdmins() throws {
-        log(.sudo, tty: "ttys003", runAs: "root")
+        log(.prompt, right: "system.preferences")
         let t = tracker(permanent: [])
         #expect(try uses(t).isEmpty)
         #expect(reads.withLock { $0.isEmpty })
@@ -390,7 +428,7 @@ struct PermanentUseLogTests {
     }
 
     @Test func cursorMovesWithTheEnqueue() throws {
-        log(.sudo, tty: "ttys003", runAs: "root")
+        log(.prompt, right: "system.preferences")
         let t = tracker()
         _ = try t.heartbeat()
         let cursor = try store.value(forKey: "permanent_use_log_reported_until").flatMap(AltiwardJSON.parse)

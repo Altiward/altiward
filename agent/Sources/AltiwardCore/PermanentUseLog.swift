@@ -2,35 +2,32 @@ import Foundation
 import OSLog
 
 /// A use of a permanent admin account that only the unified log shows: a password typed into
-/// an authorisation prompt, or `sudo` or `su` by the account. Read from the log's entries, which an
+/// an authorisation prompt, or a screen sharing sign-in. Read from the log's entries, which an
 /// admin can't change but the log can age out, so this is corroboration, as utmpx is.
 ///
-/// A sudo record holds the terminal and the user it ran as, never the command or the working
-/// directory: those can hold secrets, and aren't fields on this type.
+/// macOS keeps no log line for `sudo` or `su`, or for an SSH file copy or one-off command, so
+/// none of them can be read here: they need Endpoint Security.
 public struct PermanentUseLogRecord: Sendable, Equatable {
-    /// `prompt`, `sudo` or `su`.
+    /// `prompt` or `screen_sharing`.
     public var method: PermanentUseMethod
-    /// The permanent admin account: the one whose password was typed, or that sudo or su ran as
-    /// or became.
+    /// The permanent admin account: the one whose password was typed. For screen sharing it is
+    /// the name the viewer typed, a short name or a full name, until ``resolved(admins:fullName:accountExists:)``
+    /// turns it into the short name.
     public var account: String
     /// When the log entry was written.
     public var date: Date
-    /// The user whose session it was, for a prompt and `su`; nil when the log doesn't say.
+    /// The user whose session it was, for a prompt; nil when the log doesn't say.
     public var onSessionOf: String?
     /// The authorisation right a prompt asked for.
     public var right: String?
     /// The app a prompt was for, when the log names it.
     public var client: String?
-    public var tty: String?
-    /// The user sudo ran the command as.
-    public var runAs: String?
-    /// The address of a remote client, for the methods that have one; none of the shipped
-    /// sources do.
+    /// The viewer's address, for screen sharing; nil when the log doesn't give one.
     public var remoteHost: String?
 
     public init(
         method: PermanentUseMethod, account: String, date: Date, onSessionOf: String? = nil, right: String? = nil,
-        client: String? = nil, tty: String? = nil, runAs: String? = nil, remoteHost: String? = nil
+        client: String? = nil, remoteHost: String? = nil
     ) {
         self.method = method
         self.account = account
@@ -38,8 +35,6 @@ public struct PermanentUseLogRecord: Sendable, Equatable {
         self.onSessionOf = onSessionOf
         self.right = right
         self.client = client
-        self.tty = tty
-        self.runAs = runAs
         self.remoteHost = remoteHost
     }
 
@@ -77,52 +72,60 @@ public struct PermanentUseLogRecord: Sendable, Equatable {
             method: .prompt, account: account, date: date, onSessionOf: userName(session), right: right)
     }
 
-    /// sudo's line for a command it allowed: `breakglass : TTY=ttys003 ; PWD=… ; USER=root ;
-    /// COMMAND=…`. Keeps the account, terminal and `USER=`; the rest is dropped as it is read.
-    /// Once a line starts with `TTY=` it is always a record, with `tty` or `runAs` nil if it
-    /// can't be read.
+    /// screensharingd's line for a viewer that signed in, kept at Default level:
+    /// `Authentication: SUCCEEDED :: User Name: breakglass :: Viewer Address: fe80::67:3da0:bab9:1a8e
+    /// :: Type: DH`. The account is the User Name, which is what the viewer typed (a short name
+    /// or a full name, and not checked here); `remoteHost` is the Viewer Address.
     ///
-    /// Nil for a refusal (`user NOT in sudoers`, `incorrect password attempts`, `command not
-    /// allowed`) and for any other line.
-    public static func parseSudo(message: String, date: Date) -> PermanentUseLogRecord? {
-        // A refusal puts its reason before TTY= (`user NOT in sudoers ; TTY=…`), so a line
-        // that doesn't start with TTY= is skipped. The text isn't searched for the reason: a
-        // command could hold it, to keep its own record out.
+    /// The line is written when the connection starts for "Log In as Yourself" and when it
+    /// closes for "Ask to Share Screen", so its time is the use's, and no end is read.
+    ///
+    /// Nil for a `FAILED` line, which isn't a use, and for any other line. The address is nil
+    /// when it is empty or `<private>`.
+    public static func parseScreenSharing(message: String, date: Date) -> PermanentUseLogRecord? {
+        let prefix = "Authentication: SUCCEEDED :: User Name: "
         let line = message.trimmingCharacters(in: .whitespaces)
-        guard let colon = line.range(of: " : ") else { return nil }
-        let account = String(line[..<colon.lowerBound])
-        guard !account.isEmpty, !account.contains(" ") else { return nil }
-        let fields = line[colon.upperBound...]
-        guard fields.hasPrefix("TTY=") else { return nil }
-        // From here on a line is never dropped: it is a use whatever else it holds. A field that
-        // can't be read is left nil, so no one can hide a use by what they put in a directory
-        // name or a command.
-        let afterTTY = fields.dropFirst(4)
-        let tty = String(afterTTY[..<(afterTTY.range(of: " ; ")?.lowerBound ?? afterTTY.endIndex)])
-        // USER= follows PWD=. A directory or command can hold the same text, so only the first
-        // USER= after PWD= is used, up to the next field, and only when it looks like an account
-        // name. `sudo -g` adds `GROUP=` and `-E` adds `ENV=` after it.
-        var runAs: String?
-        if let pwd = afterTTY.range(of: " ; PWD="), let user = afterTTY[pwd.upperBound...].range(of: " ; USER=") {
-            let afterUser = afterTTY[pwd.upperBound...][user.upperBound...]
-            let name = String(afterUser[..<(afterUser.range(of: " ; ")?.lowerBound ?? afterUser.endIndex)])
-            if !name.isEmpty, !name.contains(" "), !name.contains("=") { runAs = name }
-        }
+        guard line.hasPrefix(prefix) else { return nil }
+        let rest = line.dropFirst(prefix.count)
+        // The name is typed by the viewer, so it can hold any text, ` :: ` and a forged
+        // `Viewer Address:` included. The address is system text that follows it, so the last
+        // marker is the real one and everything before it is the name.
+        // No trailing space: the line is trimmed, so an empty address leaves none.
+        let marker = " :: Viewer Address:"
+        guard let found = rest.range(of: marker, options: .backwards) else { return nil }
+        let account = rest[..<found.lowerBound].trimmingCharacters(in: .whitespaces)
+        let afterMarker = rest[found.upperBound...]
+        let address = String(afterMarker[..<(afterMarker.range(of: " :: ")?.lowerBound ?? afterMarker.endIndex)])
+            .trimmingCharacters(in: .whitespaces)
+        guard !account.isEmpty else { return nil }
         return PermanentUseLogRecord(
-            method: .sudo, account: account, date: date, tty: tty.isEmpty || tty.contains(" ") ? nil : tty,
-            runAs: runAs)
+            method: .screenSharing, account: account, date: date,
+            remoteHost: address.isEmpty || address == "<private>" ? nil : address)
     }
 
-    /// BSD `su`'s line: `alex to breakglass on /dev/ttys002`. The account is the one
-    /// switched to; the session is the caller's. Nil for anything else, such as `BAD SU …`.
-    public static func parseSu(message: String, date: Date) -> PermanentUseLogRecord? {
-        let words = message.split(separator: " ", omittingEmptySubsequences: true)
-        guard words.count == 5, words[1] == "to", words[3] == "on", words[4].hasPrefix("/dev/"),
-            words[4].count > 5
+    /// This record with its account as a permanent admin's short name, or nil when it is none of
+    /// them. A prompt names the account exactly. A screen sharing viewer types a short name or
+    /// the account's full name, in any case, so it is matched against each admin's short name
+    /// first, then its full name (`fullName` gives the directory's), but only when the typed
+    /// name isn't the short name of an account (`accountExists`): a non-admin `admin` who signs
+    /// in is not the permanent admin whose full name is "Admin".
+    public func resolved(
+        admins: Set<String>, fullName: (String) -> String?, accountExists: (String) -> Bool
+    ) -> PermanentUseLogRecord? {
+        guard method == .screenSharing else { return admins.contains(account) ? self : nil }
+        let typed = account.lowercased()
+        let sorted = admins.sorted()
+        guard
+            let short = sorted.first(where: { $0.lowercased() == typed })
+                ?? (accountExists(account)
+                    ? nil
+                    : sorted.first(where: {
+                        fullName($0)?.trimmingCharacters(in: .whitespaces).lowercased() == typed
+                    }))
         else { return nil }
-        return PermanentUseLogRecord(
-            method: .su, account: String(words[2]), date: date, onSessionOf: String(words[0]),
-            tty: String(words[4].dropFirst(5)))
+        var record = self
+        record.account = short
+        return record
     }
 
     /// How long after a prompt's line authd may log the line that names the app.
@@ -170,8 +173,7 @@ public struct PermanentUseLogRecord: Sendable, Equatable {
     /// One line as `altiward-agent permanent-uses` prints it.
     public var summary: String {
         var parts = ["\(AltiwardJSON.format(date))", method.rawValue, account]
-        if let tty { parts.append("tty=\(tty)") }
-        if let runAs { parts.append("as=\(runAs)") }
+        if let remoteHost { parts.append("from \(remoteHost)") }
         if let onSessionOf { parts.append("session of \(onSessionOf)") }
         if let right { parts.append("right=\(right)") }
         if let client { parts.append("for \(client)") }
@@ -179,11 +181,10 @@ public struct PermanentUseLogRecord: Sendable, Equatable {
     }
 }
 
-/// Reads the records from the unified log, one query for the three processes. Needs root,
-/// which the daemon has. Without it, or on a Mac whose log keeps no sudo or su lines, it
-/// returns what it finds, which can be nothing.
+/// Reads the records from the unified log, one query for both processes. Needs root, which
+/// the daemon has. Without it it returns what it finds, which can be nothing.
 public enum PermanentUseLog {
-    static let processes = ["authd", "sudo", "su"]
+    static let processes = ["authd", "screensharingd"]
 
     /// Records logged since `since`, oldest first. Empty when the log can't be read.
     public static func records(since: Date) -> [PermanentUseLogRecord] {
@@ -200,12 +201,8 @@ public enum PermanentUseLog {
             guard entry.date >= since else { continue }
             switch entry.process {
             case "authd": authd.append((entry.date, entry.composedMessage))
-            case "sudo":
-                if let r = PermanentUseLogRecord.parseSudo(message: entry.composedMessage, date: entry.date) {
-                    records.append(r)
-                }
-            case "su":
-                if let r = PermanentUseLogRecord.parseSu(message: entry.composedMessage, date: entry.date) {
+            case "screensharingd":
+                if let r = PermanentUseLogRecord.parseScreenSharing(message: entry.composedMessage, date: entry.date) {
                     records.append(r)
                 }
             default: break
@@ -213,6 +210,26 @@ public enum PermanentUseLog {
         }
         records += PermanentUseLogRecord.prompts(from: authd, userName: localUserName)
         return records.sorted { $0.date < $1.date }
+    }
+
+    /// An account's full name from the directory (`pw_gecos`), nil when it has none.
+    public static func fullName(of shortName: String) -> String? {
+        var entry = passwd()
+        var result: UnsafeMutablePointer<passwd>?
+        var buffer = [CChar](repeating: 0, count: 4096)
+        guard getpwnam_r(shortName, &entry, &buffer, buffer.count, &result) == 0, result != nil,
+            let gecos = entry.pw_gecos
+        else { return nil }
+        let name = String(cString: gecos).trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? nil : name
+    }
+
+    /// Whether the directory has an account with this short name.
+    public static func accountExists(_ shortName: String) -> Bool {
+        var entry = passwd()
+        var result: UnsafeMutablePointer<passwd>?
+        var buffer = [CChar](repeating: 0, count: 4096)
+        return getpwnam_r(shortName, &entry, &buffer, buffer.count, &result) == 0 && result != nil
     }
 
     /// The short name of a UID, from the directory.
@@ -252,17 +269,20 @@ extension ElevationTracker {
         let reported = try store.value(forKey: Self.permanentUseLogCursorKey).flatMap(AltiwardJSON.parse)
         try store.setValue(AltiwardJSON.format(now), forKey: Self.permanentUseLogCursorKey)
 
-        // Uses that differ in nothing but their time are one group: a script running sudo
-        // hundreds of times sends one event.
+        // Uses that differ in nothing but their time are one group: a script that approves
+        // hundreds of prompts sends one event.
         struct Group {
             var first: PermanentUseLogRecord
             var last: Date
             var count: Int
         }
         var groups: [Group] = []
-        let fresh = records.filter { record in
-            record.date <= now && (reported.map { record.date > $0 } ?? true)
-                && env.config.permanentAdmins.contains(record.account)
+        // Screen sharing names the account as the viewer typed it, so it is matched to a
+        // permanent admin's short name here, which is also what the event's user is.
+        let fresh = records.compactMap { record -> PermanentUseLogRecord? in
+            guard record.date <= now, reported.map({ record.date > $0 }) ?? true else { return nil }
+            return record.resolved(
+                admins: env.config.permanentAdmins, fullName: env.fullName, accountExists: env.accountExists)
         }
         for record in fresh.sorted(by: { $0.date < $1.date }) {
             if let i = groups.firstIndex(where: { $0.first.sameUse(as: record) }) {
@@ -286,15 +306,10 @@ extension ElevationTracker {
                 detail["on_session_of"] = .optional(r.onSessionOf)
                 detail["right"] = .optional(r.right)
                 detail["client"] = .optional(r.client)
-            case .sudo:
-                detail["tty"] = .optional(r.tty)
-                detail["run_as"] = .optional(r.runAs)
-            case .su:
-                detail["tty"] = .optional(r.tty)
-                detail["on_session_of"] = .optional(r.onSessionOf)
             case .ssh, .screenSharing:
                 detail["remote_host"] = .optional(r.remoteHost)
-            case .console, .terminal:
+            case .console, .terminal, .sudo, .su:
+                // Sign-ins come from utmpx; the log has no line for sudo or su.
                 break
             }
             if index == listed.count - 1, groups.count > listed.count {
