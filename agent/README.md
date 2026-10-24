@@ -131,7 +131,8 @@ the hook by hand to claim a Privileges grant. That turns their out-of-band sessi
 Privileges session, which `OutOfBandEnforcement` no longer removes. It shows in the console
 as **Followed rights without a grant** and in the SIEM as "Replaced by a Privileges grant".
 With `ExpiryEnforcement` set to `enforce` and an expiry from Privileges' settings, the
-rights still end at expiry.
+rights end at expiry, unless they run the hook again before then: each claim renews the
+grant, and each is reported as `elevation.granted`.
 
 **Privileges stays at the edge.** Altiward depends on a project it doesn't control, and
 must keep working when Privileges' timer is stopped or Privileges is removed. So expiry,

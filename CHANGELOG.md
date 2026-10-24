@@ -56,6 +56,10 @@ None.
 - `OutOfBandEnforcement` and `OutOfBandGraceMinutes` are covered by the tamper check:
   `agent.tamper` reports either set outside MDM (`settings_managed`). Changing either
   restarts the agent. `docs/data-handling.md` lists what the agent collects.
+- After the server has been unreachable, a Mac sends its waiting events as soon as the
+  server answers its command poll, instead of waiting out its retry backoff, which grows to
+  an hour during a long outage. Before, only a network change on the Mac cut the wait
+  short. A server that answered with an error is still retried with backoff.
 
 ## Server 0.3.0 - unreleased
 
@@ -96,27 +100,6 @@ None.
   dashboard (`integrations/splunk/altiward_overview.xml`) count `admin.out_of_band_removed`
   as a session end, so re-import them: older copies show sessions agent 0.2.0 removed as
   still open.
-
-## Agent 0.2.0 - unreleased
-
-### Upgrade order
-
-None.
-
-### Breaking changes
-
-None.
-
-### Security
-
-None.
-
-### Changes
-
-- After the server has been unreachable, a Mac sends its waiting events as soon as the
-  server answers its command poll, instead of waiting out its retry backoff, which grows to
-  an hour during a long outage. Before, only a network change on the Mac cut the wait
-  short. A server that answered with an error is still retried with backoff.
 
 ## Agent 0.1.1 - 2026-10-23
 

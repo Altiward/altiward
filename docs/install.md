@@ -195,7 +195,8 @@ Create these in your MDM and scope them to a pilot group first.
    `OutOfBandEnforcement` no longer removes. The console shows it as **Followed rights
    without a grant** and the SIEM as "Replaced by a Privileges grant". With
    `ExpiryEnforcement` set to `enforce` and an expiry from Privileges' settings, the rights
-   still end at expiry.
+   end at expiry, unless they run the hook again before then: each claim renews the grant,
+   and each is reported as `elevation.granted`.
 
    Deliver the profile through MDM rather than `defaults write`: Altiward reports
    `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`,
