@@ -123,6 +123,35 @@ struct PermanentUseLogTests {
         #expect(try #require(PermanentUseLogRecord.parseSudo(message: message, date: Date())).runAs == "alex")
     }
 
+    @Test func sudoWithGroupKeepsRunAs() throws {
+        let message = "breakglass : TTY=ttys003 ; PWD=/ ; USER=root ; GROUP=staff ; COMMAND=/bin/ls"
+        let record = try #require(PermanentUseLogRecord.parseSudo(message: message, date: Date()))
+        #expect(record.runAs == "root" && record.tty == "ttys003" && record.account == "breakglass")
+    }
+
+    @Test func sudoWithEnvKeepsRunAs() throws {
+        let message = "breakglass : TTY=ttys003 ; PWD=/ ; USER=root ; ENV=FOO=bar BAZ=1 ; COMMAND=/bin/ls"
+        let record = try #require(PermanentUseLogRecord.parseSudo(message: message, date: Date()))
+        #expect(record.runAs == "root" && record.tty == "ttys003")
+        #expect(!String(describing: record).contains("FOO"))
+    }
+
+    @Test func forgedWorkingDirectoryNeverDropsTheUse() throws {
+        for pwd in ["x ; USER=a b ; COMMAND=z", "x ; USER= ; COMMAND=z", "x ; USER=a=b ; COMMAND=z", "x ; PWD=y"] {
+            let message = "breakglass : TTY=ttys003 ; PWD=\(pwd) ; USER=root ; COMMAND=/bin/ls"
+            let record = try #require(PermanentUseLogRecord.parseSudo(message: message, date: Date()), "\(pwd)")
+            #expect(record.account == "breakglass" && record.tty == "ttys003", "\(pwd)")
+            #expect(record.runAs == nil || record.runAs == "root", "\(pwd)")
+            #expect(!String(describing: record).contains("COMMAND"), "\(pwd)")
+        }
+    }
+
+    @Test func sudoWithoutReadableFieldsIsStillAUse() throws {
+        let record = try #require(
+            PermanentUseLogRecord.parseSudo(message: "breakglass : TTY=ttys003 ; COMMAND=/bin/ls", date: Date()))
+        #expect(record.tty == "ttys003" && record.runAs == nil)
+    }
+
     @Test func parsesSu() throws {
         let record = try #require(PermanentUseLogRecord.parseSu(message: "alex to breakglass on /dev/ttys002", date: Date()))
         #expect(record.method == .su)
@@ -337,17 +366,26 @@ struct PermanentUseLogTests {
 
     @Test func logIsReadOutsideTheHeartbeatTransaction() throws {
         // A reader that holds the store's transaction while it waits for the log would make
-        // hook calls wait too. Something racing the read finishes only if the read isn't in one.
+        // hook calls wait too. Something racing the read finishes only if the read isn't in
+        // one, so the flag is checked inside the read, while the heartbeat can't have committed.
         let group = DispatchGroup()
         let store = self.store
+        let racerDone = OSAllocatedUnfairLock(initialState: false)
+        let doneBeforeReadReturned = OSAllocatedUnfairLock(initialState: false)
         let env = makeEnvironment(
             admins: admins, clock: clock, config: AgentConfiguration(permanentAdmins: ["breakglass"]),
             permanentUseLog: { _ in
-                race(in: group) { try? store.setValue("raced", forKey: "probe") }
+                race(in: group) {
+                    try? store.setValue("raced", forKey: "probe")
+                    racerDone.withLock { $0 = true }
+                }
+                // race(in:) has waited for the racer: in a transaction it is still blocked.
+                doneBeforeReadReturned.withLock { $0 = racerDone.withLock { $0 } }
                 return []
             })
         _ = try ElevationTracker(store: store, environment: env).heartbeat()
         group.wait()
+        #expect(doneBeforeReadReturned.withLock { $0 })
         #expect(try store.value(forKey: "probe") == "raced")
     }
 

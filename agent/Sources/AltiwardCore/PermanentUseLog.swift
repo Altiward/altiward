@@ -79,6 +79,8 @@ public struct PermanentUseLogRecord: Sendable, Equatable {
 
     /// sudo's line for a command it allowed: `breakglass : TTY=ttys003 ; PWD=… ; USER=root ;
     /// COMMAND=…`. Keeps the account, terminal and `USER=`; the rest is dropped as it is read.
+    /// Once a line starts with `TTY=` it is always a record, with `tty` or `runAs` nil if it
+    /// can't be read.
     ///
     /// Nil for a refusal (`user NOT in sudoers`, `incorrect password attempts`, `command not
     /// allowed`) and for any other line.
@@ -92,17 +94,23 @@ public struct PermanentUseLogRecord: Sendable, Equatable {
         guard !account.isEmpty, !account.contains(" ") else { return nil }
         let fields = line[colon.upperBound...]
         guard fields.hasPrefix("TTY=") else { return nil }
+        // From here on a line is never dropped: it is a use whatever else it holds. A field that
+        // can't be read is left nil, so no one can hide a use by what they put in a directory
+        // name or a command.
         let afterTTY = fields.dropFirst(4)
-        guard let ttyEnd = afterTTY.range(of: " ; PWD="), !afterTTY[..<ttyEnd.lowerBound].isEmpty else { return nil }
-        let tty = String(afterTTY[..<ttyEnd.lowerBound])
-        // USER= follows PWD=; a directory or command can hold the same text, so only the
-        // first USER= after PWD= is used and it must look like a name.
-        let afterPWD = afterTTY[ttyEnd.upperBound...]
-        guard let userMark = afterPWD.range(of: " ; USER=") else { return nil }
-        let afterUser = afterPWD[userMark.upperBound...]
-        let runAs = String(afterUser[..<(afterUser.range(of: " ; COMMAND=")?.lowerBound ?? afterUser.endIndex)])
-        guard !runAs.isEmpty, !runAs.contains(" "), !runAs.contains(";") else { return nil }
-        return PermanentUseLogRecord(method: .sudo, account: account, date: date, tty: tty, runAs: runAs)
+        let tty = String(afterTTY[..<(afterTTY.range(of: " ; ")?.lowerBound ?? afterTTY.endIndex)])
+        // USER= follows PWD=. A directory or command can hold the same text, so only the first
+        // USER= after PWD= is used, up to the next field, and only when it looks like an account
+        // name. `sudo -g` adds `GROUP=` and `-E` adds `ENV=` after it.
+        var runAs: String?
+        if let pwd = afterTTY.range(of: " ; PWD="), let user = afterTTY[pwd.upperBound...].range(of: " ; USER=") {
+            let afterUser = afterTTY[pwd.upperBound...][user.upperBound...]
+            let name = String(afterUser[..<(afterUser.range(of: " ; ")?.lowerBound ?? afterUser.endIndex)])
+            if !name.isEmpty, !name.contains(" "), !name.contains("=") { runAs = name }
+        }
+        return PermanentUseLogRecord(
+            method: .sudo, account: account, date: date, tty: tty.isEmpty || tty.contains(" ") ? nil : tty,
+            runAs: runAs)
     }
 
     /// BSD `su`'s line: `alex to breakglass on /dev/ttys002`. The account is the one
