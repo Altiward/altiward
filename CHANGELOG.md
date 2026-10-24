@@ -9,6 +9,31 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Agent 0.4.0 - unreleased
+
+### Upgrade order
+
+Deploy this release's `corp.sap.privileges.plist` keys to your Privileges profile with the
+package: its `PostChangeExecutableChecksum` is this build's hook. With the old checksum,
+Privileges stops running the hook and Altiward raises "SAP Privileges no longer reports to
+Altiward".
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+- When the agent refuses a claim, for example a grant claimed long after the rights
+  appeared in `enforce` mode, `altiward-hook` now logs "altiward-agent refused the claim"
+  with the reason and exits with 77 (`EX_NOPERM`). It used to log "Could not reach
+  altiward-agent", which now only means the agent didn't answer (exit 69,
+  `EX_UNAVAILABLE`).
+
 ## Agent 0.3.0 - 2026-10-24
 
 ### Upgrade order

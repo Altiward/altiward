@@ -12,7 +12,12 @@ import os
 
 struct HookFailure: Error {
     let message: String
-    init(_ message: String) { self.message = message }
+    // The daemon answered and refused the claim, rather than never answering.
+    let refused: Bool
+    init(_ message: String, refused: Bool = false) {
+        self.message = message
+        self.refused = refused
+    }
 }
 
 let log = Logger(subsystem: "com.altiward.agent", category: "hook")
@@ -49,7 +54,9 @@ let proxy = connection.remoteObjectProxyWithErrorHandler { error in
 
 if let proxy {
     proxy.recordPrivilegeChange(payload) { ok, message in
-        outcome.withLock { $0 = ok ? .success(()) : .failure(HookFailure(message ?? "daemon refused the change")) }
+        outcome.withLock {
+            $0 = ok ? .success(()) : .failure(HookFailure(message ?? "no reason given", refused: true))
+        }
         done.signal()
     }
     _ = done.wait(timeout: .now() + timeout)
@@ -62,6 +69,9 @@ switch outcome.withLock({ $0 }) {
 case .success:
     log.info("Recorded \(invocation.state.rawValue, privacy: .public) for \(invocation.user, privacy: .public)")
     exit(EX_OK)
+case .failure(let failure) where failure.refused:
+    log.error("altiward-agent refused the claim: \(failure.message, privacy: .public)")
+    exit(EX_NOPERM)
 case .failure(let failure):
     log.error("Could not reach altiward-agent: \(failure.message, privacy: .public)")
     exit(EX_UNAVAILABLE)
