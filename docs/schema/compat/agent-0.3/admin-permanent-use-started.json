@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "event_id": "3b8e5d21-7a4c-4f19-9d62-0c1e8a7b5f34",
+  "type": "admin.permanent_use",
+  "session_id": null,
+  "timestamp": "2026-10-16T09:00:05Z",
+  "device": {
+    "serial": "C02XK0AAJGH5",
+    "hardware_uuid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+    "os_version": "26.1.0",
+    "agent_version": "0.3.0",
+    "privileges_version": null
+  },
+  "user": { "local_name": "breakglass", "upn": null },
+  "elevation": null,
+  "delayed": false,
+  "detail": {
+    "use_id": "a7d2c4e1-5b3f-4a86-9e0d-2f6b8c1d4e57",
+    "method": "console",
+    "state": "started",
+    "source": "utmpx",
+    "started": "2026-10-16T09:00:00Z",
+    "tty": "console"
+  }
+}

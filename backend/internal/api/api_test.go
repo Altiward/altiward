@@ -232,7 +232,7 @@ func TestAboutReportsVersionAndOldestAgent(t *testing.T) {
 	tokens, _ := auth.Parse("acme="+agentToken, "acme="+consoleToken)
 	h := api.New(store.NewMemory(nil), tokens, slog.New(slog.NewTextHandler(io.Discard, nil)), time.Now, api.WithVersion("0.1.0"))
 	rec, out := do(t, h, "GET", "/v1/about", consoleToken, nil)
-	if rec.Code != 200 || out["version"] != "0.1.0" || out["oldest_supported_agent"] != "0.1" {
+	if rec.Code != 200 || out["version"] != "0.1.0" || out["oldest_supported_agent"] != "0.2" {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 	if s, _ := out["tamper_severities"].(map[string]any); s["launch_daemon"] != "High" || s["settings_managed"] != "Medium" {

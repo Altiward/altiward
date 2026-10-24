@@ -136,7 +136,7 @@ your own Postgres or load balancer, backups and troubleshooting. On Azure,
 [Deploy to Azure](deploy/azure/README.md) creates the server in your
 subscription instead, on Azure Container Apps, with no VM to look after:
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v0.3.0%2Fdeploy%2Fazure%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v0.3.0%2Fdeploy%2Fazure%2FcreateUiDefinition.json)
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v0.4.0%2Fdeploy%2Fazure%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v0.4.0%2Fdeploy%2Fazure%2FcreateUiDefinition.json)
 
 **1. The server.** Download the server release from
 [GitHub Releases](https://github.com/Altiward/altiward/releases) (tagged `server-v0.3.0`),

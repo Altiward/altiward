@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "event_id": "2d8b8c74-8c2a-4f5a-9b7a-5b4c3e1f9a23",
-  "type": "admin.out_of_band",
+  "event_id": "b61c0e4a-3f2d-4a8b-9e7c-5d4f3a2b1c0e",
+  "type": "elevation.revoked",
   "session_id": "7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f",
-  "timestamp": "2026-10-16T10:00:00Z",
+  "timestamp": "2026-10-16T10:15:00Z",
   "device": {
     "serial": "C02XK0AAJGH5",
     "hardware_uuid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
@@ -14,5 +14,5 @@
   "user": { "local_name": "backdoor", "upn": null },
   "elevation": { "reason": null, "expires": null, "source": "out_of_band" },
   "delayed": false,
-  "detail": { "first_observed": "2026-10-16T10:00:00Z" }
+  "detail": { "trigger": "privileges_grant", "observed_admin": true, "verified": true }
 }

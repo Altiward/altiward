@@ -9,7 +9,7 @@ directory to the API and require all of them to be accepted.
 
 - **When an agent release ships** with a new minor version, copy `../examples/` here as
   `agent-X.Y/`, leaving out `agent-silent.json`, which only the server raises.
-- **Keep the newest two** directories older than the current agent, and delete the rest.
+- **Keep the newest two** directories, the new release's included, and delete the rest.
   Set `OldestSupportedAgent` in `backend/internal/release` to the oldest one kept: the
   console tags Macs running anything older, and a test fails if the two disagree.
 - **Never edit a directory** after it's frozen. If a test fails on one, the server broke
