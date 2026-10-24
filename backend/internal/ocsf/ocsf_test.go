@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Altiward/altiward/backend/internal/event"
 	"github.com/Altiward/altiward/backend/internal/ocsf"
@@ -178,11 +179,19 @@ func TestPrivilegesGrantClosesTheOutOfBandFinding(t *testing.T) {
 const outOfBandSession = "7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f"
 
 // outOfBandRevoke is the elevation-revoked example ending the admin-out-of-band session
-// instead, with detail in place of the hook's.
+// instead, with detail in place of the hook's: backdoor's rights, at 10:03, inside the
+// grace period before the automatic removal at 10:05, from the same agent.
 func outOfBandRevoke(t *testing.T, detail map[string]any) store.StoredEvent {
 	e := stored(t, "elevation-revoked")
+	opened := stored(t, "admin-out-of-band")
 	session := outOfBandSession
+	e.EventID = "6c2f9a1e-4b7d-4e3a-9f05-8d1c7b2a3e64"
 	e.SessionID = &session
+	e.Timestamp = time.Date(2026, 10, 16, 10, 3, 0, 0, time.UTC)
+	e.ReceivedAt = e.Timestamp
+	e.Delayed = false
+	e.Device.AgentVersion = opened.Device.AgentVersion
+	e.User = &event.User{LocalName: "backdoor"}
 	e.Elevation = &event.Elevation{Source: event.SourceOutOfBand}
 	e.Detail = detail
 	return e
@@ -251,7 +260,7 @@ func TestConsoleRevokeOfRightsNobodyGrantedClosesTheFinding(t *testing.T) {
 	e := consoleRevokeOfOutOfBand(t)
 	records := mapAllJSON(t, e)
 	assertRemovedClose(t, e, records,
-		"Removed on C02XK0AAJGH5: jane.doe@example.com's admin rights, which nobody granted, were revoked from the Altiward console")
+		"Removed on C02XK0AAJGH5: backdoor's admin rights, which nobody granted, were revoked from the Altiward console")
 	if r := records[0]; r["severity_id"] != 1.0 || !strings.Contains(r["message"].(string), "revoked from the Altiward console") {
 		t.Fatalf("revoke record: severity %v message %q", r["severity_id"], r["message"])
 	}
@@ -260,7 +269,7 @@ func TestConsoleRevokeOfRightsNobodyGrantedClosesTheFinding(t *testing.T) {
 func TestHeartbeatSeeingRightsNobodyGrantedGoneClosesTheFinding(t *testing.T) {
 	e := outOfBandRevoke(t, map[string]any{"trigger": "heartbeat", "inferred": true, "observed_admin": false, "verified": true})
 	assertRemovedClose(t, e, mapAllJSON(t, e),
-		"Removed on C02XK0AAJGH5: jane.doe@example.com no longer holds the admin rights nobody granted")
+		"Removed on C02XK0AAJGH5: backdoor no longer holds the admin rights nobody granted")
 }
 
 // An orphan revoke ends no session the server knows, so there is no finding to close.

@@ -18,20 +18,17 @@
       },
       "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
     },
-    "message": "jane.doe@example.com's admin rights on C02XK0AAJGH5 were revoked from the Altiward console",
+    "message": "backdoor's admin rights on C02XK0AAJGH5 were revoked from the Altiward console",
     "metadata": {
       "correlation_uid": "7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f",
-      "labels": [
-        "delayed"
-      ],
-      "logged_time": 1792143107004,
+      "logged_time": 1792144980000,
       "product": {
         "name": "Altiward",
         "vendor_name": "Altiward",
         "version": "0.1.0"
       },
       "tenant_uid": "acme",
-      "uid": "1c7a7b63-7b1f-4e4f-8a6f-4a3b2d0e8f12",
+      "uid": "6c2f9a1e-4b7d-4e3a-9f05-8d1c7b2a3e64",
       "version": "1.9.0"
     },
     "privileges": [
@@ -41,7 +38,7 @@
     "severity_id": 1,
     "status": "Success",
     "status_id": 1,
-    "time": 1792143107004,
+    "time": 1792144980000,
     "type_name": "User Access Management: Revoke Privileges",
     "type_uid": 300502,
     "unmapped": {
@@ -58,8 +55,7 @@
       }
     },
     "user": {
-      "email_addr": "jane.doe@example.com",
-      "name": "jdoe"
+      "name": "backdoor"
     }
   },
   {
@@ -87,29 +83,26 @@
         "type": "Rule",
         "type_id": 1
       },
-      "created_time": 1792143107004,
-      "desc": "Removed on C02XK0AAJGH5: jane.doe@example.com's admin rights, which nobody granted, were revoked from the Altiward console",
-      "first_seen_time": 1792143107004,
+      "created_time": 1792144980000,
+      "desc": "Removed on C02XK0AAJGH5: backdoor's admin rights, which nobody granted, were revoked from the Altiward console",
+      "first_seen_time": 1792144980000,
       "title": "Admin rights without a grant",
       "types": [
         "Privilege Escalation"
       ],
       "uid": "7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f"
     },
-    "message": "Removed on C02XK0AAJGH5: jane.doe@example.com's admin rights, which nobody granted, were revoked from the Altiward console",
+    "message": "Removed on C02XK0AAJGH5: backdoor's admin rights, which nobody granted, were revoked from the Altiward console",
     "metadata": {
       "correlation_uid": "7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f",
-      "labels": [
-        "delayed"
-      ],
-      "logged_time": 1792143107004,
+      "logged_time": 1792144980000,
       "product": {
         "name": "Altiward",
         "vendor_name": "Altiward",
         "version": "0.1.0"
       },
       "tenant_uid": "acme",
-      "uid": "1c7a7b63-7b1f-4e4f-8a6f-4a3b2d0e8f12/finding",
+      "uid": "6c2f9a1e-4b7d-4e3a-9f05-8d1c7b2a3e64/finding",
       "version": "1.9.0"
     },
     "observables": [
@@ -117,14 +110,14 @@
         "name": "user.name",
         "type": "User Name",
         "type_id": 4,
-        "value": "jdoe"
+        "value": "backdoor"
       }
     ],
     "severity": "Informational",
     "severity_id": 1,
     "status": "Rights removed",
     "status_id": 99,
-    "time": 1792143107004,
+    "time": 1792144980000,
     "type_name": "Detection Finding: Close",
     "type_uid": 200403,
     "unmapped": {
@@ -141,8 +134,7 @@
       }
     },
     "user": {
-      "email_addr": "jane.doe@example.com",
-      "name": "jdoe"
+      "name": "backdoor"
     }
   }
 ]
