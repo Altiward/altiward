@@ -1,0 +1,148 @@
+[
+  {
+    "activity_id": 2,
+    "activity_name": "Revoke Privileges",
+    "category_name": "Identity \u0026 Access Management",
+    "category_uid": 3,
+    "class_name": "User Access Management",
+    "class_uid": 3005,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "message": "jane.doe@example.com's admin rights on C02XK0AAJGH5 were revoked from the Altiward console",
+    "metadata": {
+      "correlation_uid": "7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f",
+      "labels": [
+        "delayed"
+      ],
+      "logged_time": 1792143107004,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.1.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "1c7a7b63-7b1f-4e4f-8a6f-4a3b2d0e8f12",
+      "version": "1.9.0"
+    },
+    "privileges": [
+      "admin"
+    ],
+    "severity": "Informational",
+    "severity_id": 1,
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792143107004,
+    "type_name": "User Access Management: Revoke Privileges",
+    "type_uid": 300502,
+    "unmapped": {
+      "altiward": {
+        "command_id": "8c1d2e3f-4a5b-4c6d-9e7f-0a1b2c3d4e5f",
+        "detail": {
+          "command_id": "8c1d2e3f-4a5b-4c6d-9e7f-0a1b2c3d4e5f",
+          "observed_admin": false,
+          "trigger": "command",
+          "verified": true
+        },
+        "event_type": "elevation.revoked",
+        "source": "out_of_band"
+      }
+    },
+    "user": {
+      "email_addr": "jane.doe@example.com",
+      "name": "jdoe"
+    }
+  },
+  {
+    "activity_id": 3,
+    "activity_name": "Close",
+    "category_name": "Findings",
+    "category_uid": 2,
+    "class_name": "Detection Finding",
+    "class_uid": 2004,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "finding_info": {
+      "analytic": {
+        "name": "altiward.admin_out_of_band",
+        "type": "Rule",
+        "type_id": 1
+      },
+      "created_time": 1792143107004,
+      "desc": "Removed on C02XK0AAJGH5: jane.doe@example.com's admin rights, which nobody granted, were revoked from the Altiward console",
+      "first_seen_time": 1792143107004,
+      "title": "Admin rights without a grant",
+      "types": [
+        "Privilege Escalation"
+      ],
+      "uid": "7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f"
+    },
+    "message": "Removed on C02XK0AAJGH5: jane.doe@example.com's admin rights, which nobody granted, were revoked from the Altiward console",
+    "metadata": {
+      "correlation_uid": "7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f",
+      "labels": [
+        "delayed"
+      ],
+      "logged_time": 1792143107004,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.1.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "1c7a7b63-7b1f-4e4f-8a6f-4a3b2d0e8f12/finding",
+      "version": "1.9.0"
+    },
+    "observables": [
+      {
+        "name": "user.name",
+        "type": "User Name",
+        "type_id": 4,
+        "value": "jdoe"
+      }
+    ],
+    "severity": "Informational",
+    "severity_id": 1,
+    "status": "Rights removed",
+    "status_id": 99,
+    "time": 1792143107004,
+    "type_name": "Detection Finding: Close",
+    "type_uid": 200403,
+    "unmapped": {
+      "altiward": {
+        "command_id": "8c1d2e3f-4a5b-4c6d-9e7f-0a1b2c3d4e5f",
+        "detail": {
+          "command_id": "8c1d2e3f-4a5b-4c6d-9e7f-0a1b2c3d4e5f",
+          "observed_admin": false,
+          "trigger": "command",
+          "verified": true
+        },
+        "event_type": "elevation.revoked",
+        "source": "out_of_band"
+      }
+    },
+    "user": {
+      "email_addr": "jane.doe@example.com",
+      "name": "jdoe"
+    }
+  }
+]

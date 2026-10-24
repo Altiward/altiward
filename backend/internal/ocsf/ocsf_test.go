@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Altiward/altiward/backend/internal/event"
 	"github.com/Altiward/altiward/backend/internal/ocsf"
 	"github.com/Altiward/altiward/backend/internal/store"
 	"github.com/Altiward/altiward/backend/internal/testfixture"
@@ -171,6 +172,120 @@ func TestPrivilegesGrantClosesTheOutOfBandFinding(t *testing.T) {
 	}
 	if want := "Replaced on C02XK0AAJGH5: a Privileges grant was reported for backdoor, who held admin rights without one"; closed["message"] != want {
 		t.Fatalf("message = %q", closed["message"])
+	}
+}
+
+const outOfBandSession = "7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f"
+
+// outOfBandRevoke is the elevation-revoked example ending the admin-out-of-band session
+// instead, with detail in place of the hook's.
+func outOfBandRevoke(t *testing.T, detail map[string]any) store.StoredEvent {
+	e := stored(t, "elevation-revoked")
+	session := outOfBandSession
+	e.SessionID = &session
+	e.Elevation = &event.Elevation{Source: event.SourceOutOfBand}
+	e.Detail = detail
+	return e
+}
+
+// consoleRevokeOfOutOfBand revokes rights nobody granted from the console.
+func consoleRevokeOfOutOfBand(t *testing.T) store.StoredEvent {
+	return outOfBandRevoke(t, map[string]any{"trigger": "command", "command_id": "8c1d2e3f-4a5b-4c6d-9e7f-0a1b2c3d4e5f",
+		"observed_admin": false, "verified": true})
+}
+
+// assertRemovedClose checks the second record of a removal of rights nobody granted: it
+// closes the session's out-of-band finding as "Rights removed", which is no explanation.
+func assertRemovedClose(t *testing.T, e store.StoredEvent, records []map[string]any, wantMessage string) {
+	t.Helper()
+	if len(records) != 2 {
+		t.Fatalf("%d records", len(records))
+	}
+	if r := records[0]; r["class_uid"] != 3005.0 || r["activity_id"] != 2.0 || get(r, "metadata.uid") != e.EventID {
+		t.Fatalf("revoke record: class %v activity %v uid %v", r["class_uid"], r["activity_id"], get(r, "metadata.uid"))
+	}
+	f := records[1]
+	want := map[string]any{
+		"class_uid":                  2004.0,
+		"activity_id":                3.0,
+		"activity_name":              "Close",
+		"status_id":                  99.0,
+		"status":                     "Rights removed",
+		"severity_id":                1.0,
+		"metadata.uid":               e.EventID + "/finding",
+		"finding_info.uid":           outOfBandSession,
+		"finding_info.title":         "Admin rights without a grant",
+		"finding_info.analytic.name": "altiward.admin_out_of_band",
+	}
+	for path, v := range want {
+		if got := get(f, path); got != v {
+			t.Errorf("%s = %v, want %v", path, got, v)
+		}
+	}
+	if f["is_alert"] != nil {
+		t.Errorf("is_alert = %v", f["is_alert"])
+	}
+	if f["message"] != wantMessage || get(f, "finding_info.desc") != wantMessage {
+		t.Errorf("message = %q, want %q", f["message"], wantMessage)
+	}
+}
+
+// The agent removed rights nobody granted after the grace period: a Low revoke, and the
+// out-of-band finding closes, as "Rights removed" rather than Resolved, since nobody
+// explained them.
+func TestOutOfBandRemovedIsALowRevokeAndClosesTheFinding(t *testing.T) {
+	e := stored(t, "admin-out-of-band-removed")
+	records := mapAllJSON(t, e)
+	assertRemovedClose(t, e, records,
+		"Removed on C02XK0AAJGH5: Altiward removed backdoor's admin rights, which nobody granted, after the grace period")
+	r := records[0]
+	if r["severity_id"] != 2.0 || r["activity_name"] != "Revoke Privileges" {
+		t.Fatalf("severity %v activity %v", r["severity_id"], r["activity_name"])
+	}
+	if want := "Altiward removed backdoor's admin rights on C02XK0AAJGH5, which nobody granted"; r["message"] != want {
+		t.Fatalf("message = %q", r["message"])
+	}
+}
+
+func TestConsoleRevokeOfRightsNobodyGrantedClosesTheFinding(t *testing.T) {
+	e := consoleRevokeOfOutOfBand(t)
+	records := mapAllJSON(t, e)
+	assertRemovedClose(t, e, records,
+		"Removed on C02XK0AAJGH5: jane.doe@example.com's admin rights, which nobody granted, were revoked from the Altiward console")
+	if r := records[0]; r["severity_id"] != 1.0 || !strings.Contains(r["message"].(string), "revoked from the Altiward console") {
+		t.Fatalf("revoke record: severity %v message %q", r["severity_id"], r["message"])
+	}
+}
+
+func TestHeartbeatSeeingRightsNobodyGrantedGoneClosesTheFinding(t *testing.T) {
+	e := outOfBandRevoke(t, map[string]any{"trigger": "heartbeat", "inferred": true, "observed_admin": false, "verified": true})
+	assertRemovedClose(t, e, mapAllJSON(t, e),
+		"Removed on C02XK0AAJGH5: jane.doe@example.com no longer holds the admin rights nobody granted")
+}
+
+// An orphan revoke ends no session the server knows, so there is no finding to close.
+func TestOrphanRevokeClosesNoFinding(t *testing.T) {
+	e := consoleRevokeOfOutOfBand(t)
+	e.Detail["orphan"] = true
+	if r := mapJSON(t, e); r["class_uid"] != 3005.0 {
+		t.Fatalf("class = %v", r["class_uid"])
+	}
+}
+
+// Rights that stay, or rights Privileges granted, close no out-of-band finding as removed.
+func TestRevokeOfAPrivilegesGrantClosesNoFinding(t *testing.T) {
+	if r := mapJSON(t, stored(t, "elevation-revoked")); r["class_uid"] != 3005.0 {
+		t.Fatalf("class = %v", r["class_uid"])
+	}
+	e := consoleRevokeOfOutOfBand(t)
+	e.Detail["observed_admin"] = true
+	if r := mapJSON(t, e); r["class_uid"] != 3005.0 {
+		t.Fatalf("still admin: class = %v", r["class_uid"])
+	}
+	e = consoleRevokeOfOutOfBand(t)
+	e.SessionID = nil
+	if r := mapJSON(t, e); r["class_uid"] != 3005.0 {
+		t.Fatalf("no session: class = %v", r["class_uid"])
 	}
 }
 

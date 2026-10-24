@@ -1,0 +1,140 @@
+[
+  {
+    "activity_id": 2,
+    "activity_name": "Revoke Privileges",
+    "category_name": "Identity \u0026 Access Management",
+    "category_uid": 3,
+    "class_name": "User Access Management",
+    "class_uid": 3005,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "message": "Altiward removed backdoor's admin rights on C02XK0AAJGH5, which nobody granted",
+    "metadata": {
+      "correlation_uid": "7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f",
+      "logged_time": 1792145100000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.2.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "45ee4308-77a6-4d77-8fe0-9677aa758a61",
+      "version": "1.9.0"
+    },
+    "privileges": [
+      "admin"
+    ],
+    "severity": "Low",
+    "severity_id": 2,
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792145100000,
+    "type_name": "User Access Management: Revoke Privileges",
+    "type_uid": 300502,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "first_observed": "2026-10-16T10:00:00Z",
+          "grace_seconds": 300,
+          "observed_admin": false,
+          "trigger": "heartbeat",
+          "verified": true
+        },
+        "event_type": "admin.out_of_band_removed",
+        "source": "out_of_band"
+      }
+    },
+    "user": {
+      "name": "backdoor"
+    }
+  },
+  {
+    "activity_id": 3,
+    "activity_name": "Close",
+    "category_name": "Findings",
+    "category_uid": 2,
+    "class_name": "Detection Finding",
+    "class_uid": 2004,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "finding_info": {
+      "analytic": {
+        "name": "altiward.admin_out_of_band",
+        "type": "Rule",
+        "type_id": 1
+      },
+      "created_time": 1792145100000,
+      "desc": "Removed on C02XK0AAJGH5: Altiward removed backdoor's admin rights, which nobody granted, after the grace period",
+      "first_seen_time": 1792145100000,
+      "title": "Admin rights without a grant",
+      "types": [
+        "Privilege Escalation"
+      ],
+      "uid": "7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f"
+    },
+    "message": "Removed on C02XK0AAJGH5: Altiward removed backdoor's admin rights, which nobody granted, after the grace period",
+    "metadata": {
+      "correlation_uid": "7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f",
+      "logged_time": 1792145100000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.2.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "45ee4308-77a6-4d77-8fe0-9677aa758a61/finding",
+      "version": "1.9.0"
+    },
+    "observables": [
+      {
+        "name": "user.name",
+        "type": "User Name",
+        "type_id": 4,
+        "value": "backdoor"
+      }
+    ],
+    "severity": "Informational",
+    "severity_id": 1,
+    "status": "Rights removed",
+    "status_id": 99,
+    "time": 1792145100000,
+    "type_name": "Detection Finding: Close",
+    "type_uid": 200403,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "first_observed": "2026-10-16T10:00:00Z",
+          "grace_seconds": 300,
+          "observed_admin": false,
+          "trigger": "heartbeat",
+          "verified": true
+        },
+        "event_type": "admin.out_of_band_removed",
+        "source": "out_of_band"
+      }
+    },
+    "user": {
+      "name": "backdoor"
+    }
+  }
+]

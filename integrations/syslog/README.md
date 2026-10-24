@@ -74,7 +74,10 @@ sign-outs are OCSF Authentication records, with the event types `console.sign_in
 ## Starter rules
 
 - **Admin rights nobody granted:** signature `altiward.admin_out_of_band` with `act=Create`.
-  The matching `act=Close` with the same `cs5` means the account became a permanent admin.
+  The matching `act=Close` with the same `cs5` explains them only with `outcome=Resolved`
+  (the account became a permanent admin) or `outcome=Replaced by a Privileges grant`. A
+  Close with `outcome=Rights removed` means the rights were taken away, by Altiward, from
+  the console or by someone on the Mac, but nobody explained them: keep alerting on it.
 - **New local account:** signature `altiward.account_created`, named "Admin account
   created" (severity 8) or "Local account created" (severity 5).
 - **Rights after expiry:** signature `altiward.rights_after_expiry`, raised whether or not
