@@ -82,16 +82,19 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
     over interactive SSH, which also records the address it came from. A `started` event
     follows within about 15 seconds, and an `ended` event at sign-out with both times. A
     sign-in shorter than that is reported by the next heartbeat, and one while the agent
-    was stopped when it starts, up to a day back.
+    was stopped when it starts, up to a day back. A Terminal tab opened while the account
+    is signed in at the Mac is part of that sign-in, not a use of its own; `login` in
+    someone else's Terminal is recorded.
+    A sign-in whose process has gone, but which macOS still lists, ends as `noticed`.
   - *Prompt approvals* are a permanent admin's name and password typed into an admin
     prompt on another user's session: whose session, the authorisation right, and the app
     that asked, when the log names it.
   - *`sudo`* by a permanent admin records the terminal and the user it ran as, never the
     command or working directory. *`su`* to one records whose session and the terminal.
   - Prompts, `sudo` and `su` that differ only in time are one event, with a `count` and
-    the time of the `last`: a script that runs `sudo` 300 times sends one. Each heartbeat
-    sends at most 20 such events, and the last carries `truncated`, how many more groups
-    it left out.
+    the time of the `last`: a script that runs `sudo` 300 times within one heartbeat
+    sends one. Each heartbeat sends at most 20 such events, and the last carries
+    `truncated`, how many more groups it left out.
   - Prompts, `sudo` and `su` are read from the unified log each heartbeat, so they are
     recorded only where macOS keeps those lines: on some Macs it doesn't keep successful
     `sudo` runs. Apple's Endpoint Security, if Apple grants the entitlement, would make
@@ -100,8 +103,8 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
     one-off commands (`scp`, `ssh host command`) that open no terminal.
   - `sudo altiward-agent permanent-uses [HOURS]` prints what the agent reads (default 24
     hours; run as root).
-  - Needs server 0.4.0. The SIEM gets every event the agent sends; the server keeps
-    the newest 20 per Mac for the console.
+  - Needs server 0.4.0. The SIEM gets every event the agent sends; for the console, the
+    server keeps each Mac's open sign-ins and its newest 20 other uses.
 - **Runs revokes from the console** (below), removing the user from `admin` itself.
   Permanent admins are never removed.
 - **Runs tamper checks** each heartbeat and sends `agent.tamper` when one changes: the

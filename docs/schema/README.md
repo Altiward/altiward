@@ -58,12 +58,12 @@ decoder rejects unknown fields, so drift fails loudly.
 | | `attempts`, `first_attempt`, `last_attempt` | How many times that process tried on that item since the last heartbeat, and when (`privileges_blocked` only) |
 | | `truncated` | On the last of a heartbeat's 20 `privileges_blocked` events, how many more were left out; absent otherwise |
 | `admin.permanent_use` | `use_id` | UUID. A sign-in's `started` and `ended` events share it |
-| | `method` | `console`, `terminal`, `ssh`, `screen_sharing`, `prompt`, `sudo` or `su`. The server accepts any non-empty value, so a later method needs no server upgrade first |
+| | `method` | `console`, `terminal`, `ssh`, `screen_sharing`, `prompt`, `sudo` or `su`. `terminal` is a terminal with no remote host, such as `login` in Terminal; a Terminal tab opened while the account is signed in at the Mac is part of that `console` sign-in and isn't sent. The server accepts any non-empty value, so a later method needs no server upgrade first |
 | | `state` | `started` or `ended` for sign-ins; `single` for prompt, sudo and su, and for SSH and screen sharing seen only in the log |
 | | `source` | `utmpx` or `unified_log`. Both are records an admin can erase, so they corroborate rather than prove |
 | | `started` | When the use began: the sign-in time macOS recorded, or the first log entry of a group |
 | | `ended` | When it ended (`ended` only) |
-| | `end_basis` | `logged` (macOS's sign-out or shutdown record) or `noticed` (the agent saw the sign-in gone, and the time is when it noticed); `ended` only |
+| | `end_basis` | `logged` (macOS's sign-out or shutdown record; after a crash, which writes neither, the next boot record) or `noticed` (the agent saw the sign-in gone, or its process gone while macOS still listed it, and the time is when it noticed); `ended` only |
 | | `tty` | `console`, `ttys003`, and so on (sign-ins, `sudo` and `su`) |
 | | `remote_host` | The client's address as macOS recorded it; `null` when it didn't (`ssh` and `screen_sharing`) |
 | | `on_session_of` | Short name of the user whose session it was; `null` when unknown (`prompt` and `su`) |

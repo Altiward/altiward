@@ -33,7 +33,9 @@ None.
     interactive SSH, from macOS's sign-in records. A `started` event follows within about
     15 seconds, and an `ended` event at sign-out with both times. A sign-in shorter than
     that is reported by the next heartbeat, and one while the agent was stopped when it
-    starts, up to a day back. SSH records the address it came from.
+    starts, up to a day back. SSH records the address it came from. A Terminal tab opened
+    while the account is signed in at the Mac is part of that sign-in, not a use of its
+    own. A sign-in still open when the Mac crashed ends at the next boot.
   - Prompt approvals: a permanent admin's name and password typed into an admin prompt on
     another user's session. It records whose session, the right, and the app that asked,
     when the log names it.
@@ -46,12 +48,14 @@ None.
   - Screen sharing, and SSH file copies or one-off commands that open no terminal (`scp`,
     `ssh host command`), aren't recorded yet.
 - Prompts, `sudo` and `su` that differ only in time are one event, with a count and the
-  time of the last: a script that runs `sudo` 300 times sends one. Each heartbeat sends at
-  most 20 such events, and the last says how many more groups it left out.
+  time of the last: a script that runs `sudo` 300 times within one heartbeat sends one.
+  Each heartbeat sends at most 20 such events, and the last says how many more groups it
+  left out.
 - New command: `sudo altiward-agent permanent-uses [HOURS]` prints what the agent reads
   about permanent admins (default 24 hours; run as root).
 - `docs/data-handling.md` lists what the agent collects. The SIEM gets every event the
-  agent sends, and the server keeps the newest 20 of them per Mac for the console.
+  agent sends. For the console, the server keeps each Mac's open sign-ins and its newest
+  20 other uses.
 
 ## Server 0.4.0 - unreleased
 
