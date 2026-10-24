@@ -58,12 +58,12 @@ public struct LoginRecord: Sendable, Equatable {
 /// Reads sign-ins from utmpx (who is signed in now) and wtmp (the history `last` shows).
 /// Both are corroboration an admin can erase. All the C interop is here; the pairing that
 /// turns wtmp's records into sign-ins is the pure ``paired(_:)``.
-enum LoginRecords {
+public enum LoginRecords {
     /// The `getutxent` family keeps its position in process-wide state.
     private static let lock = NSLock()
 
     /// Who is signed in now: utmpx's `USER_PROCESS` entries.
-    static func current() -> [LoginRecord] {
+    public static func current() -> [LoginRecord] {
         lock.withLock {
             setutxent()
             defer { endutxent() }
@@ -86,7 +86,7 @@ enum LoginRecords {
 
     /// Sign-ins from wtmp still open at `since` or later: those that ended at or after it,
     /// and those that haven't ended. Empty when wtmp can't be read.
-    static func history(since: Date) -> [LoginRecord] {
+    public static func history(since: Date) -> [LoginRecord] {
         let entries = lock.withLock {
             setutxent_wtmp(1)  // oldest first
             defer { endutxent_wtmp() }

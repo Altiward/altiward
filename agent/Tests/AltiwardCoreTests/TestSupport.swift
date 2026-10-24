@@ -129,7 +129,8 @@ func makeEnvironment(
     privilegesAudit: @escaping @Sendable (_ since: Date) -> [PrivilegesAuditRecord] = { _ in [] },
     logins: @escaping @Sendable () -> [LoginRecord] = { [] },
     processExists: @escaping @Sendable (_ pid: Int32) -> Bool = { _ in true },
-    loginHistory: @escaping @Sendable (_ since: Date) -> [LoginRecord] = { _ in [] }
+    loginHistory: @escaping @Sendable (_ since: Date) -> [LoginRecord] = { _ in [] },
+    permanentUseLog: @escaping @Sendable (_ since: Date) -> [PermanentUseLogRecord] = { _ in [] }
 ) -> AgentEnvironment {
     AgentEnvironment(
         device: device,
@@ -144,7 +145,8 @@ func makeEnvironment(
         privilegesAudit: privilegesAudit,
         logins: logins,
         processExists: processExists,
-        loginHistory: loginHistory)
+        loginHistory: loginHistory,
+        permanentUseLog: permanentUseLog)
 }
 
 /// Writes a store as agent 0.2 left it: the 0.1.0 tables at schema version 1.

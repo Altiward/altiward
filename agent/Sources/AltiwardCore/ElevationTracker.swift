@@ -36,6 +36,9 @@ public struct AgentEnvironment: Sendable {
     /// Sign-ins from wtmp that ended at or after the given time or haven't ended, each with
     /// its end when wtmp has one (``LoginRecords``).
     public var loginHistory: @Sendable (_ since: Date) -> [LoginRecord]
+    /// Prompts, sudo and su by accounts the log names, since the given time, oldest first
+    /// (``PermanentUseLog``).
+    public var permanentUseLog: @Sendable (_ since: Date) -> [PermanentUseLogRecord]
 
     public init(
         device: @escaping @Sendable () -> DeviceInfo,
@@ -52,7 +55,8 @@ public struct AgentEnvironment: Sendable {
         privilegesAudit: @escaping @Sendable (_ since: Date) -> [PrivilegesAuditRecord] = { _ in [] },
         logins: @escaping @Sendable () -> [LoginRecord] = { [] },
         processExists: @escaping @Sendable (_ pid: Int32) -> Bool = { _ in true },
-        loginHistory: @escaping @Sendable (_ since: Date) -> [LoginRecord] = { _ in [] }
+        loginHistory: @escaping @Sendable (_ since: Date) -> [LoginRecord] = { _ in [] },
+        permanentUseLog: @escaping @Sendable (_ since: Date) -> [PermanentUseLogRecord] = { _ in [] }
     ) {
         self.device = device
         self.privileges = privileges
@@ -69,6 +73,7 @@ public struct AgentEnvironment: Sendable {
         self.logins = logins
         self.processExists = processExists
         self.loginHistory = loginHistory
+        self.permanentUseLog = permanentUseLog
     }
 
     /// The real system.
@@ -89,7 +94,8 @@ public struct AgentEnvironment: Sendable {
             privilegesAudit: { PrivilegesAuditLog.records(since: $0) },
             logins: { LoginRecords.current() },
             processExists: { LoginRecords.processExists($0) },
-            loginHistory: { LoginRecords.history(since: $0) })
+            loginHistory: { LoginRecords.history(since: $0) },
+            permanentUseLog: { PermanentUseLog.records(since: $0) })
     }
 }
 
@@ -279,6 +285,10 @@ public final class ElevationTracker: Sendable {
         // And wtmp: sign-ins by permanent admins too short for the checks to see.
         let loginsFrom = try permanentUseHistoryStart(now: now)
         let loginHistory = env.loginHistory(loginsFrom)
+        // And the unified log again, for their prompts, sudo and su. Left unread with no
+        // permanent admins, as nothing it holds would be reported.
+        let useLogFrom = try permanentUseLogStart(now: now)
+        let useLog = env.config.permanentAdmins.isEmpty ? [] : env.permanentUseLog(useLogFrom)
 
         return try store.transaction {
             let admins = env.admins.adminMembers()
@@ -346,6 +356,7 @@ public final class ElevationTracker: Sendable {
             // starts from here, and rows ended over a day ago, before anything a read covers, are
             // no longer needed to dedupe.
             events += try completedUseEvents(loginHistory, since: loginsFrom, now: now, device: device)
+            events += try permanentUseLogEvents(useLog, now: now, device: device)
             try store.setValue(AltiwardJSON.format(now), forKey: Self.permanentUseCursorKey)
             try store.prunePermanentUses(endedBefore: now.addingTimeInterval(-Self.permanentUseLookback))
 

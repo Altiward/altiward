@@ -8,6 +8,10 @@
 //   altiward-agent privileges-audit [HOURS]
 //                                 print what SAP Privileges' system extension logged in the
 //                                 last HOURS (default 24), as the agent reads it (run as root)
+//   altiward-agent permanent-uses [HOURS]
+//                                 print the sign-ins and the prompts, sudo and su by accounts in
+//                                 PermanentAdmins in the last HOURS (default 24), as the agent
+//                                 reads them (run as root)
 //   altiward-agent simulate-hook USER STATE [REASON]
 //                                 record a change as if the hook had called (development)
 //
@@ -31,6 +35,36 @@ if command == "privileges-audit" {
     }
     if records.isEmpty {
         print("nothing logged: run as root, with SAP Privileges 2.6 or later and its system extension on")
+    }
+    exit(0)
+}
+
+if command == "permanent-uses" {
+    // Like privileges-audit: no store, no Secure Enclave key, nothing changed.
+    let hours = arguments.dropFirst().first.flatMap(Double.init) ?? 24
+    let since = Date().addingTimeInterval(-hours * 3600)
+    let admins = AgentConfiguration.load().permanentAdmins
+    if admins.isEmpty {
+        print("PermanentAdmins is empty: no account is watched, so the agent records none of this")
+    }
+
+    var lines: [(date: Date, text: String)] = []
+    var seen: Set<String> = []
+    // Open sign-ins appear in both lists; one line each.
+    for r in LoginRecords.history(since: since) + LoginRecords.current() where admins.contains(r.user) {
+        guard seen.insert("\(r.tty) \(r.pid) \(r.started.timeIntervalSince1970)").inserted else { continue }
+        let host = r.host.isEmpty ? "" : " from \(r.host)"
+        let end = r.ended.map { "ended \(AltiwardJSON.format($0))" } ?? "still signed in"
+        lines.append((r.started, "\(AltiwardJSON.format(r.started))  sign-in  \(r.user)  tty=\(r.tty)\(host)  \(end)"))
+    }
+    for r in PermanentUseLog.records(since: since) where admins.contains(r.account) {
+        lines.append((r.date, r.summary))
+    }
+    for line in lines.sorted(by: { $0.date < $1.date }) { print(line.text) }
+    if lines.isEmpty {
+        print(
+            "nothing found: run as root; the log keeps sudo and su lines only on some Macs, so their absence proves little"
+        )
     }
     exit(0)
 }
