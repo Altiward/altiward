@@ -130,13 +130,22 @@ tell a grant from rights nobody granted. A `HookCodeRequirement` that doesn't ma
 isn't covered: the daemon rejects the hook's calls, so in `enforce` mode real Privileges
 grants are removed after the grace period.
 
-**A hand-run hook can claim a grant.** Someone holding admin rights nobody granted can run
-the hook by hand to claim a Privileges grant. That turns their out-of-band session into a
-Privileges session, which `OutOfBandEnforcement` no longer removes. It shows in the console
-as **Followed rights without a grant** and in the SIEM as "Replaced by a Privileges grant".
-With `ExpiryEnforcement` set to `enforce` and an expiry from Privileges' settings, the
-rights end at expiry, unless they run the hook again before then: each claim renews the
-grant, and each is reported as `elevation.granted`.
+**A hand-run hook claiming a grant or a give-back.** Someone holding admin rights nobody
+granted can run the hook by hand to claim a Privileges grant, or to claim they gave the
+rights back so that a grant claimed next finds no out-of-band session to replace. A real
+grant's hook reports within about 25 seconds and never retries, so the only real case is a
+heartbeat that raised the rights between Privileges changing the group and the hook
+arriving. With `OutOfBandEnforcement` on `enforce`, a grant claimed more than a minute after
+Altiward raised the rights (`ElevationTracker.grantReplacementWindow`) or on a Mac without
+SAP Privileges, and a give-back claimed while the daemon still sees the user in `admin`, are
+refused and logged on the Mac, and the rights are still removed after the grace period. A
+give-back after the rights really went ends the session as before. In `alert` mode both
+claims work as before: a claimed grant replaces the out-of-band session, shown in the
+console as **Followed rights without a grant** and in the SIEM as "Replaced by a
+Privileges grant".
+Once a session is a Privileges session, with `ExpiryEnforcement` set to `enforce` and an
+expiry from Privileges' settings, the rights end at expiry, unless they run the hook again
+before then: each claim renews the grant, and each is reported as `elevation.granted`.
 
 **The device key stops a copy, not a person at the Mac.** Altiward watches people who hold
 admin rights for a while, and admin rights can read root-only files. A key in a file could

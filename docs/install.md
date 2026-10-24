@@ -191,9 +191,13 @@ Create these in your MDM and scope them to a pilot group first.
    > right Team ID before turning `enforce` on.
 
    Someone holding admin rights nobody granted can run the hook by hand to claim a
-   Privileges grant. That turns their session into a Privileges session, which
-   `OutOfBandEnforcement` no longer removes. The console shows it as **Followed rights
-   without a grant** and the SIEM as "Replaced by a Privileges grant". With
+   Privileges grant, or to claim they gave the rights back. In `enforce` mode, a grant
+   claimed more than a minute after Altiward raised the rights or on a Mac without SAP
+   Privileges, and a give-back claimed while they are still an admin, are refused and
+   logged on the Mac, and the rights are still removed; a real grant's hook arrives well
+   within that minute. In `alert` mode a claimed grant still turns their session into a
+   Privileges session. The console shows it as **Followed rights without a grant** and the
+   SIEM as "Replaced by a Privileges grant". Once it is a Privileges session, with
    `ExpiryEnforcement` set to `enforce` and an expiry from Privileges' settings, the rights
    end at expiry, unless they run the hook again before then: each claim renews the grant,
    and each is reported as `elevation.granted`.
