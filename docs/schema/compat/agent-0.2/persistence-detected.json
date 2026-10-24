@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "event_id": "9b4e2f61-3c7a-4d8e-a5f2-1e6b7c8d9a04",
+  "type": "persistence.detected",
+  "session_id": "5d1c2b7a-8e4f-4a6b-9c3d-2e1f0a9b8c7d",
+  "timestamp": "2026-10-16T09:31:47.004Z",
+  "device": {
+    "serial": "C02XK0AAJGH5",
+    "hardware_uuid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+    "os_version": "26.1.0",
+    "agent_version": "0.1.0",
+    "privileges_version": "2.5.3"
+  },
+  "user": { "local_name": "jdoe", "upn": "jane.doe@example.com" },
+  "elevation": { "reason": null, "expires": null, "source": "privileges" },
+  "delayed": false,
+  "detail": {
+    "findings": [
+      {
+        "kind": "launch_daemon",
+        "change": "added",
+        "path": "/Library/LaunchDaemons/com.example.updater.plist",
+        "label": "com.example.updater",
+        "program": "/bin/sh",
+        "arguments": ["/bin/sh", "-c", "/usr/local/bin/updater --daemon"]
+      },
+      {
+        "kind": "ssh_authorized_key",
+        "change": "added",
+        "path": "/var/root/.ssh/authorized_keys",
+        "user": "root",
+        "key_type": "ssh-ed25519",
+        "fingerprint": "SHA256:MUYXhbzAe2bGtJZ/B7tFqcYUSEvPPdynEap1A9R+Qd4"
+      },
+      {
+        "kind": "sudoers",
+        "change": "added",
+        "path": "/etc/sudoers.d/jdoe",
+        "added_lines": ["jdoe ALL=(ALL) NOPASSWD: ALL"]
+      }
+    ],
+    "since": "2026-10-16T09:14:03.120Z",
+    "truncated": 0
+  }
+}
