@@ -16,15 +16,26 @@ Every section has the four headings below, with "None." under any that don't app
 Upgrade the server to 0.3.0 before you set `OutOfBandEnforcement` to `enforce`. An older
 server rejects `admin.out_of_band_removed`, and the session would stay open in the console.
 Update altiward-siem to 0.3.0 too. In `alert` mode, the default, this agent works with
-server 0.2.0.
+server 0.2.0. A server before 0.3.0 ignores where the Mac says its key is kept.
 
 ### Breaking changes
 
-None.
+- On a Mac whose key is in the Secure Enclave, `altiward-agent heartbeat`, `flush`,
+  `commands` and `simulate-hook` run by hand no longer send: only the daemon can use the
+  key, and it sends within a minute.
+- An agent older than 0.2.0 installed over this one can't use a Secure Enclave key, so the
+  Mac enrolls again with a file key, which waits for approval if **Approve Macs that
+  enroll again** is on. That makes going back to 0.1.1 a way out if the Secure Enclave
+  ever misbehaves.
 
 ### Security
 
-None.
+- A Mac with a Secure Enclave (Apple silicon, or an Intel Mac with a T2 chip) now makes
+  its key there when it enrolls. Someone given admin rights could copy a key kept in a
+  file and later sign as that Mac from anywhere; a copy of a Secure Enclave key is no use
+  off the Mac. Macs already enrolled keep their file key until they enroll again: revoke
+  a Mac's key in **Enrollments** to move it. The agent tells the server where its key is
+  kept, and `altiward-agent status` shows it.
 
 ### Changes
 

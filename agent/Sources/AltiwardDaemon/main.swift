@@ -36,7 +36,13 @@ if command == "privileges-audit" {
 }
 
 do {
-    let daemon = try Daemon(configuration: .load())
+    let configuration = AgentConfiguration.load()
+    // A command run beside the daemon can't use a Secure Enclave key the daemon made:
+    // such a key works only in the session that made it. With its own data directory
+    // (development) no daemon shares the store, so the command holds the key.
+    let role: DeviceAuthenticator.Role =
+        command == "run" || configuration.dataDirectory != AgentConfiguration.defaultDataDirectory ? .daemon : .command
+    let daemon = try Daemon(configuration: configuration, role: role)
     switch command {
     case "run":
         daemon.run()  // never returns

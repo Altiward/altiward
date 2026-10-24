@@ -43,6 +43,7 @@ final class FakeServer: HTTPTransport, Sendable {
     func setEnrollStatus(_ s: String) { state.withLock { $0.enrollStatus = s } }
     func dropNextEnrollResponse() { state.withLock { $0.dropNextEnrollResponse = true } }
     func revoke(_ id: String) { state.withLock { _ = $0.revoked.insert(id) } }
+    func approve(_ id: String) { state.withLock { _ = $0.pending.remove(id) } }
     func queueCommand(_ c: AgentCommand) { state.withLock { $0.commands.append(c) } }
     func failResults(times: Int) { state.withLock { $0.failResults = times } }
     var results: [String: CommandResult] { state.withLock { $0.results } }
@@ -117,6 +118,63 @@ final class FakeServer: HTTPTransport, Sendable {
     }
 }
 
+/// Device keys for tests. Its "Secure Enclave" keys are software keys behind a prefix,
+/// so they aren't 32 bytes and a file-key loader can't take them for its own.
+final class FakeKeys: DeviceKeys, Sendable {
+    private struct State {
+        var available = true
+        var failCreate = false
+        var busy = false
+        var made: [Data] = []
+        var dead: Set<Data> = []
+        var beforeMake: (@Sendable () throws -> Void)?
+    }
+
+    struct Failed: Error {}
+    static let prefix = Data("SE:".utf8)
+    private let state = OSAllocatedUnfairLock(initialState: State())
+
+    init(secureEnclave: Bool = true) { state.withLock { $0.available = secureEnclave } }
+
+    var secureEnclaveAvailable: Bool { state.withLock { $0.available } }
+    func failCreate(_ fail: Bool) { state.withLock { $0.failCreate = fail } }
+    func busy(_ busy: Bool) { state.withLock { $0.busy = busy } }
+    /// Makes every Secure Enclave key so far unusable, as on another Mac.
+    func killExistingKeys() { state.withLock { $0.dead = Set($0.made) } }
+    /// Runs once, before the next key is made: what another process does meanwhile.
+    func beforeNextMake(_ work: @escaping @Sendable () throws -> Void) { state.withLock { $0.beforeMake = work } }
+
+    func makeKey(_ storage: KeyStorage) throws -> Data {
+        if let work = state.withLock({ s -> (@Sendable () throws -> Void)? in defer { s.beforeMake = nil }; return s.beforeMake }) {
+            try work()
+        }
+        let raw = P256.Signing.PrivateKey().rawRepresentation
+        guard storage == .secureEnclave else { return raw }
+        return try state.withLock { s in
+            guard s.available, !s.failCreate, !s.busy else { throw Failed() }
+            let key = Self.prefix + raw
+            s.made.append(key)
+            return key
+        }
+    }
+
+    func publicKey(_ key: Data, _ storage: KeyStorage) throws -> Data {
+        try privateKey(key, storage).publicKey.derRepresentation
+    }
+
+    func sign(_ message: Data, key: Data, _ storage: KeyStorage) throws -> Data {
+        try privateKey(key, storage).signature(for: message).derRepresentation
+    }
+
+    private func privateKey(_ key: Data, _ storage: KeyStorage) throws -> P256.Signing.PrivateKey {
+        guard storage == .secureEnclave else { return try P256.Signing.PrivateKey(rawRepresentation: key) }
+        try state.withLock { s in
+            guard s.available, !s.busy, !s.dead.contains(key), key.starts(with: Self.prefix) else { throw Failed() }
+        }
+        return try P256.Signing.PrivateKey(rawRepresentation: key.dropFirst(Self.prefix.count))
+    }
+}
+
 func httpDate(_ date: Date) -> String {
     let f = DateFormatter()
     f.locale = Locale(identifier: "en_US_POSIX")
@@ -179,11 +237,20 @@ struct RequestSigningTests {
 struct DeviceAuthenticatorTests {
     let clock = TestClock()
     let serverURL = URL(string: "https://api.altiward.test")!
+    let keys = FakeKeys()
 
-    func authenticator(_ store: AgentStore, _ server: FakeServer, url: URL? = nil) -> DeviceAuthenticator {
+    func authenticator(
+        _ store: AgentStore, _ server: FakeServer, url: URL? = nil, keys: FakeKeys? = nil,
+        role: DeviceAuthenticator.Role = .daemon
+    ) -> DeviceAuthenticator {
         DeviceAuthenticator(
             store: store, serverURL: url ?? serverURL, enrollmentToken: "enroll-token-0001", device: { testDevice },
-            transport: server, now: { clock.now })
+            transport: server, keys: keys ?? self.keys, role: role, now: { clock.now })
+    }
+
+    func enrolledStorage(_ r: FakeServer.Request) throws -> String? {
+        let body = try JSONSerialization.jsonObject(with: r.body) as! [String: String]
+        return body["key_storage"]
     }
 
     func postEvents(_ auth: DeviceAuthenticator) async throws -> Int {
@@ -254,7 +321,7 @@ struct DeviceAuthenticatorTests {
         let transport = InterleavingTransport(server: server)
         let auth = DeviceAuthenticator(
             store: store, serverURL: serverURL, enrollmentToken: "enroll-token-0001", device: { testDevice },
-            transport: transport, now: { clock.now })
+            transport: transport, keys: keys, now: { clock.now })
         #expect(try await postEvents(auth) == 200)
         let firstID = try #require(await auth.deviceID)
 
@@ -262,7 +329,7 @@ struct DeviceAuthenticatorTests {
             // The other process enrolls a new key, which revokes the old one, and saves it.
             #expect(try await postEvents(authenticator(other, server)) == 200)
             server.revoke(firstID)
-            try store.setValue(other.value(forKey: "device_credential"), forKey: "device_credential")
+            try store.setValue(other.value(forKey: "device_credential_se"), forKey: "device_credential_se")
         }
         await #expect(throws: DeliveryError.credentialInvalid) { try await postEvents(auth) }
 
@@ -297,5 +364,226 @@ struct DeviceAuthenticatorTests {
         #expect(try await postEvents(authenticator(store, server)) == 200)
         #expect(try await postEvents(authenticator(store, server, url: URL(string: "https://eu.altiward.test")!)) == 200)
         #expect(server.enrollments.count == 2)
+    }
+
+    // MARK: Where the key is kept
+
+    /// The credential as agent 0.1 reads it from "device_credential".
+    struct V01Credential: Decodable {
+        var serverURL: String
+        var privateKey: Data
+        var deviceID: String?
+    }
+
+    @Test func newKeyGoesInSecureEnclave() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let auth = authenticator(store, server)
+        #expect(try await postEvents(auth) == 200)
+        #expect(try enrolledStorage(#require(server.enrollments.first)) == "secure_enclave")
+        #expect(try store.value(forKey: "device_credential_se") != nil)
+        #expect(try store.value(forKey: "device_credential") == nil)
+        #expect(await auth.keyStorage == .secureEnclave)
+    }
+
+    @Test func withoutSecureEnclaveAFileKeyKeepsTheOldFormat() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let auth = authenticator(store, server, keys: FakeKeys(secureEnclave: false))
+        #expect(try await postEvents(auth) == 200)
+        #expect(try enrolledStorage(#require(server.enrollments.first)) == "software")
+        #expect(await auth.keyStorage == .software)
+
+        // An older agent installed over this one can still sign with it.
+        let json = try #require(try store.value(forKey: "device_credential"))
+        let old = try JSONDecoder().decode(V01Credential.self, from: Data(json.utf8))
+        #expect(old.deviceID == (await auth.deviceID))
+        _ = try P256.Signing.PrivateKey(rawRepresentation: old.privateKey)
+        #expect(try store.value(forKey: "device_credential_se") == nil)
+    }
+
+    @Test func failingToMakeASecureEnclaveKeyFallsBackToAFile() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        keys.failCreate(true)
+        let auth = authenticator(store, server)
+        #expect(try await postEvents(auth) == 200)
+        #expect(try enrolledStorage(#require(server.enrollments.first)) == "software")
+        #expect(await auth.keyStorage == .software)
+    }
+
+    @Test func anEnrolledFileKeyStays() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        #expect(try await postEvents(authenticator(store, server, keys: FakeKeys(secureEnclave: false))) == 200)
+
+        // Upgraded on a Mac with a Secure Enclave: it keeps signing with the file key.
+        let auth = authenticator(store, server)
+        #expect(try await postEvents(auth) == 200)
+        #expect(server.enrollments.count == 1)
+        #expect(await auth.keyStorage == .software)
+    }
+
+    @Test func aRevokedFileKeyMovesToTheSecureEnclave() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        #expect(try await postEvents(authenticator(store, server, keys: FakeKeys(secureEnclave: false))) == 200)
+        let auth = authenticator(store, server)
+        server.revoke(try #require(await auth.deviceID))
+
+        await #expect(throws: DeliveryError.credentialInvalid) { try await postEvents(auth) }
+        #expect(try await postEvents(auth) == 200)
+        #expect(try enrolledStorage(server.enrollments[1]) == "secure_enclave")
+        #expect(try store.value(forKey: "device_credential") == nil)
+        #expect(await auth.keyStorage == .secureEnclave)
+    }
+
+    /// Agent 0.1 installed over this one ignores the Secure Enclave record and enrolls a
+    /// file key, which with approval off revokes the Secure Enclave key. Upgraded again,
+    /// the agent finds the Secure Enclave key refused and goes on with the file key.
+    @Test func downgradeAndUpgradeWithApprovalOff() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let auth = authenticator(store, server)
+        #expect(try await postEvents(auth) == 200)
+        let enclaveID = try #require(await auth.deviceID)
+
+        let fileID = try await enrollAsAgent01(store, server)
+        server.revoke(enclaveID)
+
+        await #expect(throws: DeliveryError.credentialInvalid) { try await postEvents(auth) }
+        #expect(try await postEvents(auth) == 200)
+        #expect(await auth.deviceID == fileID)
+        #expect(await auth.keyStorage == .software)
+        #expect(server.enrollments.count == 2)
+    }
+
+    /// With approval on, the downgraded agent's file key waits for approval while the
+    /// Secure Enclave key keeps working. The agent keeps both, so approving the file key
+    /// later still leaves it a key that works.
+    @Test func downgradeAndUpgradeWithApprovalOn() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let auth = authenticator(store, server)
+        #expect(try await postEvents(auth) == 200)
+        let enclaveID = try #require(await auth.deviceID)
+
+        server.setEnrollStatus("pending")
+        let fileID = try await enrollAsAgent01(store, server)
+        server.setEnrollStatus("active")
+
+        #expect(try await postEvents(auth) == 200)
+        #expect(await auth.deviceID == enclaveID)
+        #expect(try store.value(forKey: "device_credential") != nil)
+
+        server.approve(fileID)
+        server.revoke(enclaveID)
+        await #expect(throws: DeliveryError.credentialInvalid) { try await postEvents(auth) }
+        #expect(try await postEvents(auth) == 200)
+        #expect(await auth.deviceID == fileID)
+    }
+
+    /// What agent 0.1 does on a store whose only key is in the Secure Enclave record: it
+    /// finds no credential, so it enrolls a file key and saves it in its own record.
+    func enrollAsAgent01(_ store: AgentStore, _ server: FakeServer) async throws -> String {
+        let key = P256.Signing.PrivateKey()
+        var request = URLRequest(url: serverURL.appendingPathComponent("v1/agent/enroll"))
+        request.httpMethod = "POST"
+        request.setValue("Bearer enroll-token-0001", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode([
+            "serial": testDevice.serial, "hardware_uuid": testDevice.hardwareUUID,
+            "public_key": key.publicKey.derRepresentation.base64EncodedString(),
+        ])
+        struct Enrolled: Decodable { let device_id: String }
+        let id = try JSONDecoder().decode(Enrolled.self, from: await server.send(request).0).device_id
+        let json = #"{"serverURL":"\#(serverURL.absoluteString)","privateKey":"\#(key.rawRepresentation.base64EncodedString())","deviceID":"\#(id)"}"#
+        try store.setValue(json, forKey: "device_credential")
+        return id
+    }
+
+    @Test func aKeyFromAnotherMacEnrollsAgain() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let auth = authenticator(store, server)
+        #expect(try await postEvents(auth) == 200)
+
+        keys.killExistingKeys()
+        await #expect(throws: DeliveryError.credentialInvalid) { try await postEvents(auth) }
+        #expect(try await postEvents(auth) == 200)
+        #expect(server.enrollments.count == 2)
+        #expect(try enrolledStorage(server.enrollments[1]) == "secure_enclave")
+    }
+
+    @Test func aBusySecureEnclaveKeepsTheKey() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let auth = authenticator(store, server)
+        #expect(try await postEvents(auth) == 200)
+        let id = await auth.deviceID
+
+        keys.busy(true)
+        await #expect(throws: DeviceKeyError.self) { try await postEvents(auth) }
+        keys.busy(false)
+        #expect(try await postEvents(auth) == 200)
+        #expect(await auth.deviceID == id)
+        #expect(server.enrollments.count == 1)
+    }
+
+    @Test func aCommandLeavesTheSecureEnclaveKeyToTheDaemon() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        #expect(try await postEvents(authenticator(store, server)) == 200)
+
+        let command = authenticator(store, server, role: .command)
+        await #expect(throws: DeviceKeyError.heldByDaemon) { try await postEvents(command) }
+        #expect(await command.deviceID != nil)
+        #expect(await command.keyStorage == .secureEnclave)
+        #expect(server.enrollments.count == 1)
+    }
+
+    @Test func aCommandLeavesEnrollingToTheDaemonOnAMacWithASecureEnclave() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        await #expect(throws: DeviceKeyError.notEnrolled) {
+            try await postEvents(authenticator(store, server, role: .command))
+        }
+        #expect(server.enrollments.isEmpty)
+
+        // Without a Secure Enclave both processes can use a file key, as before.
+        let noEnclave = FakeKeys(secureEnclave: false)
+        #expect(try await postEvents(authenticator(store, server, keys: noEnclave, role: .command)) == 200)
+        #expect(try await postEvents(authenticator(store, server, keys: noEnclave)) == 200)
+        #expect(server.enrollments.count == 1)
+    }
+
+    /// The daemon and a command share the store; if the other one stores a key while
+    /// this one makes its own, the stored key wins and only one is enrolled.
+    @Test func aKeyStoredMeanwhileByAnotherProcessWins() async throws {
+        let store = try makeStore()
+        let other = try makeStore()
+        let server = FakeServer(clock: clock)
+        #expect(try await postEvents(authenticator(other, server, keys: FakeKeys())) == 200)
+        let otherID = try #require(await authenticator(other, server, keys: FakeKeys()).deviceID)
+
+        keys.beforeNextMake {
+            try store.setValue(other.value(forKey: "device_credential_se"), forKey: "device_credential_se")
+        }
+        let auth = authenticator(store, server)
+        #expect(try await postEvents(auth) == 200)
+        #expect(await auth.deviceID == otherID)
+        #expect(server.enrollments.count == 1)
+    }
+
+    /// The real Secure Enclave, on Macs that have one (not CI's virtual machines).
+    @Test(.enabled(if: SecureEnclave.isAvailable)) func signsWithTheRealSecureEnclave() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let auth = DeviceAuthenticator(
+            store: store, serverURL: serverURL, enrollmentToken: "enroll-token-0001", device: { testDevice },
+            transport: server, keys: SystemDeviceKeys(), now: { clock.now })
+        #expect(try await postEvents(auth) == 200)
+        #expect(try await postEvents(auth) == 200)
+        #expect(await auth.keyStorage == .secureEnclave)
+        #expect(server.enrollments.count == 1)
     }
 }

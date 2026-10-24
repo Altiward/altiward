@@ -255,6 +255,12 @@ readable on every Mac, so anyone with it can enroll a key for a serial number: a
 for a Mac that is already enrolled replaces the old one, unless **Approve Macs that enroll
 again** is on ([step 6](#6-settings-worth-reviewing)).
 
+On a Mac with a Secure Enclave (Apple silicon, or an Intel Mac with a T2 chip) the key is
+made in the Secure Enclave, so it can't be copied to another Mac. A Mac that enrolled
+before agent 0.2.0 keeps its key in a root-only file until it enrolls again: revoke its key
+in **Enrollments** and it enrolls again with a new one, which waits for approval if
+**Approve Macs that enroll again** is on.
+
 ## 3. Check it works
 
 Within five minutes of installing, each Mac appears in **Fleet** with its macOS and agent
@@ -693,6 +699,9 @@ persistence snapshot: (none yet)
 - A device ID but **queued events** that never go down: the Mac enrolled but can't deliver.
   If **Approve Macs that enroll again** is on, look in **Enrollments** for a Mac waiting
   for approval.
+- `device key: Secure Enclave` after the device ID: only the agent's daemon can use that
+  key, so `altiward-agent flush`, `heartbeat` and `commands` run by hand say the daemon
+  sends instead. It does, within a minute.
 
 ### Rights show as "Without a grant"
 

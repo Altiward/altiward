@@ -55,7 +55,7 @@ HTTPS. It contains no third-party code, and makes no connections to Apple, SAP, 
 or anyone else. It:
 
 - enrolls once with the enrollment token from your profile, registering a key it makes
-  on the Mac;
+  on the Mac and saying whether that key is in the Mac's Secure Enclave;
 - sends events as they happen, and a health event every 5 minutes;
 - keeps a request open for commands (such as a revoke), which your server holds for up to
   50 seconds and answers when one is queued, then asks again; after an error it waits 60
@@ -143,9 +143,16 @@ security records ([Backups](install.md#backups)).
   on the Mac; the server stores only the public key. Every request after enrollment is
   signed with it, and the server refuses requests more than 5 minutes old or from a
   revoked Mac.
-- **Where the Mac's key lives.** In a file under `/Library/Application Support/Altiward/`
-  that only root can read. That protects it from standard users but not from someone
-  with admin rights on that Mac. Moving it into the Keychain or Secure Enclave is planned.
+- **Where the Mac's key lives.** In the Mac's Secure Enclave, on Macs that have one
+  (Apple silicon, and Intel Macs with a T2 chip) and enrolled with agent 0.2.0 or later.
+  The agent keeps a handle to it in a file under `/Library/Application Support/Altiward/`
+  that only root can read, and only that Mac's Secure Enclave can use the handle, so a
+  copy is no use anywhere else. Someone with admin rights on the Mac can still have it
+  sign while they're there. On other Macs, and on Macs that enrolled before agent 0.2.0
+  until they enroll again, the key itself is in that file. That protects it from standard
+  users but not from someone with admin rights on the Mac. Revoking a Mac's key in
+  **Enrollments** makes it enroll again with a new one. The key isn't in the Keychain, so
+  removing the agent with `--purge` leaves nothing behind.
 - **The enrollment token** lets a Mac enroll, and does nothing else. It is in the MDM
   profile, so anyone on a Mac can read it. A new enrollment shows in **Enrollments**, where
   an admin can revoke it, and with **Approve Macs that enroll again** on, a Mac that
@@ -162,7 +169,8 @@ security records ([Backups](install.md#backups)).
 
 The agent keeps one database, `/Library/Application Support/Altiward/agent.sqlite`,
 readable only by root. It holds events waiting to send (removed once your server
-confirms them), the elevations open now, the Mac's key, and revoke results (removed 30
+confirms them), the elevations open now, the Mac's key (or the handle to it in the Secure
+Enclave), and revoke results (removed 30
 days after they are reported). It logs to the Mac's unified log under
 `com.altiward.agent`.
 
