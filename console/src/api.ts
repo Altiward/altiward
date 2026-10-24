@@ -98,6 +98,8 @@ export interface PermanentUse {
   remote_host: string | null;
   /** The authorisation right a prompt approved. */
   right: string | null;
+  /** The user a sudo ran as; missing or null when unknown. */
+  run_as?: string | null;
   /** Single uses grouped into this entry; 1 for a sign-in. */
   count: number;
 }

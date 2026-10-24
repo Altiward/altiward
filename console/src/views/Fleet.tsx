@@ -35,6 +35,7 @@ const permanentUseContext = (u: PermanentUse) => [
   u.on_session_of && `on ${u.on_session_of}’s session`,
   u.remote_host && `from ${u.remote_host}`,
   u.right && `for ${u.right}`,
+  u.method === "sudo" && u.run_as && `as ${u.run_as}`,
 ].filter(Boolean).join(" · ");
 /** Places the persistence snapshot couldn't read: changes there go unreported. */
 const blindSpots = (d: Device) => d.persistence_unreadable ?? [];

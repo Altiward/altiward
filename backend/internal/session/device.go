@@ -95,7 +95,8 @@ type PermanentUse struct {
 	OnSessionOf *string    `json:"on_session_of"`
 	RemoteHost  *string    `json:"remote_host"`
 	Right       *string    `json:"right"`
-	Count       int        `json:"count"` // single uses grouped into this entry; 1 for a sign-in
+	RunAs       *string    `json:"run_as"` // the user a sudo ran as; nil when unknown
+	Count       int        `json:"count"`  // single uses grouped into this entry; 1 for a sign-in
 }
 
 // MaxRecentAlerts is how many tamper alerts, and how many uses of permanent admins, a
@@ -209,6 +210,7 @@ func (d *Device) addPermanentUse(e event.Event) {
 	u.OnSessionOf = detailString(e.Detail["on_session_of"])
 	u.RemoteHost = detailString(e.Detail["remote_host"])
 	u.Right = detailString(e.Detail["right"])
+	u.RunAs = detailString(e.Detail["run_as"])
 	if n, ok := e.Detail["count"].(float64); ok && n >= 1 {
 		u.Count = int(n)
 	}

@@ -109,6 +109,27 @@ describe("Fleet", () => {
     expect(within(rows[2]).queryByText(/now/)).toBeNull();
   });
 
+  it("says who sudo ran as, only when the agent said", async () => {
+    const at = new Date(Date.now() - 3600_000).toISOString();
+    const sudo = { account: "itadmin", method: "sudo", state: "single" as const, started_at: at, ended_at: null,
+      on_session_of: null, remote_host: null, right: null, count: 1 };
+    const used: Device = {
+      ...mac,
+      recent_permanent_uses: [
+        { ...sudo, use_id: "s1", run_as: "root" },
+        { ...sudo, use_id: "s2", run_as: null },
+        { ...sudo, use_id: "s3" },
+      ],
+    };
+    const api = fakeApi({ devices: vi.fn(async () => [used]) });
+    render(<ApiContext.Provider value={api}><MemoryRouter><FleetView /></MemoryRouter></ApiContext.Provider>);
+    await userEvent.click(await screen.findByText("C02ZM1BBMD6T"));
+    const rows = within(screen.getByRole("list", { name: "Recent use of permanent admins" })).getAllByRole("listitem");
+    expect(within(rows[0]).getByText("Ran sudo · as root")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("Ran sudo")).toBeInTheDocument();
+    expect(within(rows[2]).getByText("Ran sudo")).toBeInTheDocument();
+  });
+
   it("hides the use list when none are recorded", async () => {
     const api = fakeApi({ devices: vi.fn(async () => [{ ...mac, recent_permanent_uses: null }]) });
     render(<ApiContext.Provider value={api}><MemoryRouter><FleetView /></MemoryRouter></ApiContext.Provider>);

@@ -124,3 +124,28 @@ func TestDeviceStateWithoutPermanentUses(t *testing.T) {
 		}
 	}
 }
+
+func TestDevicePermanentUseSudoRunAs(t *testing.T) {
+	sudo := testfixture.Event(t, "admin-permanent-use-prompt")
+	sudo.Detail = map[string]any{
+		"use_id": "20000000-0000-4000-8000-000000000001", "method": "sudo", "state": "single",
+		"source": "unified_log", "started": "2026-10-16T10:20:00Z", "tty": "ttys003", "run_as": "root", "count": float64(2),
+	}
+	d := session.NewDevice("t1", sudo.Device.Serial)
+	d.Apply(sudo)
+	if u := d.RecentPermanentUses[0]; u.RunAs == nil || *u.RunAs != "root" || u.Count != 2 {
+		t.Fatalf("use = %+v", u)
+	}
+	delete(sudo.Detail, "run_as")
+	sudo.Detail["use_id"] = "20000000-0000-4000-8000-000000000002"
+	d.Apply(sudo)
+	for _, u := range d.RecentPermanentUses {
+		if u.UseID == "20000000-0000-4000-8000-000000000002" && u.RunAs != nil {
+			t.Fatalf("run_as invented: %+v", u)
+		}
+	}
+	b, _ := json.Marshal(d.RecentPermanentUses[0])
+	if !strings.Contains(string(b), `"run_as"`) {
+		t.Fatalf("no run_as in %s", b)
+	}
+}
