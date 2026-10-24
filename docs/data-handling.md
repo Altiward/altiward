@@ -110,7 +110,8 @@ never make the request. To turn it off for everyone, set
 asks nobody, and its content security policy no longer allows `api.github.com`.
 
 **Appearance.** The theme and light or dark someone picks in Settings stay in their
-browser's local storage. They never reach the server.
+browser's local storage. They never reach the server. So do an admin's dismissed update
+notices and their **Show pre-releases** choice.
 
 ## What the server stores
 

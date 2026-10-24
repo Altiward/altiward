@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { ApiContext, MeContext } from "../context";
 import { fakeApi, githubFetch, release, signedIn } from "../test/fixtures";
-import { checkReleases } from "../updates";
+import { checkReleases, showsPrereleases } from "../updates";
 import type { ConsoleSignIn } from "../api";
 import { dateTime } from "../format";
 import { setLook } from "../theme";
@@ -256,6 +256,33 @@ describe("Settings updates", () => {
     const server = await screen.findByRole("group", { name: "Server" });
     expect(within(server).getByText("You’re running 0.2.1, newer than the latest release, 0.2.0.")).toBeInTheDocument();
     expect(within(server).queryByText("Up to date")).toBeNull();
+  });
+
+  it("shows release candidates once an admin turns on Show pre-releases", async () => {
+    githubFetch();
+    renderView(withCheck("0.2.0"));
+    const group = await screen.findByRole("group", { name: "Updates" });
+    const server = await within(group).findByRole("group", { name: "Server" });
+    expect(within(server).getByText("You’re running 0.2.0. The latest release is 0.2.0.")).toBeInTheDocument();
+    const toggle = within(group).getByRole("switch", { name: /Show pre-releases/ });
+    expect(toggle).not.toBeChecked();
+
+    await userEvent.click(toggle);
+    expect(showsPrereleases()).toBe(true);
+    expect(within(server).getByText("You’re running 0.2.0. The latest release is 0.2.0. The newest release candidate is 0.3.0-rc.1."))
+      .toBeInTheDocument();
+    expect(within(server).getByText("Update available")).toBeInTheDocument();
+    const notice = within(group).getByRole("region", { name: "Server release candidate 0.3.0-rc.1 is available" });
+    expect(within(notice).getByText("./upgrade.sh ~/altiward-0.3.0-rc.1")).toBeInTheDocument();
+  });
+
+  it("names the release and the candidate for a server running one", async () => {
+    githubFetch();
+    renderView(withCheck("0.3.0-rc.1"));
+    const server = await screen.findByRole("group", { name: "Server" });
+    expect(within(server).getByText("You’re running 0.3.0-rc.1. The latest release is 0.2.0. The newest release candidate is 0.3.0-rc.1."))
+      .toBeInTheDocument();
+    expect(within(server).getByText("Up to date")).toBeInTheDocument();
   });
 
   it("says it couldn’t check, and when it last could", async () => {

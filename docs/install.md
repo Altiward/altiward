@@ -473,7 +473,9 @@ Going back to an older server version isn't supported; restore the backup instea
 script shows how if the new version doesn't start.
 
 **Release candidates** (`0.1.1-rc.1`) are builds for testing, published on GitHub as
-pre-releases. Install one as above; the release itself upgrades over it.
+pre-releases. Install one as above; the release itself upgrades over it. The console
+tells admins about candidates when the server runs one, or when they turn on **Show
+pre-releases** in Settings → Updates, which applies to their browser only.
 
 **Upgrading by hand**, if you'd rather: back up the database, `docker load -i` the image,
 set `ALTIWARD_VERSION` in `.env`, copy in any changed files from the new bundle's

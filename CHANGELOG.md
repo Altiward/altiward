@@ -33,6 +33,11 @@ None.
 - Settings → Updates has a **Check now** button for admins, beside "Last checked" and on
   "Couldn’t check for updates", which asks GitHub for the release list straight away
   instead of waiting out the day. It asks at most once a minute (`docs/data-handling.md`).
+- Settings → Updates has a **Show pre-releases** switch, off by default, kept in the
+  admin's browser. When it's on, the console's notices offer release candidates too, saying
+  so, with the `upgrade.sh` command for the candidate, and Settings names the newest
+  candidate next to the latest release. A server running a candidate hears about newer
+  candidates whatever the switch says, as before.
 
 ## Agent 0.1.1 - 2026-10-23
 

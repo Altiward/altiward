@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { dateTime } from "../format";
-import { type GitHubRelease, type Latest, available, compareVersions, dismiss, isDismissed, isVersion } from "../updates";
+import {
+  type GitHubRelease, type Latest, available, compareVersions, dismiss, isDismissed, isVersion, setShowPrereleases,
+  showsPrereleases,
+} from "../updates";
 import { type Deployment, useUpdateCheck } from "../useUpdateCheck";
 import { AttentionGlyph, UpdateGlyph } from "./Icons";
 import { StateBadge } from "./StateBadge";
@@ -32,20 +35,21 @@ function Command({ text }: { text: string }) {
   );
 }
 
-/** A newer server: what it is, whether it fixes a security problem, and the upgrade steps
- *  from the install guide with its version filled in: upgrade.sh, or on Azure Container
- *  Apps, the app's new image. */
+/** A newer server: what it is (a release candidate says so), whether it fixes a security
+ *  problem, and the upgrade steps from the install guide with its version filled in:
+ *  upgrade.sh, or on Azure Container Apps, the app's new image. */
 export function ServerNotice({ running, latest, azureApp, onDismiss }: Deployment & {
   running: string; latest: Latest; onDismiss?: () => void;
 }) {
   const v = latest.version;
+  const what = latest.prerelease ? "Server release candidate" : "Server";
   const guide = azureApp !== undefined
     ? `https://github.com/Altiward/altiward/blob/server-v${v}/deploy/azure/README.md#upgrading`
     : `https://github.com/Altiward/altiward/blob/server-v${v}/docs/install.md#releases-and-updates`;
   return (
-    <section className="update-notice" aria-label={`Server ${v} is available`}>
+    <section className="update-notice" aria-label={`${what} ${v} is available`}>
       <div className="update-head">
-        <p className="update-title"><UpdateGlyph />Server {v} is available. You’re running {running}.</p>
+        <p className="update-title"><UpdateGlyph />{what} {v} is available. You’re running {running}.</p>
         {latest.security && <SecurityTag />}
         {onDismiss && <button type="button" className="button" onClick={onDismiss}>Dismiss</button>}
       </div>
@@ -75,11 +79,12 @@ export function ServerNotice({ running, latest, azureApp, onDismiss }: Deploymen
 /** A newer agent than any in the fleet, with its package for the MDM. */
 export function AgentNotice({ fleet, latest, onDismiss }: { fleet: string; latest: Latest; onDismiss?: () => void }) {
   const v = latest.version;
+  const what = latest.prerelease ? "Agent release candidate" : "Agent";
   const pkg = latest.packageUrl ? decodeURIComponent(latest.packageUrl.split("/").pop() ?? "") : "";
   return (
-    <section className="update-notice" aria-label={`Agent ${v} is available`}>
+    <section className="update-notice" aria-label={`${what} ${v} is available`}>
       <div className="update-head">
-        <p className="update-title"><UpdateGlyph />Agent {v} is available. The newest in your fleet is {fleet}.</p>
+        <p className="update-title"><UpdateGlyph />{what} {v} is available. The newest in your fleet is {fleet}.</p>
         {latest.security && <SecurityTag />}
         {onDismiss && <button type="button" className="button" onClick={onDismiss}>Dismiss</button>}
       </div>
@@ -93,13 +98,13 @@ export function AgentNotice({ fleet, latest, onDismiss }: { fleet: string; lates
   );
 }
 
-/** Overview's notices, for admins: newer releases not yet dismissed. Quiet when the check
- *  is off or failed. */
+/** Overview's notices, for admins: newer releases not yet dismissed, and release
+ *  candidates if this browser shows pre-releases. Quiet when the check is off or failed. */
 export function UpdateNotices({ fleetAgents }: { fleetAgents: string[] }) {
   const u = useUpdateCheck();
   const [, setDismissed] = useState(0);
   if (u?.state !== "done" || !u.check.releases) return null;
-  const a = available(u.running, fleetAgents, u.check.releases);
+  const a = available(u.running, fleetAgents, u.check.releases, { prereleases: showsPrereleases() });
   const server = a.newerServer && !isDismissed("server", a.newerServer.version) ? a.newerServer : null;
   const agent = a.newerAgent && !isDismissed("agent", a.newerAgent.version) ? a.newerAgent : null;
   if (!server && !agent) return null;
@@ -117,10 +122,13 @@ function whereSettingsLive(azureApp?: string) {
   return azureApp !== undefined ? "in the container app’s environment variables" : "in the server’s .env";
 }
 
-/** Settings' Updates group, for admins: the latest versions, when they were checked, and
- *  the notices, which can't be dismissed here. */
+/** Settings' Updates group, for admins: the latest versions, when they were checked, the
+ *  Show pre-releases switch for this browser, and the notices, which can't be dismissed
+ *  here. */
 export function UpdatesGroup({ fleetAgents }: { fleetAgents: string[] | null }) {
   const u = useUpdateCheck();
+  const [prereleases, setPrereleases] = useState(showsPrereleases);
+  const showPrereleases = (on: boolean) => { setShowPrereleases(on); setPrereleases(on); };
   return (
     <div className="group" role="group" aria-labelledby="updates-title">
       <h3 id="updates-title">Updates</h3>
@@ -133,7 +141,7 @@ export function UpdatesGroup({ fleetAgents }: { fleetAgents: string[] | null }) 
       {u?.state === "checking" && <p className="hint" role="status">Checking for updates…</p>}
       {u?.state === "done" && (u.check.releases
         ? <LatestVersions running={u.running} fleetAgents={fleetAgents} releases={u.check.releases} checkedAt={u.check.checkedAt}
-          azureApp={u.azureApp} checkNow={u.checkNow} />
+          azureApp={u.azureApp} checkNow={u.checkNow} prereleases={prereleases} onPrereleases={showPrereleases} />
         : (
           <div className="box">
             <div className="row">
@@ -159,15 +167,23 @@ export function UpdatesGroup({ fleetAgents }: { fleetAgents: string[] | null }) 
 const CheckNow = ({ onClick }: { onClick: () => void }) =>
   <button type="button" className="button" onClick={onClick}>Check now</button>;
 
-function LatestVersions({ running, fleetAgents, releases, checkedAt, azureApp, checkNow }: Deployment & {
+/** The newest release of a product, and its newest candidate when candidates count. */
+function latestLine(product: "server" | "agent", release: Latest | null, candidate: Latest | null) {
+  return (release ? `The latest release is ${release.version}.` : `No ${product} release is published yet.`)
+    + (candidate ? ` The newest release candidate is ${candidate.version}.` : "");
+}
+
+function LatestVersions({ running, fleetAgents, releases, checkedAt, azureApp, checkNow, prereleases, onPrereleases }: Deployment & {
   running: string; fleetAgents: string[] | null; releases: GitHubRelease[]; checkedAt: string | null; checkNow: () => void;
+  prereleases: boolean; onPrereleases: (on: boolean) => void;
 }) {
-  const a = available(running, fleetAgents ?? [], releases);
-  const ahead = a.server !== null && isVersion(running) && compareVersions(running, a.server.version) > 0;
-  const serverLine = !a.server ? `You’re running ${running}. No server release is published yet.`
-    : ahead ? `You’re running ${running}, newer than the latest release, ${a.server.version}.`
-    : `You’re running ${running}. The latest release is ${a.server.version}.`;
-  const agentLatest = a.agent ? `The latest release is ${a.agent.version}.` : "No agent release is published yet.";
+  const a = available(running, fleetAgents ?? [], releases, { prereleases });
+  const newestServer = a.serverCandidate ?? a.server;
+  const ahead = newestServer !== null && isVersion(running) && compareVersions(running, newestServer.version) > 0;
+  const serverLine = ahead
+    ? `You’re running ${running}, newer than the latest ${newestServer.prerelease ? "release candidate" : "release"}, ${newestServer.version}.`
+    : `You’re running ${running}. ${latestLine("server", a.server, a.serverCandidate)}`;
+  const agentLatest = latestLine("agent", a.agent, a.agentCandidate);
   const agentLine = fleetAgents === null ? agentLatest
     : a.fleetAgent ? `The newest agent in your fleet is ${a.fleetAgent}. ${agentLatest}`
     : `No Mac has reported its agent version yet. ${agentLatest}`;
@@ -176,12 +192,22 @@ function LatestVersions({ running, fleetAgents, releases, checkedAt, azureApp, c
       <div className="box">
         <div className="row" role="group" aria-label="Server">
           <span><span>Server</span><p className="hint">{serverLine}</p></span>
-          {a.newerServer ? <UpdateAvailable /> : a.server && isVersion(running) && !ahead && <StateBadge state="verified" label="Up to date" />}
+          {a.newerServer ? <UpdateAvailable /> : newestServer && isVersion(running) && !ahead && <StateBadge state="verified" label="Up to date" />}
         </div>
         <div className="row" role="group" aria-label="Agent">
           <span><span>Agent</span><p className="hint">{agentLine}</p></span>
-          {a.newerAgent ? <UpdateAvailable /> : a.agent && a.fleetAgent && <StateBadge state="verified" label="Up to date" />}
+          {a.newerAgent ? <UpdateAvailable /> : (a.agentCandidate ?? a.agent) && a.fleetAgent && <StateBadge state="verified" label="Up to date" />}
         </div>
+        <label className="row">
+          <span>
+            <span>Show pre-releases</span>
+            <p className="hint">
+              Include release candidates, the test builds GitHub lists as pre-releases, in this browser only. A server
+              running a candidate always hears about newer ones.
+            </p>
+          </span>
+          <input type="checkbox" role="switch" checked={prereleases} onChange={(e) => onPrereleases(e.target.checked)} />
+        </label>
       </div>
       <div className="row">
         <p className="hint">
