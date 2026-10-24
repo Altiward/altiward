@@ -1,12 +1,13 @@
-import { useMemo, useState } from "react";
-import type { CredentialStatus, Enrollment } from "../api";
-import { Banner, Details, Empty, RoleNote, SearchField, Segmented, Toolbar } from "../components/Chrome";
+import { type JSX, useMemo, useState } from "react";
+import type { CredentialStatus, Enrollment, KeyStorage } from "../api";
+import { Banner, Details, Empty, Explain, RoleNote, SearchField, Segmented, Toolbar } from "../components/Chrome";
 import { Fingerprint } from "../components/Fingerprint";
-import { CloseIcon } from "../components/Icons";
+import { ChipGlyph, CloseIcon, EndedGlyph, FileGlyph } from "../components/Icons";
 import { ConfirmSheet } from "../components/Sheet";
 import { StateBadge } from "../components/StateBadge";
 import { Table } from "../components/Table";
 import { useApi, useCan } from "../context";
+import { explanations } from "../explanations";
 import { dateTime } from "../format";
 import { useLoad } from "../useLoad";
 
@@ -14,6 +15,15 @@ type Filter = CredentialStatus | "all";
 const statusTitle: Record<CredentialStatus, string> = { active: "Active", pending: "Waiting for approval", revoked: "Revoked" };
 const statusLook = { active: "verified", pending: "claimed", revoked: "ended" } as const;
 const Status = ({ status }: { status: CredentialStatus }) => <StateBadge state={statusLook[status]} label={statusTitle[status]} />;
+
+/** Where the Mac says its key is kept. Plain, not a coloured badge: it's the Mac's claim. */
+const keyStorageLook: Record<KeyStorage, [string, () => JSX.Element]> = {
+  secure_enclave: ["Secure Enclave", ChipGlyph], software: ["File", FileGlyph], "": ["Not reported", EndedGlyph],
+};
+function KeyKeptIn({ storage }: { storage: KeyStorage }) {
+  const [word, Glyph] = keyStorageLook[storage] ?? keyStorageLook[""];
+  return <span className="key-storage"><Glyph />{word}</span>;
+}
 
 /** Device credentials: approve re-enrollments, revoke lost Macs. */
 export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
@@ -55,7 +65,14 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
               columns={[
                 { key: "mac", title: "Mac", sort: (e) => e.serial, render: (e) => <span className="data">{e.serial}</span> },
                 { key: "status", title: "Status", sort: (e) => e.status, render: (e) => <Status status={e.status} /> },
-                { key: "key", title: "Key", render: (e) => <span className="data secondary"><Fingerprint publicKey={e.public_key} /></span> },
+                // Where the key is kept goes under the fingerprint: a column of its own leaves the
+                // dates no room beside the inspector.
+                { key: "key", title: "Key", render: (e) => (
+                  <span className="key-cell">
+                    <span className="data secondary"><Fingerprint publicKey={e.public_key} /></span>
+                    <span className="secondary small"><KeyKeptIn storage={e.key_storage} /></span>
+                  </span>
+                ) },
                 { key: "enrolled", title: "Enrolled", sort: (e) => new Date(e.created_at).getTime(),
                   render: (e) => <span className="secondary small">{dateTime(e.created_at)}</span> },
               ]} />
@@ -64,6 +81,8 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
         {current && (
           <EnrollmentInspector enrollment={current} onClose={() => setSelected(null)}
             newMac={!(data ?? []).some((e) => e.serial === current.serial && e.device_id !== current.device_id && e.status === "active")}
+            replacesEnclaveKey={(data ?? []).some((e) => e.serial === current.serial && e.device_id !== current.device_id &&
+              e.status === "active" && e.key_storage === "secure_enclave")}
             onDone={(text) => { setDone(text); void reload(); onChanged?.(); }} />
         )}
       </div>
@@ -73,8 +92,9 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
 
 /** A Mac's credentials: a pending one for a Mac with no active one is a new Mac; a
  *  re-enrollment replaces the Mac's active key when approved. */
-function EnrollmentInspector({ enrollment: e, newMac, onClose, onDone }: {
-  enrollment: Enrollment; newMac: boolean; onClose: () => void; onDone: (message: string) => void;
+function EnrollmentInspector({ enrollment: e, newMac, replacesEnclaveKey, onClose, onDone }: {
+  enrollment: Enrollment; newMac: boolean; replacesEnclaveKey: boolean; onClose: () => void;
+  onDone: (message: string) => void;
 }) {
   const api = useApi();
   const [confirming, setConfirming] = useState(false);
@@ -122,6 +142,7 @@ function EnrollmentInspector({ enrollment: e, newMac, onClose, onDone }: {
       <div className="group">
         <Details rows={[
           ["Key fingerprint", <span key="fp" className="data"><Fingerprint publicKey={e.public_key} /></span>],
+          ["Key kept in", <Explain key="kept" tip={explanations.keyStorage} bare><KeyKeptIn storage={e.key_storage} /></Explain>],
           ["Hardware UUID", <span key="hw" className="data">{e.hardware_uuid}</span>],
           ["Enrolled", dateTime(e.created_at)],
           ["Activated", dateTime(e.activated_at)],
@@ -132,6 +153,19 @@ function EnrollmentInspector({ enrollment: e, newMac, onClose, onDone }: {
         <p className="secondary" style={{ marginTop: 12 }}>
           This Mac enrolled again with a new key. Approve it if you expect that, for example after a
           reinstall. Its previous key keeps working until you approve.
+        </p>
+      )}
+      {e.status === "pending" && replacesEnclaveKey && e.key_storage !== "secure_enclave" && (
+        <p className="secondary" style={{ marginTop: 12 }}>
+          The key this Mac uses now is in the Secure Enclave, but this new one isn’t. An agent older than 0.2.0
+          installed over a newer one does that; otherwise, find out why before you approve it.
+        </p>
+      )}
+      {e.status === "active" && e.key_storage !== "secure_enclave" && (
+        <p className="secondary" style={{ marginTop: 12 }}>
+          This key is in a file, so someone with admin rights on the Mac could copy it and report as this Mac from
+          elsewhere. Revoke it to make the Mac enroll again: with agent 0.2.0 or later on a Mac with a Secure
+          Enclave, the new key is kept there.
         </p>
       )}
       {e.status === "pending" && newMac && (

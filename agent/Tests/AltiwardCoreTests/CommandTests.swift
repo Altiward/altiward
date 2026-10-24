@@ -191,7 +191,7 @@ struct CommandLoopTests {
         let server = FakeServer(clock: clock)
         let auth = DeviceAuthenticator(
             store: store, serverURL: URL(string: "https://api.altiward.test")!, enrollmentToken: "enroll-token-0001",
-            device: { testDevice }, transport: server, now: { clock.now })
+            device: { testDevice }, transport: server, keys: FakeKeys(), now: { clock.now })
         let tracker = ElevationTracker(store: store, environment: makeEnvironment(admins: admins, clock: clock))
         return (CommandLoop(store: store, tracker: tracker, authenticator: auth, now: { clock.now }), server, store)
     }

@@ -17,13 +17,15 @@ final class Daemon: Sendable {
     let authenticator: DeviceAuthenticator?
     let commands: CommandLoop?
 
-    init(configuration: AgentConfiguration) throws {
+    /// `role` says whether this process may use a Secure Enclave key (``DeviceAuthenticator/Role``).
+    init(configuration: AgentConfiguration, role: DeviceAuthenticator.Role) throws {
         self.configuration = configuration
         store = try AgentStore.open(directory: configuration.dataDirectory)
         tracker = ElevationTracker(store: store, environment: .live(config: configuration))
         if let url = configuration.serverURL, let token = configuration.enrollmentToken {
             authenticator = DeviceAuthenticator(
-                store: store, serverURL: url, enrollmentToken: token, device: { DeviceIdentity.current() })
+                store: store, serverURL: url, enrollmentToken: token, device: { DeviceIdentity.current() }, role: role,
+                log: { log.error("\($0, privacy: .public)") })
         } else {
             authenticator = nil
         }
@@ -192,7 +194,11 @@ final class Daemon: Sendable {
     func printStatus() async throws {
         print("data directory: \(configuration.dataDirectory.path)")
         print("server: \(configuration.serverURL?.absoluteString ?? "(not configured)")")
-        print("device id: \(await authenticator?.deviceID ?? "(not enrolled)")")
+        let deviceID = await authenticator?.deviceID
+        print("device id: \(deviceID ?? "(not enrolled)")")
+        if deviceID != nil, let storage = await authenticator?.keyStorage {
+            print("device key: \(storage == .secureEnclave ? "Secure Enclave" : "file")")
+        }
         print("queued events: \(try store.pendingCount())")
         let sessions = try store.openSessions()
         print("open sessions: \(sessions.count)")

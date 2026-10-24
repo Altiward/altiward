@@ -75,10 +75,13 @@ func (s *Server) requireDevice(h handler) http.Handler {
 	})
 }
 
+// enrollRequest is decoded leniently: agents add fields, and older servers must ignore
+// them (agent 0.2.0 added key_storage).
 type enrollRequest struct {
 	Serial       string `json:"serial"`
 	HardwareUUID string `json:"hardware_uuid"`
-	PublicKey    string `json:"public_key"` // base64 SubjectPublicKeyInfo DER
+	PublicKey    string `json:"public_key"`  // base64 SubjectPublicKeyInfo DER
+	KeyStorage   string `json:"key_storage"` // "secure_enclave" or "software"; absent before agent 0.2.0
 }
 
 func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal) {
@@ -106,7 +109,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal
 	}
 	res, err := s.store.Enroll(r.Context(), store.DeviceCredential{
 		DeviceID: id, TenantID: p.TenantID, Serial: req.Serial, HardwareUUID: req.HardwareUUID,
-		PublicKey: spki, CreatedAt: s.now(),
+		PublicKey: spki, KeyStorage: store.ParseKeyStorage(req.KeyStorage), CreatedAt: s.now(),
 	})
 	if errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "this key is enrolled elsewhere; generate a new one")
@@ -121,9 +124,11 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal
 	switch {
 	case res.Replaced != "":
 		s.log.Warn("device re-enrolled; previous credential revoked",
-			"tenant", p.TenantID, "serial", c.Serial, "device_id", c.DeviceID, "replaced", res.Replaced)
+			"tenant", p.TenantID, "serial", c.Serial, "device_id", c.DeviceID, "replaced", res.Replaced,
+			"key_storage", c.KeyStorage)
 	case c.DeviceID == id && c.Status == store.CredentialPending:
-		s.log.Warn("device enrollment awaiting approval", "tenant", p.TenantID, "serial", c.Serial, "device_id", c.DeviceID)
+		s.log.Warn("device enrollment awaiting approval", "tenant", p.TenantID, "serial", c.Serial, "device_id", c.DeviceID,
+			"key_storage", c.KeyStorage)
 	}
 	status := http.StatusOK // the same key again: a retry
 	if c.DeviceID == id {

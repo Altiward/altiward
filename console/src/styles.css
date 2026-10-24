@@ -233,6 +233,9 @@ table.list { width: 100%; border-collapse: collapse; }
 .num { text-align: right; }
 
 /* Status words and StateBadge */
+.key-cell { display: flex; flex-direction: column; gap: 2px; }
+.key-storage { display: inline-flex; align-items: center; gap: var(--space-2); white-space: nowrap; }
+.key-storage svg { width: 14px; height: 14px; flex: none; }
 .tag { font-size: 13px; font-weight: 600; white-space: nowrap; }
 .tag + .tag { margin-left: var(--space-2); }
 .tag.denied { color: var(--denied); }

@@ -25,6 +25,29 @@ const (
 	CredentialRevoked CredentialStatus = "revoked"
 )
 
+// KeyStorage is where a Mac said its key is kept when it enrolled. It's the agent's own
+// claim: nothing on the server can check it.
+type KeyStorage string
+
+const (
+	// KeyStorageUnknown: the agent didn't say (before 0.2.0, all file keys), or said
+	// something this server doesn't know.
+	KeyStorageUnknown       KeyStorage = ""
+	KeyStorageSecureEnclave KeyStorage = "secure_enclave"
+	KeyStorageSoftware      KeyStorage = "software"
+)
+
+// ParseKeyStorage keeps the values this server knows and makes anything else unknown,
+// so a value from a newer agent never stops a Mac enrolling.
+func ParseKeyStorage(s string) KeyStorage {
+	switch k := KeyStorage(s); k {
+	case KeyStorageSecureEnclave, KeyStorageSoftware:
+		return k
+	default:
+		return KeyStorageUnknown
+	}
+}
+
 // DeviceCredential binds a Mac's public key to its tenant and serial.
 type DeviceCredential struct {
 	DeviceID     string           `json:"device_id"`
@@ -32,6 +55,7 @@ type DeviceCredential struct {
 	Serial       string           `json:"serial"`
 	HardwareUUID string           `json:"hardware_uuid"`
 	PublicKey    []byte           `json:"public_key"` // SubjectPublicKeyInfo DER
+	KeyStorage   KeyStorage       `json:"key_storage"`
 	Status       CredentialStatus `json:"status"`
 	CreatedAt    time.Time        `json:"created_at"`
 	ActivatedAt  *time.Time       `json:"activated_at"`
@@ -82,8 +106,9 @@ func (s TenantSettings) SilentAfter() time.Duration {
 }
 
 type Credentials interface {
-	// Enroll records c (DeviceID, TenantID, Serial, HardwareUUID, PublicKey, CreatedAt).
-	// The same key again returns its existing credential; a key held by another tenant
+	// Enroll records c (DeviceID, TenantID, Serial, HardwareUUID, PublicKey, KeyStorage,
+	// CreatedAt). The same key again returns its existing credential, KeyStorage
+	// unchanged; a key held by another tenant
 	// is ErrConflict. A serial's first credential is active. A later one replaces the
 	// active credential (revoking it) unless the tenant requires approval, in which case
 	// it is pending, even when the earlier credential was revoked. There is no limit on

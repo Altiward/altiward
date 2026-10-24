@@ -64,6 +64,36 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 	})
 
+	t.Run("where the key is kept is recorded once", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		key := newKey(t)
+		res, err := s.Enroll(ctx, DeviceCredential{
+			DeviceID: newUUID(t), TenantID: tenant, Serial: serial, HardwareUUID: "HW", PublicKey: key,
+			KeyStorage: KeyStorageSecureEnclave, CreatedAt: t0,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c := lookup(t, s, res.Credential.DeviceID); c.KeyStorage != KeyStorageSecureEnclave {
+			t.Fatalf("key storage = %q", c.KeyStorage)
+		}
+		// A retry claiming otherwise doesn't change it.
+		again, err := s.Enroll(ctx, DeviceCredential{
+			DeviceID: newUUID(t), TenantID: tenant, Serial: serial, HardwareUUID: "HW", PublicKey: key,
+			KeyStorage: KeyStorageSoftware, CreatedAt: t0.Add(time.Minute),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if again.Credential.KeyStorage != KeyStorageSecureEnclave || lookup(t, s, res.Credential.DeviceID).KeyStorage != KeyStorageSecureEnclave {
+			t.Fatalf("after retry: %q", again.Credential.KeyStorage)
+		}
+		list, err := s.ListCredentials(ctx, tenant, CredentialFilter{})
+		if err != nil || len(list) != 1 || list[0].KeyStorage != KeyStorageSecureEnclave {
+			t.Fatalf("list = %+v, %v", list, err)
+		}
+	})
+
 	t.Run("a key enrolled in another tenant is refused", func(t *testing.T) {
 		s, tenant, serial := setup(t)
 		key := newKey(t)

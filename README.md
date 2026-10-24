@@ -96,7 +96,9 @@ Known limits:
 - Expiry comes from Privileges. A grant Privileges gives no expiry never counts as past
   its expiry, and `ExpiryEnforcement` defaults to `alert`: rights are removed only if you
   set it to `enforce`.
-- The device key is a root-only file, not yet held in the Secure Enclave.
+- The device key is in the Secure Enclave on Macs that have one. On Intel Macs without a
+  T2 chip, and on Macs that enrolled before agent 0.2.0 until they enroll again, it's a
+  root-only file, which someone with admin rights could copy.
 - Identity mapping uses the `UserPrincipalNames` preference; Platform SSO isn't read yet.
 - No settings editor in the console, and no Jamf Pro, Intune, Entra ID or Okta
   integrations beyond single sign-on. Settings come from the `com.altiward.agent` profile.

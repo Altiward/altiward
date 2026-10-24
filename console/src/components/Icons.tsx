@@ -14,6 +14,10 @@ export const VerifiedGlyph = () => <svg {...base}><path d="M2 7.5l3.5 3.5L12 3.5
 export const ClaimedGlyph = () => <svg {...base}><path d="M5 5a2 2 0 114 0c0 1.5-2 1.5-2 3M7 11.5v.5" /></svg>;
 export const NotGrantedGlyph = () => <svg {...base}><path d="M2 2l10 10M12 2L2 12" /></svg>;
 export const EndedGlyph = () => <svg {...base}><path d="M2 11h10" /></svg>;
+/** A key kept in the Secure Enclave: a chip. */
+export const ChipGlyph = () => <svg {...base}><path d="M4 4h6v6H4zM1 6h3M1 8.5h3M10 6h3M10 8.5h3" /></svg>;
+/** A key kept in a file: a page. */
+export const FileGlyph = () => <svg {...base}><path d="M3 1h5l3 3v9H3zM8 1v3h3" /></svg>;
 /** A newer release is out. */
 export const UpdateGlyph = () => <svg {...base}><path d="M7 12V3M3 6l4-4 4 4" /></svg>;
 /** Needs attention soon, such as a release that fixes a security problem. */

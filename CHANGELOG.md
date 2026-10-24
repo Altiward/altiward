@@ -16,15 +16,26 @@ Every section has the four headings below, with "None." under any that don't app
 Upgrade the server to 0.3.0 before you set `OutOfBandEnforcement` to `enforce`. An older
 server rejects `admin.out_of_band_removed`, and the session would stay open in the console.
 Update altiward-siem to 0.3.0 too. In `alert` mode, the default, this agent works with
-server 0.2.0.
+server 0.2.0. A server before 0.3.0 ignores where the Mac says its key is kept.
 
 ### Breaking changes
 
-None.
+- On a Mac whose key is in the Secure Enclave, `altiward-agent heartbeat`, `flush`,
+  `commands` and `simulate-hook` run by hand no longer send: only the daemon can use the
+  key, and it sends within a minute.
+- An agent older than 0.2.0 installed over this one can't use a Secure Enclave key, so the
+  Mac enrolls again with a file key, which waits for approval if **Approve Macs that
+  enroll again** is on. That makes going back to 0.1.1 a way out if the Secure Enclave
+  ever misbehaves.
 
 ### Security
 
-None.
+- A Mac with a Secure Enclave (Apple silicon, or an Intel Mac with a T2 chip) now makes
+  its key there when it enrolls. Someone given admin rights could copy a key kept in a
+  file and later sign as that Mac from anywhere; a copy of a Secure Enclave key is no use
+  off the Mac. Macs already enrolled keep their file key until they enroll again: revoke
+  a Mac's key in **Enrollments** to move it. The agent tells the server where its key is
+  kept, and `altiward-agent status` shows it.
 
 ### Changes
 
@@ -79,6 +90,13 @@ None.
 
 ### Changes
 
+- The server records where each Mac says its key is kept, which agent 0.2.0 sends when it
+  enrolls: `key_storage` on each enrollment in `GET /v1/enrollments` is `secure_enclave`,
+  `software`, or empty for older agents and enrollments from before this release. It's the
+  Mac's own claim; the server can't check it (`docs/data-handling.md`). **Enrollments**
+  shows it under each key's fingerprint as Secure Enclave, File or Not reported, suggests
+  revoking an active file key so the Mac enrolls again with a new one, and says so when a
+  Mac waiting for approval would swap a Secure Enclave key for one that isn't.
 - After an upgrade, the console's update check no longer says "Up to date" from a release
   list fetched before the release. When the list doesn't include the running server's
   version, the admin's browser asks GitHub again, at most once an hour, and keeps the list

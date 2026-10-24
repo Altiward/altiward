@@ -95,8 +95,12 @@ when one has changed, logs which and exits for launchd to start it again with th
 profile that arrives after the package, or a later change, applies within seconds.
 
 The agent enrolls with the `EnrollmentToken` on first delivery, then signs every request
-with its own P-256 key, kept in the agent store under the root-only data directory.
-`altiward-agent status` shows the device ID.
+with its own P-256 key. On a Mac with a Secure Enclave the daemon makes the key there; on
+other Macs, and on Macs that enrolled before agent 0.2.0, the key is in the agent store
+under the root-only data directory. `altiward-agent status` shows the device ID and where
+the key is kept. Only the daemon can use a Secure Enclave key, so on such a Mac
+`altiward-agent heartbeat`, `flush`, `commands` and `simulate-hook` do their local part
+and leave the sending to the daemon.
 
 Remote commands are fetched by a long poll the server holds for up to 50 seconds, so a
 revoke lands within about a second; also after each heartbeat and when the network
@@ -133,6 +137,21 @@ as **Followed rights without a grant** and in the SIEM as "Replaced by a Privile
 With `ExpiryEnforcement` set to `enforce` and an expiry from Privileges' settings, the
 rights end at expiry, unless they run the hook again before then: each claim renews the
 grant, and each is reported as `elevation.granted`.
+
+**The device key stops a copy, not a person at the Mac.** Altiward watches people who hold
+admin rights for a while, and admin rights can read root-only files. A key in a file could
+be copied during an elevation and used later from anywhere, to send heartbeats that say all
+is well or to end a session after removing the agent. A Secure Enclave key can't be copied
+off the Mac: the store holds only a handle that this Mac's Secure Enclave can use. Someone
+with admin rights can still have the Mac sign while they're there, or leave a root process
+behind to do it later; the tamper checks and the persistence snapshot are what look for
+that. The key is usable from the first unlock after boot, with nobody signed in, and only
+in the session that made it, so the daemon makes it and only the daemon uses it. A key the
+Secure Enclave can't use while a throwaway key works (the store came from another Mac or a
+backup) is dropped and the Mac enrolls again. A file key and a Secure Enclave key have
+separate records, so agent 0.1 installed over this one finds no key it can't read and
+enrolls again with a file key. Where the Mac says its key is kept is its own claim: the
+server can't check it.
 
 **Privileges stays at the edge.** Altiward depends on a project it doesn't control, and
 must keep working when Privileges' timer is stopped or Privileges is removed. So expiry,
