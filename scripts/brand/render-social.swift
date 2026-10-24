@@ -41,7 +41,7 @@ let cards: [String: (name: String, tagline: String, label: String)] = [
         "github.com/Altiward/altiward-forwarder"),
     "altiward-siem": ("altiward-siem", "Detections and hunting queries for Sentinel and Splunk.",
         "github.com/Altiward/altiward-siem"),
-    "website": ("Altiward", "Temporary Mac admin.\nLasting accountability.", "altiward.com"),
+    "website": ("Altiward", "Open-source oversight for\ntemporary macOS admin rights.", "altiward.com"),
 ]
 
 let arguments = CommandLine.arguments
