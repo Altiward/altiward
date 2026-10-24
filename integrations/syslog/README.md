@@ -46,7 +46,7 @@ Header: `CEF:0|Altiward|Altiward|<agent version>|<signature>|<name>|<severity>|`
 | Key | Value |
 | --- | --- |
 | `rt` | When it happened, epoch milliseconds |
-| `externalId` | Unique per record: the event ID, with `/account/<name>` added for each new account a persistence event found |
+| `externalId` | Unique per record: the event ID. A second record from one event adds `/finding`: the finding of an `elevation.expired_enforced`, and the Close of the out-of-band finding when the rights were removed. Each new account a persistence event found adds `/account/<name>` |
 | `cat`, `act`, `outcome` | OCSF class, activity and status |
 | `dvchost` | The Mac's serial number |
 | `deviceExternalId` | The Mac's hardware UUID |

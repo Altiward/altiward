@@ -44,6 +44,10 @@ None.
   "Removed without a grant" and exports a Revoke Privileges record.
 - A console revoke, an automatic removal, or rights the heartbeat sees gone now close the
   out-of-band finding with status "Rights removed". Before, a console revoke left it open.
+- The Sentinel workbook (`integrations/sentinel/workbook.arm.json`) and the Splunk
+  dashboard (`integrations/splunk/altiward_overview.xml`) count `admin.out_of_band_removed`
+  as a session end, so re-import them: older copies show sessions agent 0.2.0 removed as
+  still open.
 
 ## Agent 0.2.0 - unreleased
 
