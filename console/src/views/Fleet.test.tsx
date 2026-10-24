@@ -80,6 +80,43 @@ describe("Fleet", () => {
     expect(detail).toHaveClass("detail");
   });
 
+  it("lists recent use of permanent admins in the Permanent admins group", async () => {
+    const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+    const used: Device = {
+      ...mac,
+      recent_permanent_uses: [
+        { use_id: "u1", account: "itadmin", method: "ssh", state: "started", started_at: hoursAgo(2), ended_at: null,
+          on_session_of: null, remote_host: "10.0.0.5", right: null, count: 1 },
+        { use_id: "u2", account: "itadmin", method: "prompt", state: "single", started_at: hoursAgo(5), ended_at: null,
+          on_session_of: "alex", remote_host: null, right: "com.apple.ServiceManagement.daemons.modify", count: 3 },
+        { use_id: "u3", account: "itadmin", method: "console", state: "ended", started_at: hoursAgo(30), ended_at: hoursAgo(27),
+          on_session_of: null, remote_host: null, right: null, count: 1 },
+      ],
+    };
+    const api = fakeApi({ devices: vi.fn(async () => [used, { ...mac, serial: "C02QUIET0001" }]) });
+    render(<ApiContext.Provider value={api}><MemoryRouter><FleetView /></MemoryRouter></ApiContext.Provider>);
+    await userEvent.click(await screen.findByText("C02ZM1BBMD6T"));
+    const group = screen.getByRole("group", { name: "Permanent admins" });
+    const rows = within(within(group).getByRole("list", { name: "Recent use of permanent admins" })).getAllByRole("listitem");
+    expect(rows).toHaveLength(3);
+    expect(within(rows[0]).getByText("Signed in now")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("Signed in over SSH · from 10.0.0.5")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("Since 2 h ago")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("itadmin ×3")).toBeInTheDocument();
+    expect(within(rows[1]).getByText(/Approved a prompt · on alex’s session · for com\.apple\.ServiceManagement/)).toBeInTheDocument();
+    expect(within(rows[1]).queryByText(/now/)).toBeNull();
+    expect(within(rows[2]).getByText("Ended")).toBeInTheDocument();
+    expect(within(rows[2]).queryByText(/now/)).toBeNull();
+  });
+
+  it("hides the use list when none are recorded", async () => {
+    const api = fakeApi({ devices: vi.fn(async () => [{ ...mac, recent_permanent_uses: null }]) });
+    render(<ApiContext.Provider value={api}><MemoryRouter><FleetView /></MemoryRouter></ApiContext.Provider>);
+    await userEvent.click(await screen.findByText("C02ZM1BBMD6T"));
+    expect(screen.getByRole("group", { name: "Permanent admins" })).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Recent use of permanent admins" })).toBeNull();
+  });
+
   it("opens filtered by a search or a problem from the overview's links", async () => {
     const failing: Device = { ...mac, integrity: { code_signature: false } };
     const quiet: Device = { ...mac, serial: "C02QUIET0001", integrity: { code_signature: true } };

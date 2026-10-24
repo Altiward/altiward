@@ -128,6 +128,22 @@ export function tamperStateLabel(state: string, check: string): string {
   return "Failed";
 }
 
+const permanentUseMethods: Record<string, string> = {
+  console: "Signed in at the Mac",
+  terminal: "Signed in using Terminal",
+  ssh: "Signed in over SSH",
+  screen_sharing: "Shared the screen",
+  prompt: "Approved a prompt",
+  sudo: "Ran sudo",
+  su: "Switched user with su",
+};
+
+/** How a permanent admin account was used (admin.permanent_use). A method this console
+ *  doesn't know, from a newer agent, shows as the agent sent it. */
+export function permanentUseMethodLabel(method: string): string {
+  return permanentUseMethods[method] ?? method;
+}
+
 /** Whether agent version `version` ("X.Y.Z") is older than the minor release `oldest`
  *  ("X.Y"). A version that can't be read isn't flagged, as the server does. */
 export function agentOutdated(version: string, oldest: string): boolean {

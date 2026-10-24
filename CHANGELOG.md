@@ -9,6 +9,31 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Server 0.4.0 - unreleased
+
+### Upgrade order
+
+Upgrade before Agent 0.3.0. Update altiward-siem to 0.4.0. An older server rejects
+`admin.permanent_use`, which Agent 0.3.0 sends, and the agent deletes events the server
+rejects.
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+- The server accepts, stores, shows and exports `admin.permanent_use`, which Agent 0.3.0
+  sends each time someone uses a permanent admin account (`PermanentAdmins`). It exports it
+  as an OCSF Authentication record. **Fleet** keeps the newest 20 uses per Mac and shows
+  the newest 10 under **Permanent admins** in the Mac's details: who, how (signed in at the Mac, in Terminal or over SSH, shared the
+  screen, approved a prompt, ran sudo or su), from where, and whether the sign-in is still
+  open. The SIEM gets every use (`docs/data-handling.md`).
+
 ## Agent 0.2.0 - 2026-10-24
 
 ### Upgrade order

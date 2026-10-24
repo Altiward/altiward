@@ -58,6 +58,8 @@ export interface Device {
   persistence_unreadable?: string[] | null;
   /** Newest first, at most 20. Missing or null when there are none. */
   recent_tamper?: TamperAlert[];
+  /** Newest first by when each began, at most 20. Missing or null when none are recorded. */
+  recent_permanent_uses?: PermanentUse[] | null;
   /** The newest agent.silent the server raised for this Mac; missing or null if none. */
   silence?: Silence | null;
 }
@@ -79,6 +81,25 @@ export interface TamperAlert {
   check: string;
   state: "failed" | "restored" | "retired" | "detected";
   problem: string | null;
+}
+
+/** One use of a permanent admin account (admin.permanent_use). A sign-in is one entry,
+ *  started until ended; a prompt, sudo or su is a single. */
+export interface PermanentUse {
+  use_id: string;
+  account: string;
+  /** console, terminal, ssh, screen_sharing, prompt, sudo or su; a later agent may send others. */
+  method: string;
+  state: "started" | "ended" | "single";
+  started_at: string;
+  ended_at: string | null;
+  /** The user whose session it was, for a prompt or su; null when unknown. */
+  on_session_of: string | null;
+  remote_host: string | null;
+  /** The authorisation right a prompt approved. */
+  right: string | null;
+  /** Single uses grouped into this entry; 1 for a sign-in. */
+  count: number;
 }
 
 export type CredentialStatus = "active" | "pending" | "revoked";

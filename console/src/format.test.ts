@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  agentOutdated, endReasonLabel, flagLabel, formatDuration, gauge, integrityCheckLabel, persistenceLines, relativeTime, shortFingerprint, tamperStateLabel,
+  agentOutdated, endReasonLabel, flagLabel, formatDuration, gauge, integrityCheckLabel, permanentUseMethodLabel, persistenceLines, relativeTime, shortFingerprint, tamperStateLabel,
 } from "./format";
 
 describe("formatDuration", () => {
@@ -143,4 +143,17 @@ describe("persistenceLines", () => {
     expect(persistenceLines({})).toEqual([]);
     expect(persistenceLines({ findings: [{ kind: "cron" }], truncated: 0 })).toEqual(["New cron"]);
   });
+});
+
+describe("permanentUseMethodLabel", () => {
+  it.each([
+    ["console", "Signed in at the Mac"],
+    ["terminal", "Signed in using Terminal"],
+    ["ssh", "Signed in over SSH"],
+    ["screen_sharing", "Shared the screen"],
+    ["prompt", "Approved a prompt"],
+    ["sudo", "Ran sudo"],
+    ["su", "Switched user with su"],
+    ["endpoint_security_exec", "endpoint_security_exec"],
+  ])("%s is %s", (method, want) => expect(permanentUseMethodLabel(method)).toBe(want));
 });

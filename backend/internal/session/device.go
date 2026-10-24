@@ -36,6 +36,10 @@ type Device struct {
 	PersistenceUnreadable []string `json:"persistence_unreadable"`
 	// RecentTamper are the newest agent.tamper events, newest first, at most MaxRecentAlerts.
 	RecentTamper []TamperAlert `json:"recent_tamper"`
+	// RecentPermanentUses are the newest uses of the permanent admin accounts, newest
+	// first by when each began, at most MaxRecentAlerts. Nil in state stored before agent
+	// 0.3.0 reported them; nil means none recorded.
+	RecentPermanentUses []PermanentUse `json:"recent_permanent_uses"`
 	// Silence is the newest agent.silent the backend raised for this Mac, or nil if none.
 	// The Mac is reported silent while its State is silent.
 	Silence *Silence `json:"silence"`
@@ -79,14 +83,29 @@ type TamperAlert struct {
 	Problem *string   `json:"problem"`
 }
 
-// MaxRecentAlerts is how many tamper alerts a device keeps for the console; the SIEM gets
-// them all.
+// PermanentUse is one use of a permanent admin account (admin.permanent_use). A sign-in
+// is one entry from its started event to its ended one; a prompt, sudo or su is a single.
+type PermanentUse struct {
+	UseID       string     `json:"use_id"`
+	Account     string     `json:"account"`
+	Method      string     `json:"method"`
+	State       string     `json:"state"` // started, ended or single
+	StartedAt   time.Time  `json:"started_at"`
+	EndedAt     *time.Time `json:"ended_at"`
+	OnSessionOf *string    `json:"on_session_of"`
+	RemoteHost  *string    `json:"remote_host"`
+	Right       *string    `json:"right"`
+	Count       int        `json:"count"` // single uses grouped into this entry; 1 for a sign-in
+}
+
+// MaxRecentAlerts is how many tamper alerts, and how many uses of permanent admins, a
+// device keeps for the console; the SIEM gets them all.
 const MaxRecentAlerts = 20
 
 func NewDevice(tenantID, serial string) Device {
 	return Device{
 		TenantID: tenantID, Serial: serial, AdminMembers: []string{}, PermanentAdmins: []string{},
-		RecentTamper: []TamperAlert{},
+		RecentTamper: []TamperAlert{}, RecentPermanentUses: []PermanentUse{},
 	}
 }
 
@@ -110,6 +129,10 @@ func (d *Device) Apply(e event.Event) {
 	}
 	if e.Type == event.AgentTamper {
 		d.addTamper(e)
+		return
+	}
+	if e.Type == event.AdminPermanentUse {
+		d.addPermanentUse(e)
 		return
 	}
 	if e.Type != event.AgentHealth || (d.LastHealthAt != nil && e.Timestamp.Before(*d.LastHealthAt)) {
@@ -163,6 +186,53 @@ func (d *Device) addTamper(e event.Event) {
 	d.RecentTamper = keepRecent(d.RecentTamper, a, MaxRecentAlerts, func(a TamperAlert) (string, time.Time) {
 		return a.EventID, a.At
 	})
+}
+
+// addPermanentUse keeps e's use by its use ID. An ended replaces the started it ends, and
+// a started that arrives after its ended is dropped, so the order they arrive in doesn't
+// matter.
+func (d *Device) addPermanentUse(e event.Event) {
+	u := PermanentUse{Count: 1}
+	u.UseID, _ = e.Detail["use_id"].(string)
+	u.Method, _ = e.Detail["method"].(string)
+	u.State, _ = e.Detail["state"].(string)
+	if e.User != nil {
+		u.Account = e.User.LocalName
+	}
+	u.StartedAt = detailTime(e.Detail["started"])
+	if u.StartedAt.IsZero() {
+		u.StartedAt = e.Timestamp
+	}
+	if t := detailTime(e.Detail["ended"]); !t.IsZero() {
+		u.EndedAt = &t
+	}
+	u.OnSessionOf = detailString(e.Detail["on_session_of"])
+	u.RemoteHost = detailString(e.Detail["remote_host"])
+	u.Right = detailString(e.Detail["right"])
+	if n, ok := e.Detail["count"].(float64); ok && n >= 1 {
+		u.Count = int(n)
+	}
+	if u.State == event.UseStateEnded {
+		d.RecentPermanentUses = slices.DeleteFunc(d.RecentPermanentUses, func(x PermanentUse) bool {
+			return x.UseID == u.UseID && x.State == event.UseStateStarted
+		})
+	}
+	d.RecentPermanentUses = keepRecent(d.RecentPermanentUses, u, MaxRecentAlerts, func(u PermanentUse) (string, time.Time) {
+		return u.UseID, u.StartedAt
+	})
+}
+
+func detailString(v any) *string {
+	if s, ok := v.(string); ok && s != "" {
+		return &s
+	}
+	return nil
+}
+
+func detailTime(v any) time.Time {
+	s, _ := v.(string)
+	t, _ := time.Parse(time.RFC3339Nano, s)
+	return t
 }
 
 // keepRecent adds item unless its event ID is already there, and keeps the newest max by
