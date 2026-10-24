@@ -43,7 +43,7 @@ param consoleToken string = replace(newGuid(), '-', '')
 
 // The release this template runs: scripts/azure-template.sh moves it, and the release
 // workflow refuses a tag it doesn't match.
-var version = '0.3.0'
+var version = '0.4.0'
 var image = 'ghcr.io/altiward/altiward-api:${version}'
 // The Docker Official Image, copied next to Altiward's by each server release
 // (release-server.yml): Docker Hub and other public mirrors limit anonymous pulls by

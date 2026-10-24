@@ -9,7 +9,7 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
-## Agent 0.3.0 - unreleased
+## Agent 0.3.0 - 2026-10-24
 
 ### Upgrade order
 
@@ -57,7 +57,7 @@ None.
   agent sends. For the console, the server keeps each Mac's open sign-ins and its newest
   20 other uses.
 
-## Server 0.4.0 - unreleased
+## Server 0.4.0 - 2026-10-24
 
 ### Upgrade order
 
@@ -67,7 +67,8 @@ rejects.
 
 ### Breaking changes
 
-None.
+Agent 0.1 is no longer supported: support covers the last two agent minors, now 0.2 and
+0.3. The console marks Macs still running agent 0.1.x. Update them to Agent 0.3.0.
 
 ### Security
 
