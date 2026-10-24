@@ -38,18 +38,26 @@ extension ElevationTracker {
     static let permanentUseLookback: TimeInterval = 86_400
 
     /// Compares utmpx with the open rows. Run it every few seconds.
+    ///
+    /// utmpx and, when a sign-in has gone from it, wtmp are read before the transaction, so
+    /// hook calls and the heartbeat don't wait on them; the transaction then acts on the rows
+    /// as they are by then.
     public func checkPermanentUses() throws -> [AltiwardEvent] {
         let now = env.now()
         let device = env.device()
+        // macOS can leave a sign-in in utmpx after its process has gone, with no logout in
+        // wtmp. That isn't a sign-in now: its row ends, as noticed.
+        let logins = env.logins().filter { env.processExists($0.pid) }
+        // Every account's, so a row outlives its account leaving PermanentAdmins.
+        let signedIn = Set(logins.map { useID($0, device: device) })
+        let goneBefore = try store.openPermanentUses().filter { !signedIn.contains($0.useID) }
+        let history = goneBefore.map(\.startedAt).min().map { env.loginHistory($0) } ?? []
+        let historyCovers = Set(goneBefore.map(\.useID))
+
         return try store.transaction {
             var events: [AltiwardEvent] = []
-            var signedIn = Set<String>()
-            // macOS can leave a sign-in in utmpx after its process has gone, with no logout in
-            // wtmp. That isn't a sign-in now: its row ends, as noticed.
-            for record in env.logins() where env.processExists(record.pid) {
+            for record in logins {
                 let id = useID(record, device: device)
-                // Every account's, so a row outlives its account leaving PermanentAdmins.
-                signedIn.insert(id)
                 guard env.config.permanentAdmins.contains(record.user), !(try store.hasPermanentUse(id: id))
                 else { continue }
                 let row = PermanentUseRow(
@@ -59,17 +67,17 @@ extension ElevationTracker {
                 events.append(signInEvent(row, now: now, device: device))
             }
 
-            let gone = try store.openPermanentUses().filter { !signedIn.contains($0.useID) }
-            if let earliest = gone.map(\.startedAt).min() {
-                let history = env.loginHistory(earliest)
-                for row in gone {
-                    // wtmp's end for the same sign-in: its logout, or the shutdown or boot.
-                    let logged = history.first { useID($0, device: device) == row.useID }?.ended
-                    var ended = row
-                    ended.endedAt = logged ?? now
-                    try store.endPermanentUse(id: row.useID, at: logged ?? now)
-                    events.append(signInEvent(ended, basis: logged == nil ? "noticed" : "logged", now: now, device: device))
-                }
+            // Read again: a row another path ended meanwhile is no longer open, so it isn't
+            // ended twice. A row the history read didn't cover counts as noticed.
+            for row in try store.openPermanentUses() where !signedIn.contains(row.useID) {
+                // wtmp's end for the same sign-in: its logout, or the shutdown or boot.
+                let logged =
+                    historyCovers.contains(row.useID)
+                    ? history.first { useID($0, device: device) == row.useID }?.ended : nil
+                var ended = row
+                ended.endedAt = logged ?? now
+                try store.endPermanentUse(id: row.useID, at: logged ?? now)
+                events.append(signInEvent(ended, basis: logged == nil ? "noticed" : "logged", now: now, device: device))
             }
 
             for event in events { try store.enqueue(event, now: now) }
@@ -83,9 +91,11 @@ extension ElevationTracker {
     public func catchUpPermanentUses() throws -> [AltiwardEvent] {
         let now = env.now()
         let device = env.device()
+        // Read before the transaction, as the heartbeat does.
         let start = try permanentUseHistoryStart(now: now)
+        let history = env.loginHistory(start)
         return try store.transaction {
-            let events = try completedUseEvents(env.loginHistory(start), since: start, now: now, device: device)
+            let events = try completedUseEvents(history, since: start, now: now, device: device)
             for event in events { try store.enqueue(event, now: now) }
             return events
         }
