@@ -88,6 +88,10 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
     that asked, when the log names it.
   - *`sudo`* by a permanent admin records the terminal and the user it ran as, never the
     command or working directory. *`su`* to one records whose session and the terminal.
+  - Prompts, `sudo` and `su` that differ only in time are one event, with a `count` and
+    the time of the `last`: a script that runs `sudo` 300 times sends one. Each heartbeat
+    sends at most 20 such events, and the last carries `truncated`, how many more groups
+    it left out.
   - Prompts, `sudo` and `su` are read from the unified log each heartbeat, so they are
     recorded only where macOS keeps those lines: on some Macs it doesn't keep successful
     `sudo` runs. Apple's Endpoint Security, if Apple grants the entitlement, would make

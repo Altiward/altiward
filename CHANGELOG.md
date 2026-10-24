@@ -45,6 +45,9 @@ None.
     reliable.
   - Screen sharing, and SSH file copies or one-off commands that open no terminal (`scp`,
     `ssh host command`), aren't recorded yet.
+- Prompts, `sudo` and `su` that differ only in time are one event, with a count and the
+  time of the last: a script that runs `sudo` 300 times sends one. Each heartbeat sends at
+  most 20 such events, and the last says how many more groups it left out.
 - New command: `sudo altiward-agent permanent-uses [HOURS]` prints what the agent reads
   about permanent admins (default 24 hours; run as root).
 - `docs/data-handling.md` lists what the agent collects. The server keeps the newest 20
@@ -69,12 +72,13 @@ None.
 ### Changes
 
 - The server accepts, stores, shows and exports `admin.permanent_use`, which Agent 0.3.0
-  sends each time someone uses a permanent admin account (`PermanentAdmins`). It exports it
+  sends when someone uses a permanent admin account (`PermanentAdmins`). It exports it
   as an OCSF Authentication record. **Fleet** keeps each Mac's open sign-ins (up to 20)
   and its newest 20 other uses, and shows up to 10 under **Permanent admins** in the
   Mac's details, open sign-ins first: who, how (signed in at the Mac, in Terminal or over
-  SSH, shared the screen, approved a prompt, ran sudo or su), from where, and whether the
-  sign-in is still open. The SIEM gets every use.
+  SSH, approved a prompt, ran sudo or su), from where, and whether the sign-in is still
+  open. The SIEM gets every use. The server and console also accept and show screen
+  sharing, which Agent 0.3.0 doesn't send yet.
   `docs/data-handling.md` lists what is kept and sent.
 
 ## Agent 0.2.0 - 2026-10-24
