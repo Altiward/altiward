@@ -28,6 +28,14 @@ public struct AgentEnvironment: Sendable {
     /// What Privileges' system extension logged since the given time, oldest first
     /// (``PrivilegesAuditLog``).
     public var privilegesAudit: @Sendable (_ since: Date) -> [PrivilegesAuditRecord]
+    /// Who is signed in now, from utmpx (``LoginRecords``).
+    public var logins: @Sendable () -> [LoginRecord]
+    /// Whether a process with this id still exists (``LoginRecords/processExists(_:)``). utmpx
+    /// can keep a sign-in whose process has gone, so a current sign-in without one doesn't count.
+    public var processExists: @Sendable (_ pid: Int32) -> Bool
+    /// Sign-ins from wtmp that ended at or after the given time or haven't ended, each with
+    /// its end when wtmp has one (``LoginRecords``).
+    public var loginHistory: @Sendable (_ since: Date) -> [LoginRecord]
 
     public init(
         device: @escaping @Sendable () -> DeviceInfo,
@@ -41,7 +49,10 @@ public struct AgentEnvironment: Sendable {
         waitForDirectory: @escaping @Sendable () -> Void = {},
         privilegesTimer: @escaping @Sendable (_ user: String, _ grantedAt: Date) -> Date? = { _, _ in nil },
         privilegesAgentRunning: @escaping @Sendable (_ user: String) -> Bool? = { _ in nil },
-        privilegesAudit: @escaping @Sendable (_ since: Date) -> [PrivilegesAuditRecord] = { _ in [] }
+        privilegesAudit: @escaping @Sendable (_ since: Date) -> [PrivilegesAuditRecord] = { _ in [] },
+        logins: @escaping @Sendable () -> [LoginRecord] = { [] },
+        processExists: @escaping @Sendable (_ pid: Int32) -> Bool = { _ in true },
+        loginHistory: @escaping @Sendable (_ since: Date) -> [LoginRecord] = { _ in [] }
     ) {
         self.device = device
         self.privileges = privileges
@@ -55,6 +66,9 @@ public struct AgentEnvironment: Sendable {
         self.privilegesTimer = privilegesTimer
         self.privilegesAgentRunning = privilegesAgentRunning
         self.privilegesAudit = privilegesAudit
+        self.logins = logins
+        self.processExists = processExists
+        self.loginHistory = loginHistory
     }
 
     /// The real system.
@@ -72,7 +86,10 @@ public struct AgentEnvironment: Sendable {
             waitForDirectory: { Thread.sleep(forTimeInterval: 0.5) },
             privilegesTimer: { PrivilegesTimer.wait(user: $0, grantedAt: $1) },
             privilegesAgentRunning: { PrivilegesAgentProcess.running(user: $0) },
-            privilegesAudit: { PrivilegesAuditLog.records(since: $0) })
+            privilegesAudit: { PrivilegesAuditLog.records(since: $0) },
+            logins: { LoginRecords.current() },
+            processExists: { LoginRecords.processExists($0) },
+            loginHistory: { LoginRecords.history(since: $0) })
     }
 }
 
@@ -259,6 +276,9 @@ public final class ElevationTracker: Sendable {
         var integrity = env.integrity()
         // So is the unified log, which can take a moment.
         let audit = env.privilegesAudit(try auditStart(now: now))
+        // And wtmp: sign-ins by permanent admins too short for the checks to see.
+        let loginsFrom = try permanentUseHistoryStart(now: now)
+        let loginHistory = env.loginHistory(loginsFrom)
 
         return try store.transaction {
             let admins = env.admins.adminMembers()
@@ -322,6 +342,12 @@ public final class ElevationTracker: Sendable {
             }
             events += try tamperEvents(integrity, now: now, device: device)
             events += try blockedEvents(audit, now: now, device: device)
+            // Sign-ins of permanent admins that began and ended between two checks. The next read
+            // starts from here, and rows ended over a day ago, before anything a read covers, are
+            // no longer needed to dedupe.
+            events += try completedUseEvents(loginHistory, since: loginsFrom, now: now, device: device)
+            try store.setValue(AltiwardJSON.format(now), forKey: Self.permanentUseCursorKey)
+            try store.prunePermanentUses(endedBefore: now.addingTimeInterval(-Self.permanentUseLookback))
 
             var privileges = settings.healthDetail
             if case .object(var fields) = privileges {

@@ -57,6 +57,14 @@ final class Daemon: Sendable {
             log.warning("HookCodeRequirement not configured; accepting XPC from any local process")
         }
 
+        // Sign-ins by permanent admins that began and ended while the daemon wasn't running.
+        // Once, before the checks below, which would otherwise end their rows as "noticed".
+        do {
+            Self.logPermanentUses(try tracker.catchUpPermanentUses())
+        } catch {
+            log.error("permanent admin catch-up failed: \(String(describing: error), privacy: .public)")
+        }
+
         let listener = NSXPCListener(machServiceName: altiwardMachServiceName)
         let delegate = ListenerDelegate(
             tracker: tracker, requirement: configuration.hookCodeRequirement,
@@ -111,8 +119,8 @@ final class Daemon: Sendable {
             }
         }
 
-        // Raises admins nobody granted without waiting for the heartbeat, and restarts the
-        // agent when its settings change.
+        // Raises admins nobody granted and records sign-ins by permanent admins without waiting
+        // for the heartbeat, and restarts the agent when its settings change.
         Task { [tracker, delivery, configuration] in
             while true {
                 do {
@@ -126,6 +134,13 @@ final class Daemon: Sendable {
                     }
                 } catch {
                     log.error("admin check failed: \(String(describing: error), privacy: .public)")
+                }
+                do {
+                    let uses = try tracker.checkPermanentUses()
+                    Self.logPermanentUses(uses)
+                    if !uses.isEmpty { await delivery.flush() }
+                } catch {
+                    log.error("permanent admin check failed: \(String(describing: error), privacy: .public)")
                 }
                 Self.restartIfSettingsChanged(from: configuration)
                 try? await Task.sleep(for: Self.checkInterval)
@@ -165,6 +180,22 @@ final class Daemon: Sendable {
         log.info("altiward-agent \(AgentVersion.current, privacy: .public) started")
         withExtendedLifetime((listener, delegate, monitor)) {
             dispatchMain()
+        }
+    }
+
+    /// One line per `admin.permanent_use` event, as `admin.permanent_use started for
+    /// breakglass (ssh, ttys003)`.
+    static func logPermanentUses(_ events: [AltiwardEvent]) {
+        for event in events {
+            var what: [String] = []
+            for key in ["method", "tty"] {
+                if case .string(let s) = event.detail[key] { what.append(s) }
+            }
+            var state = ""
+            if case .string(let s) = event.detail["state"] { state = " \(s)" }
+            log.notice(
+                "\(event.type.rawValue, privacy: .public)\(state, privacy: .public) for \(event.user?.localName ?? "-", privacy: .public) (\(what.joined(separator: ", "), privacy: .public))"
+            )
         }
     }
 

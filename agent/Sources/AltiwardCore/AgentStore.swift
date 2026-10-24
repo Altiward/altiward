@@ -32,6 +32,34 @@ public struct OpenSession: Sendable, Equatable {
     public var overdueReported = false
 }
 
+/// A use of a permanent admin account with a start and an end (a sign-in), from when it is
+/// first reported until a day after it ended, so restarts and the catch-up report it once.
+public struct PermanentUseRow: Sendable, Equatable {
+    public let useID: String
+    public let user: String
+    public let method: PermanentUseMethod
+    public let tty: String
+    public let host: String
+    public let pid: Int32
+    public let startedAt: Date
+    /// Nil while it is open.
+    public var endedAt: Date?
+
+    public init(
+        useID: String, user: String, method: PermanentUseMethod, tty: String, host: String, pid: Int32,
+        startedAt: Date, endedAt: Date?
+    ) {
+        self.useID = useID
+        self.user = user
+        self.method = method
+        self.tty = tty
+        self.host = host
+        self.pid = pid
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+    }
+}
+
 /// The agent's on-disk state: a durable, unbounded, ordered outbox plus the
 /// ledger of open elevation sessions. One SQLite file, every write fully synced.
 ///
@@ -106,6 +134,19 @@ public final class AgentStore: @unchecked Sendable {
             body BLOB NOT NULL,
             executed_at REAL NOT NULL,
             reported_at REAL
+        );
+        """,
+        // 1 -> 2: uses of permanent admin accounts (0.3.0).
+        """
+        CREATE TABLE permanent_uses (
+            use_id TEXT PRIMARY KEY,
+            user TEXT NOT NULL,
+            method TEXT NOT NULL,
+            tty TEXT NOT NULL,
+            host TEXT NOT NULL,
+            pid INTEGER NOT NULL,
+            started_at REAL NOT NULL,
+            ended_at REAL
         );
         """,
     ]
@@ -273,6 +314,67 @@ public final class AgentStore: @unchecked Sendable {
             startedAt: Date(timeIntervalSince1970: row.double(3)!),
             expiresAt: row.double(4).map(Date.init(timeIntervalSince1970:)),
             overdueReported: row.int(5) == 1)
+    }
+
+    // MARK: Permanent admin uses
+
+    /// Uses not yet ended, oldest first.
+    public func openPermanentUses() throws -> [PermanentUseRow] {
+        try locked {
+            try db.query(
+                """
+                SELECT use_id, user, method, tty, host, pid, started_at, ended_at FROM permanent_uses
+                WHERE ended_at IS NULL ORDER BY started_at, use_id
+                """
+            ).map(Self.permanentUse(from:))
+        }
+    }
+
+    /// Records a use. A use already recorded, open or ended, is left as it is.
+    public func insertPermanentUse(_ row: PermanentUseRow) throws {
+        try locked {
+            try db.run(
+                """
+                INSERT OR IGNORE INTO permanent_uses (use_id, user, method, tty, host, pid, started_at, ended_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    .text(row.useID), .text(row.user), .text(row.method.rawValue), .text(row.tty), .text(row.host),
+                    .int(Int64(row.pid)), .double(row.startedAt.timeIntervalSince1970),
+                    .optional(row.endedAt?.timeIntervalSince1970),
+                ])
+        }
+    }
+
+    /// Whether the use is recorded, open or ended.
+    public func hasPermanentUse(id: String) throws -> Bool {
+        try locked {
+            !(try db.query("SELECT 1 FROM permanent_uses WHERE use_id = ?", [.text(id)]).isEmpty)
+        }
+    }
+
+    public func endPermanentUse(id: String, at date: Date) throws {
+        try locked {
+            try db.run(
+                "UPDATE permanent_uses SET ended_at = ? WHERE use_id = ?",
+                [.double(date.timeIntervalSince1970), .text(id)])
+        }
+    }
+
+    /// Forgets uses that ended before `date`. Open uses are kept.
+    public func prunePermanentUses(endedBefore date: Date) throws {
+        try locked {
+            try db.run("DELETE FROM permanent_uses WHERE ended_at < ?", [.double(date.timeIntervalSince1970)])
+        }
+    }
+
+    /// A method this agent doesn't know reads as `terminal`.
+    private static func permanentUse(from row: SQLiteRow) -> PermanentUseRow {
+        PermanentUseRow(
+            useID: row.text(0)!, user: row.text(1)!, method: PermanentUseMethod(rawValue: row.text(2)!) ?? .terminal,
+            tty: row.text(3)!, host: row.text(4)!, pid: Int32(truncatingIfNeeded: row.int(5)!),
+            startedAt: Date(timeIntervalSince1970: row.double(6)!),
+            endedAt: row.double(7).map(Date.init(timeIntervalSince1970:)))
     }
 
     // MARK: Command results

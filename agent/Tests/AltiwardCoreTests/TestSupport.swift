@@ -126,7 +126,10 @@ func makeEnvironment(
     integrity: @escaping @Sendable () -> [IntegrityCheck: IntegrityResult] = { [:] },
     waitForDirectory: @escaping @Sendable () -> Void = {},
     privilegesTimer: @escaping @Sendable (_ user: String, _ grantedAt: Date) -> Date? = { _, _ in nil },
-    privilegesAudit: @escaping @Sendable (_ since: Date) -> [PrivilegesAuditRecord] = { _ in [] }
+    privilegesAudit: @escaping @Sendable (_ since: Date) -> [PrivilegesAuditRecord] = { _ in [] },
+    logins: @escaping @Sendable () -> [LoginRecord] = { [] },
+    processExists: @escaping @Sendable (_ pid: Int32) -> Bool = { _ in true },
+    loginHistory: @escaping @Sendable (_ since: Date) -> [LoginRecord] = { _ in [] }
 ) -> AgentEnvironment {
     AgentEnvironment(
         device: device,
@@ -138,7 +141,46 @@ func makeEnvironment(
         integrity: integrity,
         waitForDirectory: waitForDirectory,
         privilegesTimer: privilegesTimer,
-        privilegesAudit: privilegesAudit)
+        privilegesAudit: privilegesAudit,
+        logins: logins,
+        processExists: processExists,
+        loginHistory: loginHistory)
+}
+
+/// Writes a store as agent 0.2 left it: the 0.1.0 tables at schema version 1.
+func writeVersion1Store(in dir: URL) throws {
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let db = try SQLiteConnection(path: dir.appendingPathComponent("agent.sqlite").path)
+    try db.execute(
+        """
+        CREATE TABLE outbox (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL UNIQUE,
+            body BLOB NOT NULL,
+            enqueued_at REAL NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT
+        );
+        CREATE TABLE open_sessions (
+            user TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            started_at REAL NOT NULL,
+            expires_at REAL,
+            overdue_reported INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE kv (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        CREATE TABLE command_results (
+            command_id TEXT PRIMARY KEY,
+            body BLOB NOT NULL,
+            executed_at REAL NOT NULL,
+            reported_at REAL
+        );
+        PRAGMA user_version = 1;
+        """)
 }
 
 // Whole milliseconds: the wire format keeps no more precision than that.
