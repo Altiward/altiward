@@ -9,6 +9,58 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Agent 0.2.0 - unreleased
+
+### Upgrade order
+
+Upgrade the server to 0.3.0 before you set `OutOfBandEnforcement` to `enforce`. An older
+server rejects `admin.out_of_band_removed`, and the session would stay open in the console.
+Update altiward-siem to 0.3.0 too. In `alert` mode, the default, this agent works with
+server 0.2.0.
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+- New setting `OutOfBandEnforcement`. `alert`, the default, raises `admin.out_of_band`
+  only, as before. With `enforce`, an account whose admin rights nobody granted loses
+  them once they have lasted `OutOfBandGraceMinutes` (default 5, minimum 1) since the agent
+  raised them: the next heartbeat removes it from `admin` and sends
+  `admin.out_of_band_removed`, so it acts up to `HeartbeatInterval` late. Any other value
+  means `alert`.
+- **Check before you turn on `enforce`.** The agent counts as a human admin any member of
+  `admin` with a UID of 500 or more, and any direct member of `admin` other than `root` and
+  `_` accounts, hidden ones included. With `enforce`, an admin account your MDM manages, such as
+  the LAPS account or a hidden management account with a low UID, loses its rights within
+  minutes unless it is in `PermanentAdmins`. Without SAP Privileges, that is every admin who
+  isn't a permanent admin. Before turning it on, check **Admins now** for the rows marked
+  **Without a grant** on the Macs in scope, and pilot it on a small group first.
+- Safeguards in `enforce` mode: the agent never removes a permanent admin, and keeps at
+  least one standing admin: a permanent admin, or else the account nobody granted it has
+  seen longest (of accounts raised at the same moment, the one whose short name sorts
+  last). Someone holding admin through a Privileges grant doesn't count, and nor do admins
+  still in their grace period or not yet raised. It pauses all removals while the
+  `privileges_hook` tamper check (**Privileges reports to Altiward**) fails, because then
+  every Privileges grant would look like rights nobody granted. That doesn't cover a
+  `HookCodeRequirement` that doesn't match the hook: check it names the right Team ID
+  before turning `enforce` on. A kept, paused or failed removal leaves the finding open,
+  retries at every heartbeat and is logged on the Mac. A Privileges grant whose hook never
+  reached the agent looks like rights nobody granted and can be removed; the person can
+  request again.
+- `OutOfBandEnforcement` and `OutOfBandGraceMinutes` are covered by the tamper check:
+  `agent.tamper` reports either set outside MDM (`settings_managed`). Changing either
+  restarts the agent. `docs/data-handling.md` lists what the agent collects.
+- After the server has been unreachable, a Mac sends its waiting events as soon as the
+  server answers its command poll, instead of waiting out its retry backoff, which grows to
+  an hour during a long outage. Before, only a network change on the Mac cut the wait
+  short. A server that answered with an error is still retried with backoff.
+
 ## Server 0.3.0 - unreleased
 
 ### Upgrade order
@@ -48,27 +100,6 @@ None.
   dashboard (`integrations/splunk/altiward_overview.xml`) count `admin.out_of_band_removed`
   as a session end, so re-import them: older copies show sessions agent 0.2.0 removed as
   still open.
-
-## Agent 0.2.0 - unreleased
-
-### Upgrade order
-
-None.
-
-### Breaking changes
-
-None.
-
-### Security
-
-None.
-
-### Changes
-
-- After the server has been unreachable, a Mac sends its waiting events as soon as the
-  server answers its command poll, instead of waiting out its retry backoff, which grows to
-  an hour during a long outage. Before, only a network change on the Mac cut the wait
-  short. A server that answered with an error is still retried with backoff.
 
 ## Agent 0.1.1 - 2026-10-23
 

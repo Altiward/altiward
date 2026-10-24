@@ -11,7 +11,13 @@
   HeartbeatInterval    Seconds between admin-group readings (default 300, minimum 30).
   FlushInterval        Seconds between delivery retries (default 60, minimum 10).
   PermanentAdmins      Accounts expected to hold standing admin rights (IT, break-glass);
-                       never reported as out-of-band, never demoted by ExpiryEnforcement.
+                       never reported as out-of-band, never demoted by ExpiryEnforcement,
+                       never removed by OutOfBandEnforcement. List the local admin account
+                       your MDM manages (LAPS) and any hidden management account: with
+                       OutOfBandEnforcement "enforce", an admin left out loses its rights
+                       within minutes. In "enforce" mode the agent keeps at least one
+                       standing admin: a permanent admin, or else the out-of-band admin
+                       it has seen longest. Admin through a Privileges grant doesn't count.
   UserPrincipalNames   Local short name → corporate UPN. Use your MDM's user variables.
   HookCodeRequirement  Code-signing requirement the hook must meet to reach the daemon.
                        Replace TEAMID with the Developer ID team that signs the agent.
@@ -21,6 +27,20 @@
                        "enforce" removes the user from the admin group; "off" does nothing.
                        Checked on each heartbeat, so it acts up to HeartbeatInterval late.
   ExpiryGraceMinutes   Minutes past expiry before ExpiryEnforcement acts (default 5).
+  OutOfBandEnforcement What to do with admin rights nobody granted:
+                       "alert" (default) raises admin.out_of_band only;
+                       "enforce" removes the account from the admin group at the next
+                       heartbeat, after OutOfBandGraceMinutes, and reports
+                       admin.out_of_band_removed. Any other value means "alert".
+                       It never removes a permanent admin or the last standing admin
+                       (see PermanentAdmins), and pauses while the "Privileges reports to
+                       Altiward" check fails (Privileges' hook path or checksum isn't
+                       Altiward's). A HookCodeRequirement that doesn't match the hook
+                       isn't covered: real grants are removed, so check its Team ID first.
+                       Needs server 0.3.0; try it on a small group first.
+  OutOfBandGraceMinutes
+                       Minutes the rights must last, from when the agent raises them,
+                       before OutOfBandEnforcement acts (default 5, minimum 1).
   CommandPollInterval  Seconds to wait before checking for console commands again after an
                        error, or with a server that can't hold the request until one is
                        queued (default 60, minimum 15). Otherwise commands arrive within
@@ -46,6 +66,10 @@
     <key>ExpiryEnforcement</key>
     <string>alert</string>
     <key>ExpiryGraceMinutes</key>
+    <integer>5</integer>
+    <key>OutOfBandEnforcement</key>
+    <string>alert</string>
+    <key>OutOfBandGraceMinutes</key>
     <integer>5</integer>
     <key>CommandPollInterval</key>
     <integer>60</integer>

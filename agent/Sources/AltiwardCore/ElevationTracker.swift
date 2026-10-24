@@ -1,6 +1,8 @@
 import Foundation
 import os
 
+private let log = Logger(subsystem: "com.altiward.agent", category: "tracker")
+
 /// The outside world the tracker reads from, injectable for tests.
 public struct AgentEnvironment: Sendable {
     public var device: @Sendable () -> DeviceInfo
@@ -175,6 +177,8 @@ public final class ElevationTracker: Sendable {
     ///   (`trigger: permanent_admin`) if the user later becomes a permanent admin;
     /// - Privileges rights that outlive their expiry are reported or removed
     ///   (``enforceExpiry``);
+    /// - in `OutOfBandEnforcement` `enforce` mode, rights nobody granted that have lasted
+    ///   the grace period are removed (``enforceOutOfBand``);
     /// - an `agent.health` event reports who is admin now and the result of each tamper
     ///   check.
     ///
@@ -224,11 +228,26 @@ public final class ElevationTracker: Sendable {
                         detail: ["trigger": "permanent_admin", "observed_admin": true, "verified": true]))
             }
 
-            let (expiryEvents, demoted) = try enforceExpiry(
+            var (expiryEvents, demoted) = try enforceExpiry(
                 open.filter { admins.contains($0.user) }, now: now, device: device)
             events += expiryEvents
 
-            for user in untracked(admins: admins, open: open).sorted() {
+            // Admins with no open session: raised out-of-band below.
+            let untrackedAdmins = untracked(admins: admins, open: open)
+
+            // Sessions closed above are left out: the not-admin ones by `admins`, the
+            // permanent-admin ones by name. Expiry only touches Privileges sessions.
+            let (outOfBandEvents, removed) = try enforceOutOfBand(
+                open.filter {
+                    $0.source == .outOfBand && admins.contains($0.user)
+                        && !env.config.permanentAdmins.contains($0.user)
+                },
+                demoted: demoted, integrity: integrity, now: now, device: device)
+            events += outOfBandEvents
+            // So agent.health's admin_members and the timer check leave them out.
+            demoted.formUnion(removed)
+
+            for user in untrackedAdmins.sorted() {
                 events.append(try openOutOfBand(user, now: now, device: device, audit: audit))
             }
 
@@ -294,7 +313,7 @@ public final class ElevationTracker: Sendable {
     ///
     /// Acts on the `admin` group directly, never through Privileges, so expiry works
     /// without Privileges installed. Permanent admins and out-of-band sessions, which have
-    /// no expiry, are left alone.
+    /// no expiry, are left alone; ``enforceOutOfBand`` handles the latter.
     private func enforceExpiry(_ sessions: [OpenSession], now: Date, device: DeviceInfo) throws -> (
         events: [AltiwardEvent], demoted: Set<String>
     ) {
@@ -342,6 +361,78 @@ public final class ElevationTracker: Sendable {
                     device: device, user: user, elevation: elevation, detail: detail))
         }
         return (events, demoted)
+    }
+
+    /// Out-of-band enforcement. In `enforce` mode, removes the rights of each out-of-band
+    /// session that has lasted the grace period since it was raised (its persisted
+    /// `startedAt`, so a restart doesn't reset the count), ends the session and raises
+    /// `admin.out_of_band_removed`. `sessions` are open out-of-band sessions whose user is
+    /// still admin and not a permanent admin.
+    ///
+    /// Safeguards:
+    /// - while Privileges' hook check fails, nothing is removed: grants it doesn't report
+    ///   would look like rights nobody granted;
+    /// - a standing admin is kept: a removal that would leave none is skipped. Standing
+    ///   admins are permanent admins who are admin now, and out-of-band admins past their
+    ///   grace that this pass keeps. Holders of a Privileges session don't count, since
+    ///   their rights end too, and nor do out-of-band admins still in their grace period or
+    ///   admins with no session yet (raised out-of-band later in this heartbeat): they are
+    ///   due for removal as well. Membership is read again here, after ``enforceExpiry``'s
+    ///   removals, and the users it removed (`demoted`) are left out in case the read lags.
+    ///   Newest first, then by short name, so the admin kept is the one seen longest, or of
+    ///   those raised at the same moment the one whose short name sorts last.
+    ///
+    /// A removal that fails keeps the session and is retried on the next heartbeat; it
+    /// doesn't stop older ones. Returns the events and the users removed.
+    private func enforceOutOfBand(
+        _ sessions: [OpenSession], demoted: Set<String>, integrity: [IntegrityCheck: IntegrityResult], now: Date,
+        device: DeviceInfo
+    ) throws -> (events: [AltiwardEvent], removed: Set<String>) {
+        guard env.config.outOfBandEnforcement == .enforce else { return ([], []) }
+        let current = env.admins.adminMembers().subtracting(demoted)
+        let grace = env.config.outOfBandGracePeriod
+        let isDue = { (s: OpenSession) in now >= s.startedAt.addingTimeInterval(grace) }
+        let candidates = sessions.filter(isDue).sorted {
+            $0.startedAt != $1.startedAt ? $0.startedAt > $1.startedAt : $0.user < $1.user
+        }
+        guard !candidates.isEmpty else { return ([], []) }
+
+        if integrity[.privilegesHook]?.ok == false {
+            let users = candidates.map(\.user).joined(separator: ", ")
+            log.notice(
+                "keeping out-of-band admin rights (\(users, privacy: .public)): Privileges' hook check is failing")
+            return ([], [])
+        }
+
+        let permanent = current.intersection(env.config.permanentAdmins)
+        let due = current.intersection(candidates.map(\.user))
+        var events: [AltiwardEvent] = []
+        var removed = Set<String>()
+        for session in candidates {
+            let remaining = permanent.union(due.subtracting(removed))
+            if remaining.subtracting([session.user]).isEmpty {
+                log.notice(
+                    "keeping \(session.user, privacy: .public)'s out-of-band admin rights: the only standing admin on this Mac")
+                continue
+            }
+            if let failure = removeFromAdminGroup(session.user) {
+                log.notice(
+                    "out-of-band removal for \(session.user, privacy: .public) failed: \(failure, privacy: .public)")
+                continue
+            }
+            try store.closeSession(user: session.user)
+            removed.insert(session.user)
+            events.append(
+                AltiwardEvent(
+                    type: .adminOutOfBandRemoved, sessionID: session.sessionID, timestamp: now, device: device,
+                    user: UserInfo(localName: session.user, upn: env.config.upn(for: session.user)),
+                    elevation: ElevationInfo(source: .outOfBand),
+                    detail: [
+                        "trigger": "heartbeat", "first_observed": .date(session.startedAt),
+                        "grace_seconds": .number(grace), "observed_admin": false, "verified": true,
+                    ]))
+        }
+        return (events, removed)
     }
 
     /// How long an admin goes without an open session before ``checkUntrackedAdmins()``

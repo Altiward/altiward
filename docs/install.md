@@ -140,16 +140,68 @@ Create these in your MDM and scope them to a pilot group first.
      admin account your MDM manages with LAPS (Jamf Pro's managed local administrator,
      or the macOS local admin account Intune creates at enrollment): enter the short name
      you set in the MDM, exactly. Left out, it shows in the console as an admin nobody
-     granted, and revoking every admin on a Mac would remove its rights too. Altiward
+     granted, revoking every admin on a Mac would remove its rights too, and with
+     `OutOfBandEnforcement` set to `enforce` Altiward removes them itself. Altiward
      doesn't record when someone uses a permanent admin account; your MDM records who
      looked up its password.
 
+     > **Warning:** With `OutOfBandEnforcement` set to `enforce`, every admin nobody
+     > granted loses their rights within minutes, including the LAPS account your MDM
+     > manages if it isn't in `PermanentAdmins`. The agent counts as a human admin any member
+     > of `admin` with a UID of 500 or more, and any direct member of `admin` other than
+     > `root` and `_` accounts, hidden ones included, so list a hidden management account
+     > with a low UID too. Without SAP Privileges, that is every admin who isn't a permanent
+     > admin. Before turning it on, check **Admins now** for the rows marked **Without a
+     > grant** on the Macs in scope, and pilot it on a small group first.
+
    The example explains every other key. `ExpiryEnforcement` decides what happens when
    rights outlive the expiry Privileges set: `alert`, the default, only reports it, and
-   `enforce` removes the user from `admin`. Deliver the profile through MDM rather than
-   `defaults write`: Altiward reports `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`,
-   `ExpiryGraceMinutes` or `HookCodeRequirement` set outside MDM as tampering (it doesn't
-   check the other keys).
+   `enforce` removes the user from `admin`.
+
+   `OutOfBandEnforcement` decides what happens to admin rights nobody granted. `alert`,
+   the default, only raises `admin.out_of_band`, as before. `enforce` removes the account
+   from `admin` at the next heartbeat after the rights have gone `OutOfBandGraceMinutes`
+   (default 5, minimum 1) without a grant, and sends `admin.out_of_band_removed`. The
+   heartbeat runs every `HeartbeatInterval` (default 5 minutes), so it acts up to that
+   late. Any other value, including `off`, means `alert`. Upgrade the server to 0.3.0 and
+   altiward-siem to 0.3.0 first.
+
+   > **Warning:** With `enforce`, every admin nobody granted loses their rights within
+   > minutes, including the LAPS account your MDM manages if it isn't in `PermanentAdmins`
+   > (and any hidden management account the agent counts as a human admin, see above).
+   > Without SAP Privileges, that is every admin who isn't a permanent admin. Before
+   > turning it on, check **Admins now** for the rows marked **Without a grant** on the
+   > Macs in scope, and pilot it on a small group first.
+
+   In `enforce` mode the agent never removes a permanent admin, and keeps at least one
+   standing admin: a permanent admin, or else the account nobody granted it has seen
+   longest. Someone holding admin through a Privileges grant doesn't count, and nor do
+   admins still in their grace period or not yet raised. Of accounts raised at the same
+   moment, as on a fresh install, it keeps the one whose short name sorts last. It pauses
+   every removal while the **Privileges reports to Altiward** check fails (Privileges'
+   hook path or checksum isn't Altiward's), because then every real Privileges grant would
+   look like rights nobody granted. A removal that is kept, paused or fails leaves the
+   finding open, is retried at every heartbeat and is logged on the Mac. A Privileges grant
+   whose hook never reached the agent looks like rights nobody granted and can be removed;
+   the person can request it again.
+
+   > **Warning:** The pause doesn't cover a `HookCodeRequirement` that doesn't match the
+   > hook. The daemon then rejects the hook's calls, so in `enforce` mode real Privileges
+   > grants are removed after the grace period. Check that `HookCodeRequirement` names the
+   > right Team ID before turning `enforce` on.
+
+   Someone holding admin rights nobody granted can run the hook by hand to claim a
+   Privileges grant. That turns their session into a Privileges session, which
+   `OutOfBandEnforcement` no longer removes. The console shows it as **Followed rights
+   without a grant** and the SIEM as "Replaced by a Privileges grant". With
+   `ExpiryEnforcement` set to `enforce` and an expiry from Privileges' settings, the rights
+   end at expiry, unless they run the hook again before then: each claim renews the grant,
+   and each is reported as `elevation.granted`.
+
+   Deliver the profile through MDM rather than `defaults write`: Altiward reports
+   `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`,
+   `OutOfBandEnforcement`, `OutOfBandGraceMinutes` or `HookCodeRequirement` set outside MDM
+   as tampering (it doesn't check the other keys).
 2. **Login items profile** (`altiward-login-items.mobileconfig`), so people can't turn
    the agent off and don't see a background-item notice.
 3. **SAP Privileges:** download `corp.sap.privileges.plist` from the **same agent release
@@ -608,7 +660,7 @@ Logs aren't included. If a maintainer asks for them:
 | `upgrade.sh` stopped and left `compose.yaml.new` | You changed `compose.yaml` and so did the release: merge, then run it again with `--merged` ([Releases and updates](#releases-and-updates)) |
 | `upgrade.sh` says a file doesn't match `SHA256SUMS` | The download is incomplete or was changed: download the release again |
 | A Mac shows **Not checking in** | It has been off, offline or unable to reach the agent hostname for longer than the limit. Its events wait on the Mac and arrive when it reconnects. If laptops show this when they're away from the office, the agent hostname isn't reachable from the internet ([Two hostnames](#what-youre-installing)). |
-| **Needs attention** on a Mac | An integrity check failed, for example the agent's files changed, or `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes` or `HookCodeRequirement` was set outside MDM. The Mac's details say which. |
+| **Needs attention** on a Mac | An integrity check failed, for example the agent's files changed, or `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`, `OutOfBandEnforcement`, `OutOfBandGraceMinutes` or `HookCodeRequirement` was set outside MDM. The Mac's details say which. |
 
 For anything else, run the [diagnostics report](#diagnostics-for-a-bug-report) and check its
 `problems` list.
@@ -662,6 +714,11 @@ grants. From agent 0.1.1, the first one also ends the open **Without a grant** s
 If the check passes, the rights really were granted outside Privileges: someone added the
 account to `admin` another way. If it's an IT or managed admin account, add it to
 `PermanentAdmins`.
+
+With `OutOfBandEnforcement` set to `enforce`, a grant whose hook never reached the agent
+is removed once `OutOfBandGraceMinutes` have passed, as rights nobody granted: the console
+shows **Removed without a grant**, and the person can request again. The agent pauses
+removals while the **Privileges reports to Altiward** check fails, so fix that first.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/install/session-without-grant-dark.png">
