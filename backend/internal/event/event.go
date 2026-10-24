@@ -28,18 +28,26 @@ const (
 	AgentHealth              Type = "agent.health"
 	AgentTamper              Type = "agent.tamper"
 	AgentSilent              Type = "agent.silent"
+	AdminPermanentUse        Type = "admin.permanent_use"
 )
 
 var knownTypes = map[Type]bool{
 	ElevationGranted: true, ElevationRevoked: true, ElevationExpiredEnforced: true, ElevationOverdue: true,
 	AdminOutOfBand: true, AdminOutOfBandRemoved: true, Activity: true, PersistenceDetected: true, AgentHealth: true,
-	AgentTamper: true, AgentSilent: true,
+	AgentTamper: true, AgentSilent: true, AdminPermanentUse: true,
 }
 
 // Silence states for agent.silent.
 const (
 	SilentStateSilent  = "silent"
 	SilentStateResumed = "resumed"
+)
+
+// States of a use of a permanent admin account (admin.permanent_use).
+const (
+	UseStateStarted = "started"
+	UseStateEnded   = "ended"
+	UseStateSingle  = "single"
 )
 
 // Event is one record from the agent. Field names and nullability follow the JSON schema.
@@ -194,6 +202,25 @@ func (e *Event) Validate(now time.Time) error {
 	case AgentTamper:
 		if c, _ := e.Detail["check"].(string); c == "" {
 			return fmt.Errorf("%s requires detail.check", e.Type)
+		}
+	case AdminPermanentUse:
+		if e.User == nil {
+			return fmt.Errorf("%s requires user", e.Type)
+		}
+		if e.SessionID != nil || e.Elevation != nil {
+			return fmt.Errorf("%s has no session_id or elevation", e.Type)
+		}
+		if id, _ := e.Detail["use_id"].(string); id == "" {
+			return fmt.Errorf("%s requires detail.use_id", e.Type)
+		}
+		// Any non-empty method is accepted, so a later method needs no server upgrade first.
+		if m, _ := e.Detail["method"].(string); m == "" {
+			return fmt.Errorf("%s requires detail.method", e.Type)
+		}
+		switch st, _ := e.Detail["state"].(string); st {
+		case UseStateStarted, UseStateEnded, UseStateSingle:
+		default:
+			return fmt.Errorf("%s requires detail.state started, ended or single", e.Type)
 		}
 	case AgentSilent:
 		if st, _ := e.Detail["state"].(string); st != SilentStateSilent && st != SilentStateResumed {

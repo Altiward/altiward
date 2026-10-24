@@ -23,6 +23,10 @@
 //	                              or Close (Other: "No longer checked") when it stops applying
 //	agent.silent                → Detection Finding (2004): Create, Medium, when a Mac stops checking
 //	                              in; Close (Resolved, Informational) when it checks in again
+//	admin.permanent_use         → Authentication (3002), Informational: Logon when a permanent admin
+//	                              account signs in or uses an approval, sudo or su; Logoff when
+//	                              the Mac saw the sign-in end. A sign-in's two records share
+//	                              the use ID as metadata.correlation_uid
 //	agent.health, activity      → not exported (inventory and v2 telemetry)
 //	console actions             → API Activity (6003); see audit.go
 //
@@ -83,6 +87,8 @@ func Map(e store.StoredEvent, tenantID string) []Record {
 		return []Record{tamper(e, tenantID)}
 	case event.AgentSilent:
 		return []Record{silent(e, tenantID)}
+	case event.AdminPermanentUse:
+		return []Record{permanentUse(e, tenantID)}
 	}
 	return nil
 }

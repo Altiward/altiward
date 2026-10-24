@@ -1,15 +1,15 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
-import type { Command, Device } from "../api";
+import type { Command, Device, PermanentUse } from "../api";
 import { Banner, Details, Empty, Explain, RoleNote, SearchField, Toolbar } from "../components/Chrome";
-import { ClaimedGlyph, CloseIcon, NotGrantedGlyph, VerifiedGlyph } from "../components/Icons";
+import { ClaimedGlyph, CloseIcon, ElevatedGlyph, EndedGlyph, NotGrantedGlyph, VerifiedGlyph } from "../components/Icons";
 import { ConfirmSheet } from "../components/Sheet";
 import { StateBadge } from "../components/StateBadge";
 import { Table } from "../components/Table";
 import { useApi, useCan } from "../context";
 import { checkTips, persistenceCheckTip } from "../explanations";
 import {
-  agentOutdated, dateTime, integrityCheckLabel, relativeTime, revokeNotice, tamperStateLabel,
+  agentOutdated, dateTime, integrityCheckLabel, permanentUseMethodLabel, relativeTime, revokeNotice, tamperStateLabel,
 } from "../format";
 import { useCommandResult } from "../useCommandResult";
 import { useLoad } from "../useLoad";
@@ -30,6 +30,13 @@ const shows = {
   outdated: "Macs on an unsupported agent",
 } as const;
 type Show = keyof typeof shows;
+/** Where and for whom a permanent admin account was used, when the agent knew. */
+const permanentUseContext = (u: PermanentUse) => [
+  u.on_session_of && `on ${u.on_session_of}’s session`,
+  u.remote_host && `from ${u.remote_host}`,
+  u.right && `for ${u.right}`,
+  u.method === "sudo" && u.run_as && `as ${u.run_as}`,
+].filter(Boolean).join(" · ");
 /** Places the persistence snapshot couldn't read: changes there go unreported. */
 const blindSpots = (d: Device) => d.persistence_unreadable ?? [];
 
@@ -241,9 +248,34 @@ function DeviceInspector({ device: d, severities, onClose }: {
                 </dl>
               )}
           </div>
+          {(d.recent_permanent_uses ?? []).length > 0 && (
+            <div className="box" style={{ marginTop: 8 }}>
+              <ul className="entries" aria-label="Recent use of permanent admins">
+                {(d.recent_permanent_uses ?? []).slice(0, 10).map((u) => (
+                  <li key={u.use_id}>
+                    <span>{u.account}{u.count > 1 && ` ×${u.count}`}</span>
+                    {u.state === "single"
+                      ? <span className="secondary" title={dateTime(u.started_at)}>{relativeTime(u.started_at).toLowerCase()}</span>
+                      : u.state === "started"
+                        ? <span className="tag attention"><ElevatedGlyph /> Signed in now</span>
+                        : <span className="secondary"><EndedGlyph /> Ended</span>}
+                    <span className="detail">
+                      {[permanentUseMethodLabel(u.method), permanentUseContext(u)].filter(Boolean).join(" · ")}
+                    </span>
+                    {u.state === "started" && (
+                      <span className="detail secondary" title={dateTime(u.started_at)}>Since {relativeTime(u.started_at).toLowerCase()}</span>
+                    )}
+                    {u.state === "ended" && (
+                      <span className="detail secondary">{dateTime(u.started_at)} to {dateTime(u.ended_at)}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <p className="role-note">
             From the Mac’s configuration profile. Change them in your MDM: Altiward reports this setting made any other
-            way as tampering, and never removes these accounts’ admin rights.
+            way as tampering, and never removes these accounts’ admin rights. It records each time someone uses one.
           </p>
         </div>
       )}

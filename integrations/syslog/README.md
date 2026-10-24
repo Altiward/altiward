@@ -29,8 +29,9 @@ The receiver's certificate must match the host in `ALTIWARD_SYSLOG_ADDR`.
 
 - **Facility** `authpriv` (10). **Severity** follows OCSF: High → err, Medium → warning,
   Low → notice, Informational → info.
-- **MSGID** is the Altiward event type, such as `elevation.granted` or `agent.tamper`, or
-  `console.` and the action for a console action, such as `console.revoke_device`.
+- **MSGID** is the Altiward event type, such as `elevation.granted`, `agent.tamper` or
+  `admin.permanent_use`,
+  or `console.` and the action for a console action, such as `console.revoke_device`.
 
 ## CEF fields
 
@@ -86,5 +87,8 @@ sign-outs are OCSF Authentication records, with the event types `console.sign_in
   `act=Close` with the same `cs5` means it was fixed.
 - **Macs that stopped checking in:** signature `altiward.agent_silent`. The Mac checking in
   again sends `act=Close` with the same `cs5`.
+- **Use of a permanent admin account:** signature `admin.permanent_use`. `act=Logon` is a
+  sign-in, an approval or screen sharing, and `act=Logoff` is the Mac seeing a sign-in end.
+  `duser` is the account and `msg` says how it was used.
 - **Settings changes:** signature `console.change_settings`.
 - **Break-glass token use:** `suser` starting `break-glass:`.

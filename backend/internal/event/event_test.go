@@ -98,3 +98,49 @@ func TestServerRaised(t *testing.T) {
 		t.Fatal("only agent.silent is raised by the server")
 	}
 }
+
+func TestValidatePermanentUse(t *testing.T) {
+	now := testfixture.Time(t, "2026-10-16T12:00:00Z")
+	cases := []struct {
+		name    string
+		fixture string
+		mutate  func(e *event.Event)
+		wantErr string
+	}{
+		{"started", "admin-permanent-use-started", func(e *event.Event) {}, ""},
+		{"ended", "admin-permanent-use-ended", func(e *event.Event) {}, ""},
+		{"prompt", "admin-permanent-use-prompt", func(e *event.Event) {}, ""},
+		{"session id", "admin-permanent-use-started", func(e *event.Event) {
+			e.SessionID = testfixture.Ptr("7e3d4c9b-0a6f-4c8d-be5f-4a3b2c1d0e9f")
+		}, "no session_id"},
+		{"elevation", "admin-permanent-use-started", func(e *event.Event) {
+			e.Elevation = &event.Elevation{Source: event.SourceOutOfBand}
+		}, "no session_id"},
+		{"no user", "admin-permanent-use-started", func(e *event.Event) { e.User = nil }, "requires user"},
+		{"empty use id", "admin-permanent-use-started", func(e *event.Event) { e.Detail["use_id"] = "" }, "detail.use_id"},
+		{"no use id", "admin-permanent-use-started", func(e *event.Event) { delete(e.Detail, "use_id") }, "detail.use_id"},
+		{"bad state", "admin-permanent-use-started", func(e *event.Event) { e.Detail["state"] = "paused" }, "detail.state"},
+		{"single state", "admin-permanent-use-started", func(e *event.Event) { e.Detail["state"] = event.UseStateSingle }, ""},
+		{"ended state", "admin-permanent-use-started", func(e *event.Event) { e.Detail["state"] = event.UseStateEnded }, ""},
+		{"started state", "admin-permanent-use-prompt", func(e *event.Event) { e.Detail["state"] = event.UseStateStarted }, ""},
+		{"later method", "admin-permanent-use-started", func(e *event.Event) { e.Detail["method"] = "endpoint_thing" }, ""},
+		{"empty method", "admin-permanent-use-started", func(e *event.Event) { e.Detail["method"] = "" }, "detail.method"},
+		{"no method", "admin-permanent-use-started", func(e *event.Event) { delete(e.Detail, "method") }, "detail.method"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := testfixture.Event(t, tc.fixture)
+			tc.mutate(&e)
+			err := e.Validate(now)
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("unexpected error: %v", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
+			}
+		})
+	}
+	if event.AdminPermanentUse.IsSessionEvent() {
+		t.Fatal("admin.permanent_use is not a session event")
+	}
+}

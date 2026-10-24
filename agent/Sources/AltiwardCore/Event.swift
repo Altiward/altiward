@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Event types from the core event schema (docs/schema/event.schema.json).
@@ -14,6 +15,8 @@ public enum EventType: String, Codable, Sendable, CaseIterable {
     case agentTamper = "agent.tamper"
     /// Raised by the backend when a Mac stops checking in; the agent never sends it.
     case agentSilent = "agent.silent"
+    /// A permanent admin account was used: a sign-in, an authorisation prompt or screen sharing.
+    case adminPermanentUse = "admin.permanent_use"
 }
 
 public struct DeviceInfo: Codable, Sendable, Equatable {
@@ -173,4 +176,24 @@ public struct AltiwardEvent: Codable, Sendable, Equatable {
 /// New lower-case UUID string, the form the schema requires.
 public func newID() -> String {
     UUID().uuidString.lowercased()
+}
+
+/// Lower-case name-based UUID (version 5, RFC 9562 section 5.5) of `name` under the URL namespace,
+/// so the same name always gives the same ID and a repeated report is a duplicate, not a new event.
+public func nameBasedID(_ name: String) -> String {
+    let namespace: [UInt8] = [
+        0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8,
+    ]
+    var hash = Insecure.SHA1()
+    hash.update(data: namespace)
+    hash.update(data: Data(name.utf8))
+    var bytes = Array(hash.finalize().prefix(16))
+    bytes[6] = (bytes[6] & 0x0f) | 0x50
+    bytes[8] = (bytes[8] & 0x3f) | 0x80
+    let hex = bytes.map { String(format: "%02x", $0) }.joined()
+    let parts = [0..<8, 8..<12, 12..<16, 16..<20, 20..<32].map { r -> String in
+        let start = hex.index(hex.startIndex, offsetBy: r.lowerBound)
+        return String(hex[start..<hex.index(hex.startIndex, offsetBy: r.upperBound)])
+    }
+    return parts.joined(separator: "-")
 }

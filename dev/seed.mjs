@@ -59,6 +59,25 @@ const [a, b, c, d, e, f] = await Promise.all([
 const s1 = randomUUID();
 await send(a, [grant(a, jane, 12, 20, "Installing Xcode command line tools", s1), health(a, 2, ["itadmin", "jdoe"])]);
 
+// The permanent admin `itadmin` was used on the first Mac: a sign-in at the screen
+// yesterday that has ended, a prompt it approved on Jane's session, and an SSH sign-in from
+// 10.0.0.5 that is still open (agent 0.3.0's admin.permanent_use).
+const yesterday = (hour) => { const at = new Date(now); at.setDate(at.getDate() - 1); at.setHours(hour, 0, 0, 0); return at.toISOString(); };
+const itadmin = ["itadmin"];
+const consoleUse = randomUUID();
+await send(a, [
+  event(a, "admin.permanent_use", yesterday(13), { user: itadmin, detail: {
+    use_id: consoleUse, method: "console", state: "ended", source: "utmpx", started: yesterday(10),
+    ended: yesterday(13), end_basis: "logged", tty: "console" } }),
+  event(a, "admin.permanent_use", ago(95), { user: itadmin, detail: {
+    use_id: randomUUID(), method: "prompt", state: "single", source: "unified_log", started: ago(95),
+    on_session_of: jane[0], right: "com.apple.ServiceManagement.daemons.modify",
+    client: "/System/Applications/System Settings.app", count: 1, last: ago(95) } }),
+  event(a, "admin.permanent_use", ago(50), { user: itadmin, detail: {
+    use_id: randomUUID(), method: "ssh", state: "started", source: "utmpx", started: ago(50),
+    tty: "ttys003", remote_host: "10.0.0.5" } }),
+]);
+
 // Its Privileges profile still pins an older agent's hook, so Privileges skipped the hook
 // and the grant shows up as admin rights without one.
 const s2 = randomUUID();
@@ -138,5 +157,5 @@ function backdate(serial, at) {
 await request("POST", `/v1/devices/${b.serial}/revoke`, { bearer: CONSOLE, body: {} });
 await request("PUT", "/v1/settings", { bearer: CONSOLE, body: { reenrollment_requires_approval: true } });
 const again = await enroll(a.serial);
-console.log(`Seeded 6 Macs (${silent ? 1 : 0} silent), 6 sessions, 3 tamper alerts, 1 queued revoke; ${a.serial} re-enrolled (${again.status}).`);
+console.log(`Seeded 6 Macs (${silent ? 1 : 0} silent), 6 sessions, 3 tamper alerts, 3 uses of a permanent admin, 1 queued revoke; ${a.serial} re-enrolled (${again.status}).`);
 console.log("Re-enrollment approval is now on; turn it off in Settings if you prefer.");

@@ -9,6 +9,83 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Agent 0.3.0 - unreleased
+
+### Upgrade order
+
+Upgrade the server to 0.4.0 first: older servers reject `admin.permanent_use`, and the
+agent drops events the server rejects. Update altiward-siem to 0.4.0 too.
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+- The agent records each use of an account in `PermanentAdmins`, as `admin.permanent_use`.
+  It is always on for every account listed, needs no new setting, and is evidence, not an
+  alert: **Admins now** and the alerts don't change.
+  - Sign-ins at the Mac (login window, fast user switching), in Terminal and over
+    interactive SSH, from macOS's sign-in records. A `started` event follows within about
+    15 seconds, and an `ended` event at sign-out with both times. A sign-in shorter than
+    that is reported by the next heartbeat, and one while the agent was stopped when it
+    starts, up to a day back. SSH records the address it came from. A Terminal tab opened
+    while the account is signed in at the Mac is part of that sign-in, not a use of its
+    own. A sign-in still open when the Mac crashed ends at the next boot.
+  - Prompt approvals: a permanent admin's name and password typed into an admin prompt on
+    another user's session. It records whose session, the right, and the app that asked,
+    when the log names it.
+  - Screen sharing: one event for each connection that signs in as the account, with the
+    viewer's address. The name the viewer types can be the short name or the account's
+    full name, in any case; the event always names the short name. A viewer who gets the
+    password wrong isn't a use.
+  - Prompts and screen sharing are read from the unified log each heartbeat. macOS keeps
+    no log line for `sudo`, `su`, or SSH file copies and one-off commands that open no
+    terminal (`scp`, `ssh host command`), so they aren't recorded until Apple grants the
+    Endpoint Security entitlement.
+- Prompts and screen sharing that differ only in time are one event, with a count and the
+  time of the last: a script that approves 300 prompts within one heartbeat sends one.
+  Each heartbeat sends at most 20 such events, and the last says how many more groups it
+  left out.
+- New command: `sudo altiward-agent permanent-uses [HOURS]` prints what the agent reads
+  about permanent admins (default 24 hours; run as root).
+- `docs/data-handling.md` lists what the agent collects. The SIEM gets every event the
+  agent sends. For the console, the server keeps each Mac's open sign-ins and its newest
+  20 other uses.
+
+## Server 0.4.0 - unreleased
+
+### Upgrade order
+
+Upgrade before Agent 0.3.0. Update altiward-siem to 0.4.0. An older server rejects
+`admin.permanent_use`, which Agent 0.3.0 sends, and the agent deletes events the server
+rejects.
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+- The server accepts, stores, shows and exports `admin.permanent_use`, which Agent 0.3.0
+  sends when someone uses a permanent admin account (`PermanentAdmins`). It exports it
+  as an OCSF Authentication record. **Fleet** keeps each Mac's open sign-ins (up to 20)
+  and its newest 20 other uses, and shows up to 10 under **Permanent admins** in the
+  Mac's details, open sign-ins first: who, how (signed in at the Mac, in Terminal or over
+  SSH, approved a prompt, shared the screen), from where, and whether the sign-in is still
+  open. The SIEM gets every event the agent sends. Agent 0.3.0 sends screen sharing; the
+  server and console also accept and show `sudo` and `su`, for a later agent that can
+  record them, which needs Apple's Endpoint Security entitlement.
+  `docs/data-handling.md` lists what is kept and sent.
+
 ## Agent 0.2.0 - 2026-10-24
 
 ### Upgrade order

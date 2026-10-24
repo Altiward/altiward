@@ -80,6 +80,64 @@ describe("Fleet", () => {
     expect(detail).toHaveClass("detail");
   });
 
+  it("lists recent use of permanent admins in the Permanent admins group", async () => {
+    const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+    const used: Device = {
+      ...mac,
+      recent_permanent_uses: [
+        { use_id: "u1", account: "itadmin", method: "ssh", state: "started", started_at: hoursAgo(2), ended_at: null,
+          on_session_of: null, remote_host: "10.0.0.5", right: null, count: 1 },
+        { use_id: "u2", account: "itadmin", method: "prompt", state: "single", started_at: hoursAgo(5), ended_at: null,
+          on_session_of: "alex", remote_host: null, right: "com.apple.ServiceManagement.daemons.modify", count: 3 },
+        { use_id: "u3", account: "itadmin", method: "console", state: "ended", started_at: hoursAgo(30), ended_at: hoursAgo(27),
+          on_session_of: null, remote_host: null, right: null, count: 1 },
+      ],
+    };
+    const api = fakeApi({ devices: vi.fn(async () => [used, { ...mac, serial: "C02QUIET0001" }]) });
+    render(<ApiContext.Provider value={api}><MemoryRouter><FleetView /></MemoryRouter></ApiContext.Provider>);
+    await userEvent.click(await screen.findByText("C02ZM1BBMD6T"));
+    const group = screen.getByRole("group", { name: "Permanent admins" });
+    const rows = within(within(group).getByRole("list", { name: "Recent use of permanent admins" })).getAllByRole("listitem");
+    expect(rows).toHaveLength(3);
+    expect(within(rows[0]).getByText("Signed in now")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("Signed in over SSH · from 10.0.0.5")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("Since 2 h ago")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("itadmin ×3")).toBeInTheDocument();
+    expect(within(rows[1]).getByText(/Approved a prompt · on alex’s session · for com\.apple\.ServiceManagement/)).toBeInTheDocument();
+    expect(within(rows[1]).queryByText(/now/)).toBeNull();
+    expect(within(rows[2]).getByText("Ended")).toBeInTheDocument();
+    expect(within(rows[2]).queryByText(/now/)).toBeNull();
+  });
+
+  it("says who sudo ran as, only when the agent said", async () => {
+    const at = new Date(Date.now() - 3600_000).toISOString();
+    const sudo = { account: "itadmin", method: "sudo", state: "single" as const, started_at: at, ended_at: null,
+      on_session_of: null, remote_host: null, right: null, count: 1 };
+    const used: Device = {
+      ...mac,
+      recent_permanent_uses: [
+        { ...sudo, use_id: "s1", run_as: "root" },
+        { ...sudo, use_id: "s2", run_as: null },
+        { ...sudo, use_id: "s3" },
+      ],
+    };
+    const api = fakeApi({ devices: vi.fn(async () => [used]) });
+    render(<ApiContext.Provider value={api}><MemoryRouter><FleetView /></MemoryRouter></ApiContext.Provider>);
+    await userEvent.click(await screen.findByText("C02ZM1BBMD6T"));
+    const rows = within(screen.getByRole("list", { name: "Recent use of permanent admins" })).getAllByRole("listitem");
+    expect(within(rows[0]).getByText("Ran sudo · as root")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("Ran sudo")).toBeInTheDocument();
+    expect(within(rows[2]).getByText("Ran sudo")).toBeInTheDocument();
+  });
+
+  it("hides the use list when none are recorded", async () => {
+    const api = fakeApi({ devices: vi.fn(async () => [{ ...mac, recent_permanent_uses: null }]) });
+    render(<ApiContext.Provider value={api}><MemoryRouter><FleetView /></MemoryRouter></ApiContext.Provider>);
+    await userEvent.click(await screen.findByText("C02ZM1BBMD6T"));
+    expect(screen.getByRole("group", { name: "Permanent admins" })).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Recent use of permanent admins" })).toBeNull();
+  });
+
   it("opens filtered by a search or a problem from the overview's links", async () => {
     const failing: Device = { ...mac, integrity: { code_signature: false } };
     const quiet: Device = { ...mac, serial: "C02QUIET0001", integrity: { code_signature: true } };

@@ -135,11 +135,16 @@ extension ElevationTracker {
     /// while the daemon was stopped are still reported, but never more than a day back, and
     /// always far enough back to attribute admin rights.
     func auditStart(now: Date) throws -> Date {
-        let lookback = now.addingTimeInterval(-auditLookback)
-        guard let reported = try store.value(forKey: Self.auditCursorKey).flatMap(AltiwardJSON.parse) else {
-            return lookback
-        }
-        return max(now.addingTimeInterval(-86_400), min(reported, lookback))
+        try cursorStart(key: Self.auditCursorKey, lookback: auditLookback, now: now)
+    }
+
+    /// Where a heartbeat's read of a log starts: `lookback` before `now` when there is no
+    /// cursor under `key`, otherwise the earlier of the cursor and that, but never more than
+    /// a day back.
+    func cursorStart(key: String, lookback: TimeInterval, now: Date) throws -> Date {
+        let from = now.addingTimeInterval(-lookback)
+        guard let reported = try store.value(forKey: key).flatMap(AltiwardJSON.parse) else { return from }
+        return max(now.addingTimeInterval(-86_400), min(reported, from))
     }
 
     /// The process that most recently added `user` to the admin group, with when the

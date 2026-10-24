@@ -57,6 +57,21 @@ decoder rejects unknown fields, so drift fails loudly.
 | | `instigator` | The process that tried, as for `admin.out_of_band` without `logged_at`; `null` when the extension didn't say (`privileges_blocked` only) |
 | | `attempts`, `first_attempt`, `last_attempt` | How many times that process tried on that item since the last heartbeat, and when (`privileges_blocked` only) |
 | | `truncated` | On the last of a heartbeat's 20 `privileges_blocked` events, how many more were left out; absent otherwise |
+| `admin.permanent_use` | `use_id` | UUID. A sign-in's `started` and `ended` events share it |
+| | `method` | `console`, `terminal`, `ssh`, `screen_sharing`, `prompt`, `sudo` or `su`. `terminal` is a terminal with no remote host, such as `login` in Terminal; a Terminal tab opened while the account is signed in at the Mac is part of that `console` sign-in and isn't sent. The server accepts any non-empty value, so a later method needs no server upgrade first |
+| | `state` | `started` or `ended` for sign-ins; `single` for prompt and screen sharing, and for any sudo, su or SSH use a later agent sees only in the log |
+| | `source` | `utmpx` or `unified_log`. Both are records an admin can erase, so they corroborate rather than prove |
+| | `started` | When the use began: the sign-in time macOS recorded, or the first log entry of a group |
+| | `ended` | When it ended (`ended` only) |
+| | `end_basis` | `logged` (macOS's sign-out or shutdown record; after a crash, which writes neither, the next boot record) or `noticed` (the agent saw the sign-in gone, or its process gone while macOS still listed it, and the time is when it noticed); `ended` only |
+| | `tty` | `console`, `ttys003`, and so on (sign-ins) |
+| | `remote_host` | The client's address as macOS recorded it; `null` when it didn't (`ssh` and `screen_sharing`) |
+| | `on_session_of` | Short name of the user whose session it was; `null` when unknown (`prompt`) |
+| | `right` | The authorisation right the prompt was for (`prompt` only) |
+| | `client` | Path of the app that asked, when the log names it; `null` otherwise (`prompt` only) |
+| | `run_as` | The target user (`sudo` only; Agent 0.3.0 doesn't send it) |
+| | `count`, `last` | How many uses were grouped into this event since the last heartbeat, and the newest one's time (`single` only) |
+| | `truncated` | On the last of a heartbeat's 20 `single` events, how many more groups were left out; absent otherwise |
 | `persistence.detected` | `findings` | What is new or changed since the last snapshot, in a stable order. Each has `kind` and `change` (`added` or `modified`), plus fields by kind, below |
 | | `since` | When the last snapshot was taken: the changes happened between then and `timestamp` |
 | | `truncated` | Findings left out to keep the event small; `0` when all were sent |
@@ -74,6 +89,14 @@ leaves the session open. `elevation.expired_enforced` ends it.
 `agent.tamper` is sent when a check changes, not on every heartbeat: the agent keeps each
 check's last result, so a restart doesn't repeat an alert. A check that stops applying
 sends `retired` if it was failing, and is dropped without an event if it was passing.
+
+`admin.permanent_use` records a use of an account in `PermanentAdmins`. Its `user` is that
+account; it has no `session_id` and no `elevation`, so it is never a session. A sign-in sends
+`started` and later `ended`, paired by `use_id`. A prompt and a screen sharing
+connection send `single`: one event per grouped use, with `count` and `last`. Agent 0.3.0
+sends `console`, `terminal` and `ssh` sign-ins, `prompt` and `screen_sharing`. It doesn't send
+`sudo`, `su` or an SSH use seen only in the log: macOS keeps no log line for them, so they
+wait for Apple's Endpoint Security entitlement. The server accepts them.
 
 Older agents' events are frozen in [`compat/`](compat/), one directory per agent release,
 and the server must keep accepting the last two.

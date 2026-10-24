@@ -1,0 +1,70 @@
+[
+  {
+    "activity_id": 1,
+    "activity_name": "Logon",
+    "actor": {
+      "user": {
+        "name": "alex"
+      }
+    },
+    "category_name": "Identity \u0026 Access Management",
+    "category_uid": 3,
+    "class_name": "Authentication",
+    "class_uid": 3002,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "logon_type": "Authorisation prompt",
+    "logon_type_id": 99,
+    "message": "breakglass approved com.apple.ServiceManagement.daemons.modify on alex's session",
+    "metadata": {
+      "correlation_uid": "5c9e1b47-8f2a-4d60-a3b7-1e4d6f0c8a29",
+      "logged_time": 1792146030000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.3.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "e2a95c60-1d8b-4f73-b6e4-5a0c7d3f9b18",
+      "version": "1.9.0"
+    },
+    "severity": "Informational",
+    "severity_id": 1,
+    "start_time": 1792146000000,
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792146030000,
+    "type_name": "Authentication: Logon",
+    "type_uid": 300201,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "client": "/System/Applications/System Settings.app",
+          "count": 1,
+          "last": "2026-10-16T10:20:00Z",
+          "method": "prompt",
+          "on_session_of": "alex",
+          "right": "com.apple.ServiceManagement.daemons.modify",
+          "source": "unified_log",
+          "started": "2026-10-16T10:20:00Z",
+          "state": "single",
+          "use_id": "5c9e1b47-8f2a-4d60-a3b7-1e4d6f0c8a29"
+        },
+        "event_type": "admin.permanent_use"
+      }
+    },
+    "user": {
+      "name": "breakglass"
+    }
+  }
+]
