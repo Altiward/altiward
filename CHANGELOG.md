@@ -30,6 +30,9 @@ None.
   version, the admin's browser asks GitHub again, at most once an hour, and keeps the list
   it has if that fails. A server newer than every release, such as a build that isn't
   released, says "newer than the latest release" (`docs/data-handling.md`).
+- Settings → Updates has a **Check now** button for admins, beside "Last checked" and on
+  "Couldn’t check for updates", which asks GitHub for the release list straight away
+  instead of waiting out the day. It asks at most once a minute (`docs/data-handling.md`).
 
 ## Agent 0.1.1 - 2026-10-23
 

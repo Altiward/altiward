@@ -14,7 +14,8 @@ on your infrastructure. The Altiward project receives none of it.
   the admin role, the console's browser asks `api.github.com` for Altiward's release list:
   at most once a day per admin's browser after a successful check, and at most once an
   hour while GitHub can't be reached or the list doesn't include the running server's
-  version yet. It sends nothing about your fleet: no versions, cookies or referrer.
+  version yet. An admin's **Check now** in Settings asks again, at most once a minute.
+  It sends nothing about your fleet: no versions, cookies or referrer.
   Like any request a web page makes to another site, it carries the console's address in
   its `Origin` header. The browser compares the versions itself, and the server still
   contacts nobody. `ALTIWARD_UPDATE_CHECK=false` in `.env` turns it off for everyone
@@ -96,7 +97,8 @@ browser asks GitHub's public API for the release list
 admin's browser after a successful check, and at most once an hour while GitHub can't be
 reached. When the list doesn't include the running server's version yet, as just after an
 upgrade, the browser asks again at most once an hour, and keeps the list it has if that
-fails. The answer is kept in that browser's local storage for 24 hours, or in memory
+fails. **Check now** in Settings asks straight away, at most once a minute. The answer is
+kept in that browser's local storage for 24 hours, or in memory
 for the tab if local storage is blocked. The request carries no
 cookies, no referrer and no versions, so it says nothing about your fleet. GitHub sees
 what any website sees of a request from a browser: its IP address and user agent, and,

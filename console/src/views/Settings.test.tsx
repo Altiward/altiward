@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { ApiContext, MeContext } from "../context";
-import { fakeApi, githubFetch, signedIn } from "../test/fixtures";
+import { fakeApi, githubFetch, release, signedIn } from "../test/fixtures";
 import { checkReleases } from "../updates";
 import type { ConsoleSignIn } from "../api";
 import { dateTime } from "../format";
@@ -267,6 +267,30 @@ describe("Settings updates", () => {
     expect(await within(group).findByText("Couldn’t check for updates")).toBeInTheDocument();
     expect(within(group).getByText(`Last checked ${dateTime(before.checkedAt!)}.`)).toBeInTheDocument();
     expect(within(group).queryByText("Update available")).toBeNull();
+  });
+
+  it("checks again when an admin presses Check now", async () => {
+    githubFetch([release("server-v0.1.0"), release("agent-v0.1.2")]);
+    await checkReleases(Date.now() - 2 * 60_000);
+    const fetch = githubFetch();
+    renderView(withCheck());
+    const server = await screen.findByRole("group", { name: "Server" });
+    expect(within(server).getByText("Up to date")).toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Check now" }));
+    expect(await within(await screen.findByRole("group", { name: "Server" })).findByText("Update available")).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers Check now after a failed check", async () => {
+    githubFetch("offline");
+    await checkReleases(Date.now() - 2 * 60_000);
+    renderView(withCheck());
+    const group = await screen.findByRole("group", { name: "Updates" });
+    await within(group).findByText("Couldn’t check for updates");
+    githubFetch();
+    await userEvent.click(within(group).getByRole("button", { name: "Check now" }));
+    expect(await within(group).findByText("You’re running 0.1.0. The latest release is 0.2.0.")).toBeInTheDocument();
   });
 
   it("says the check is off when the server turned it off", async () => {

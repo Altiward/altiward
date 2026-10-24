@@ -223,6 +223,36 @@ describe("checkReleases", () => {
     });
   });
 
+  describe("when an admin presses Check now", () => {
+    it("asks GitHub within the day, at most once a minute", async () => {
+      const fetch = githubFetch();
+      await checkReleases(t0);
+      await checkReleases(t0 + 59_000, { force: true });
+      expect(fetch).toHaveBeenCalledTimes(1);
+      const check = await checkReleases(t0 + 61_000, { force: true });
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(check.checkedAt).toBe(new Date(t0 + 61_000).toISOString());
+    });
+
+    it("asks within the hour after a failure, at most once a minute", async () => {
+      githubFetch("offline");
+      await checkReleases(t0);
+      const fetch = githubFetch();
+      await checkReleases(t0 + 59_000, { force: true });
+      expect(fetch).not.toHaveBeenCalled();
+      expect((await checkReleases(t0 + 61_000, { force: true })).failed).toBe(false);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("says it couldn't check, even with a list from earlier that day", async () => {
+      githubFetch();
+      const first = await checkReleases(t0);
+      githubFetch("offline");
+      expect(await checkReleases(t0 + 2 * 60_000, { force: true }))
+        .toEqual({ releases: null, checkedAt: first.checkedAt, failed: true });
+    });
+  });
+
   it("asks again an hour after a failure, not sooner", async () => {
     const fetch = githubFetch("offline");
     await checkReleases(t0);

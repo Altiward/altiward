@@ -133,7 +133,7 @@ export function UpdatesGroup({ fleetAgents }: { fleetAgents: string[] | null }) 
       {u?.state === "checking" && <p className="hint" role="status">Checking for updates…</p>}
       {u?.state === "done" && (u.check.releases
         ? <LatestVersions running={u.running} fleetAgents={fleetAgents} releases={u.check.releases} checkedAt={u.check.checkedAt}
-          azureApp={u.azureApp} />
+          azureApp={u.azureApp} checkNow={u.checkNow} />
         : (
           <div className="box">
             <div className="row">
@@ -147,6 +147,7 @@ export function UpdatesGroup({ fleetAgents }: { fleetAgents: string[] | null }) 
                   also listed on <a href={RELEASES_PAGE} target="_blank" rel="noreferrer">GitHub</a>.
                 </p>
               </span>
+              <CheckNow onClick={u.checkNow} />
             </div>
           </div>
         ))}
@@ -154,8 +155,12 @@ export function UpdatesGroup({ fleetAgents }: { fleetAgents: string[] | null }) 
   );
 }
 
-function LatestVersions({ running, fleetAgents, releases, checkedAt, azureApp }: Deployment & {
-  running: string; fleetAgents: string[] | null; releases: GitHubRelease[]; checkedAt: string | null;
+/** Asks GitHub again; the check itself keeps it to once a minute. */
+const CheckNow = ({ onClick }: { onClick: () => void }) =>
+  <button type="button" className="button" onClick={onClick}>Check now</button>;
+
+function LatestVersions({ running, fleetAgents, releases, checkedAt, azureApp, checkNow }: Deployment & {
+  running: string; fleetAgents: string[] | null; releases: GitHubRelease[]; checkedAt: string | null; checkNow: () => void;
 }) {
   const a = available(running, fleetAgents ?? [], releases);
   const ahead = a.server !== null && isVersion(running) && compareVersions(running, a.server.version) > 0;
@@ -178,12 +183,15 @@ function LatestVersions({ running, fleetAgents, releases, checkedAt, azureApp }:
           {a.newerAgent ? <UpdateAvailable /> : a.agent && a.fleetAgent && <StateBadge state="verified" label="Up to date" />}
         </div>
       </div>
-      <p className="hint">
-        Last checked {dateTime(checkedAt)}. Your browser asks api.github.com for the release list at most once a
-        day after a successful check, and at most once an hour while it can’t reach GitHub or the list doesn’t include
-        this server’s version yet. It sends no versions and
-        nothing about your Macs. <code>ALTIWARD_UPDATE_CHECK=false</code> {whereSettingsLive(azureApp)} turns it off.
-      </p>
+      <div className="row">
+        <p className="hint">
+          Last checked {dateTime(checkedAt)}. Your browser asks api.github.com for the release list at most once a
+          day after a successful check, and at most once an hour while it can’t reach GitHub or the list doesn’t include
+          this server’s version yet. It sends no versions and
+          nothing about your Macs. <code>ALTIWARD_UPDATE_CHECK=false</code> {whereSettingsLive(azureApp)} turns it off.
+        </p>
+        <CheckNow onClick={checkNow} />
+      </div>
       {a.newerServer && <ServerNotice running={running} latest={a.newerServer} azureApp={azureApp} />}
       {a.newerAgent && a.fleetAgent && <AgentNotice fleet={a.fleetAgent} latest={a.newerAgent} />}
     </>

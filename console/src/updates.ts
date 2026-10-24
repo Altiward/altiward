@@ -142,6 +142,8 @@ const DISMISSED_KEY = "altiward.updates.dismissed";
 const DAY = 24 * 60 * 60 * 1000;
 /** After a failure, wait this long before asking again. */
 const RETRY_AFTER = 60 * 60 * 1000;
+/** Check now asks at most this often. */
+const PRESS_AFTER = 60 * 1000;
 
 interface Cache { checkedAt?: string; releases?: GitHubRelease[]; failedAt?: string }
 
@@ -199,17 +201,21 @@ function predates(releases: GitHubRelease[], running: string): boolean {
  *  check (the answer is kept in localStorage, or in memory for the tab when storage is
  *  blocked), and at most once an hour while GitHub can't be reached. A list that predates
  *  the running server, as after an upgrade, is asked for again at most once an hour, and
- *  kept if that fails. A failure is quiet. It sends no cookies, no referrer and no
- *  versions. */
-export async function checkReleases(now = Date.now(), { running }: { running?: string } = {}): Promise<Check> {
+ *  kept if that fails. A failure is quiet. With force (Check now), it asks whatever it
+ *  has, at most once a minute, and reports a failure. It sends no cookies, no referrer
+ *  and no versions. */
+export async function checkReleases(now = Date.now(), { running, force = false }: { running?: string; force?: boolean } = {}): Promise<Check> {
   const cache = read<Cache>(CACHE_KEY) ?? {};
   const lastSuccess = cache.checkedAt ?? null;
   const within = (at: string | null | undefined, ms: number) => !!at && now >= Date.parse(at) && now - Date.parse(at) < ms;
   const cached: Check | null = cache.releases && within(lastSuccess, DAY)
     ? { releases: cache.releases, checkedAt: lastSuccess, failed: false } : null;
   const failed: Check = { releases: null, checkedAt: lastSuccess, failed: true };
-  if (cached && !(running && predates(cache.releases!, running) && !within(lastSuccess, RETRY_AFTER))) return cached;
-  if (within(cache.failedAt, RETRY_AFTER)) return cached ?? failed;
+  const pressed = force && !within(lastSuccess, PRESS_AFTER) && !within(cache.failedAt, PRESS_AFTER);
+  if (!pressed) {
+    if (cached && !(running && predates(cache.releases!, running) && !within(lastSuccess, RETRY_AFTER))) return cached;
+    if (within(cache.failedAt, RETRY_AFTER)) return cached ?? failed;
+  }
   try {
     const res = await fetch(RELEASES_URL, {
       credentials: "omit", referrerPolicy: "no-referrer", headers: { Accept: "application/vnd.github+json" },
@@ -223,7 +229,7 @@ export async function checkReleases(now = Date.now(), { running }: { running?: s
     return { releases, checkedAt, failed: false };
   } catch {
     write(CACHE_KEY, { ...cache, failedAt: new Date(now).toISOString() } satisfies Cache);
-    return cached ?? failed;
+    return pressed ? failed : cached ?? failed;
   }
 }
 

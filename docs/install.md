@@ -425,7 +425,7 @@ doesn't include your server's version yet, sending nothing about your fleet
 ([Data handling](data-handling.md#in-the-browser)). A notice can be
 dismissed until the next version. Settings always shows the latest versions and when
 they were last checked, or "Couldn’t check for updates" when a firewall or proxy blocks
-GitHub. To turn the check off for everyone, set `ALTIWARD_UPDATE_CHECK=false` in `.env`
+GitHub; **Check now** there asks again, at most once a minute. To turn the check off for everyone, set `ALTIWARD_UPDATE_CHECK=false` in `.env`
 and run `docker compose up -d`. On Azure Container Apps, the notice names the image to
 change to instead, and upgrades work differently
 ([Upgrading](../deploy/azure/README.md#upgrading)).

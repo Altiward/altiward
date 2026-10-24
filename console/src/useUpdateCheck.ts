@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useApi, useCan } from "./context";
 import { type Check, checkReleases } from "./updates";
 
@@ -13,11 +13,12 @@ export type UpdateCheck = Deployment & (
 
 /** The update check for an admin; null for other roles, who can't act on it, and while
  *  the server's version is loading. Nothing is fetched for them, or while the server
- *  turned the check off. */
-export function useUpdateCheck(): UpdateCheck | null {
+ *  turned the check off. checkNow asks GitHub again (Settings' Check now). */
+export function useUpdateCheck(): (UpdateCheck & { checkNow: () => void }) | null {
   const api = useApi();
   const admin = useCan("admin");
   const [result, setResult] = useState<UpdateCheck | null>(null);
+  const [presses, setPresses] = useState(0);
   useEffect(() => {
     if (!admin) return;
     let live = true;
@@ -34,10 +35,11 @@ export function useUpdateCheck(): UpdateCheck | null {
         return;
       }
       if (live) setResult({ ...where, state: "checking", running: about.version });
-      const check = await checkReleases(Date.now(), { running: about.version });
+      const check = await checkReleases(Date.now(), { running: about.version, force: presses > 0 });
       if (live) setResult({ ...where, state: "done", running: about.version, check });
     })();
     return () => { live = false; };
-  }, [api, admin]);
-  return admin ? result : null;
+  }, [api, admin, presses]);
+  const checkNow = useCallback(() => setPresses((n) => n + 1), []);
+  return admin && result ? { ...result, checkNow } : null;
 }
