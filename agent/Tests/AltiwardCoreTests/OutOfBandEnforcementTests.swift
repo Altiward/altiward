@@ -349,6 +349,25 @@ struct OutOfBandEnforcementTests {
         #expect(try store.pendingCount() == pending)
     }
 
+    @Test func withoutPrivilegesAGrantClaimForAnUntrackedAdminIsRefused() throws {
+        // jdoe is admin but not raised yet: the claim would open a Privileges session before
+        // the agent could raise the rights. Without SAP Privileges no grant claim is real.
+        var device = testDevice
+        device.privilegesVersion = nil
+        let (tracker, store) = try tracker(.enforce, device: device)
+        let pending = try store.pendingCount()
+        let error = #expect(throws: ElevationTracker.ClaimRefused.self) {
+            try tracker.record(HookInvocation(user: "jdoe", state: .admin, reason: "work", invokedAt: clock.now))
+        }
+        #expect(error?.reason == .privilegesNotInstalled)
+        #expect(try store.openSession(user: "jdoe") == nil)
+        #expect(try store.pendingCount() == pending)
+
+        let raised = try raise(tracker)
+        #expect(try store.openSession(user: "jdoe")?.sessionID == raised.sessionID)
+        #expect(try store.openSession(user: "jdoe")?.source == .outOfBand)
+    }
+
     @Test func alertModeStillLetsALateClaimReplace() throws {
         let (tracker, store) = try tracker(.alert)
         let raised = try raise(tracker)
