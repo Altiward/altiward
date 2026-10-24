@@ -127,10 +127,15 @@ Set it up once:
    providers listed in [Before you deploy](../deploy/azure/README.md#before-you-deploy) in
    its subscription.
 2. Create an Entra app registration with a federated credential for GitHub Actions:
-   organisation `Altiward`, repository `altiward`, entity *Environment*, name
-   `azure-test`. Give it **Contributor** and **Role Based Access Control Administrator**
-   on that resource group only. The template grants access to its key vault, which
-   Contributor alone can't.
+   issuer `https://token.actions.githubusercontent.com`, audience
+   `api://AzureADTokenExchange`, and the subject GitHub sends for the `azure-test`
+   environment. This repository uses GitHub's immutable subject, which names the
+   organisation and repository by ID: `repo:Altiward@344351898/altiward@1427562605:environment:azure-test`.
+   `gh api repos/Altiward/altiward/actions/oidc/customization/sub` shows the prefix; a
+   failed sign-in's `AADSTS700213` error shows the whole subject. A new credential can
+   take a few minutes to work. Give the app **Contributor** and **Role Based Access
+   Control Administrator** on that resource group only. The template grants access to its
+   key vault, which Contributor alone can't.
 3. Create the repository environment `azure-test`, limited to the `main` branch, with
    the variables `AZURE_CLIENT_ID` (the app's), `AZURE_TENANT_ID` and
    `AZURE_SUBSCRIPTION_ID`. They are IDs, not secrets: GitHub's OIDC token is the only
