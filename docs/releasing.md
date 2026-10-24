@@ -120,25 +120,11 @@ Actions tab, on `main` or with a release tag: the `azure-test` environment allow
 else, so branch code never gets the Azure sign-in. It first passed on server 0.2.0, which
 took Deploy to Azure out of Preview.
 
-Set it up once:
-
-1. Create the resource group `rg-altiward-deploycheck`, and register the resource
-   providers listed in [Before you deploy](../deploy/azure/README.md#before-you-deploy) in
-   its subscription.
-2. Create an Entra app registration with a federated credential for GitHub Actions:
-   issuer `https://token.actions.githubusercontent.com`, audience
-   `api://AzureADTokenExchange`, and the subject GitHub sends for the `azure-test`
-   environment. This repository uses GitHub's immutable subject, which names the
-   organisation and repository by ID: `repo:Altiward@344351898/altiward@1427562605:environment:azure-test`.
-   `gh api repos/Altiward/altiward/actions/oidc/customization/sub` shows the prefix; a
-   failed sign-in's `AADSTS700213` error shows the whole subject. A new credential can
-   take a few minutes to work. Give the app **Contributor** and **Role Based Access
-   Control Administrator** on that resource group only. The template grants access to its
-   key vault, which Contributor alone can't.
-3. Create the repository environment `azure-test`, limited to the `main` branch, with
-   the variables `AZURE_CLIENT_ID` (the app's), `AZURE_TENANT_ID` and
-   `AZURE_SUBSCRIPTION_ID`. They are IDs, not secrets: GitHub's OIDC token is the only
-   credential.
+It signs in to Azure with GitHub's OpenID Connect token, so the repository holds no Azure
+credential: the `azure-test` environment holds only the IDs of an Entra app that trusts
+that environment's token and nothing else. The app can change only
+`rg-altiward-deploycheck`, and can grant only the two Key Vault roles the template uses.
+A fork that wants the check needs its own Azure identity, with the same limits.
 
 Each run leaves a soft-deleted key vault behind, under a name no later run uses, which
 Azure removes after 90 days.
