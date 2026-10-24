@@ -63,7 +63,9 @@ server 0.2.0. A server before 0.3.0 ignores where the Mac says its key is kept.
   before turning `enforce` on. A kept, paused or failed removal leaves the finding open,
   retries at every heartbeat and is logged on the Mac. A Privileges grant whose hook never
   reached the agent looks like rights nobody granted and can be removed; the person can
-  request again.
+  request again. A Privileges grant claimed more than a minute after the agent raised the
+  rights, or on a Mac without SAP Privileges, is refused and logged on the Mac, and the
+  rights are still removed: a real grant's hook arrives well within that minute.
 - `OutOfBandEnforcement` and `OutOfBandGraceMinutes` are covered by the tamper check:
   `agent.tamper` reports either set outside MDM (`settings_managed`). Changing either
   restarts the agent. `docs/data-handling.md` lists what the agent collects.

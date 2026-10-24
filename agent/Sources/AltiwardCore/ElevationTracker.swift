@@ -91,10 +91,43 @@ public final class ElevationTracker: Sendable {
         self.env = environment
     }
 
+    /// How long after Altiward raised rights nobody granted a Privileges grant may still claim
+    /// them, in `OutOfBandEnforcement` `enforce` mode. The only real case is a heartbeat that
+    /// runs between Privileges changing the group and its hook arriving, which reports within
+    /// about 25 s of the grant (up to about 18 s waiting for Privileges' timer, see
+    /// ``untrackedGrace``, then a 5 s XPC timeout) and never retries. A later claim is someone
+    /// running the hook by hand to keep rights nobody granted.
+    static let grantReplacementWindow: TimeInterval = 60
+
+    /// Why ``record(_:callerUID:)`` refused a grant claim: in `OutOfBandEnforcement` `enforce`
+    /// mode, a claim can't turn rights nobody granted into a Privileges grant once it is
+    /// later than ``grantReplacementWindow``, or on a Mac without SAP Privileges.
+    public struct GrantClaimRefused: Error, CustomStringConvertible {
+        public enum Reason: Sendable, Equatable {
+            /// Seconds between Altiward raising the rights and the claim.
+            case late(seconds: Int)
+            case privilegesNotInstalled
+        }
+        public let user: String
+        public let reason: Reason
+
+        public var description: String {
+            let when =
+                switch reason {
+                case .late(let seconds): "\(seconds) s after Altiward raised rights nobody granted"
+                case .privilegesNotInstalled: "on a Mac without SAP Privileges, while they hold rights nobody granted"
+                }
+            return "a Privileges grant claimed for \(user) \(when); OutOfBandEnforcement keeps them out of band"
+        }
+    }
+
     /// Records a grant or revoke reported by the hook.
     ///
     /// The hook runs as the user, so its claim is only a claim: the event carries what the
     /// daemon observed in the `admin` group and whether the two agree (`detail.verified`).
+    /// In `OutOfBandEnforcement` `enforce` mode a grant claim that would replace an
+    /// out-of-band session too late, or without Privileges installed, throws
+    /// ``GrantClaimRefused`` and records nothing, so the rights are still removed.
     ///
     /// Membership is read inside the transaction, so a grant can't commit between the read
     /// and the decision.
@@ -122,6 +155,10 @@ public final class ElevationTracker: Sendable {
             let event: AltiwardEvent
             switch invocation.state {
             case .admin:
+                // Before any write, so a refusal leaves the ledger and the outbox as they were.
+                if let replaced = existing, replaced.source == .outOfBand {
+                    try checkReplacement(of: replaced, by: invocation, device: device)
+                }
                 // A grant while a Privileges session is open renews that session.
                 let renewing = existing?.source == .privileges ? existing : nil
                 let sessionID = renewing?.sessionID ?? newID()
@@ -166,6 +203,22 @@ public final class ElevationTracker: Sendable {
             }
             try store.enqueue(event)
             return event
+        }
+    }
+
+    /// Throws ``GrantClaimRefused`` when, in `enforce` mode, a grant claim may not replace the
+    /// out-of-band session `replaced`. Times are the daemon's: the session's start and the
+    /// claim's `invokedAt`, which the XPC handler sets on arrival.
+    private func checkReplacement(of replaced: OpenSession, by invocation: HookInvocation, device: DeviceInfo)
+        throws
+    {
+        guard env.config.outOfBandEnforcement == .enforce else { return }
+        if device.privilegesVersion == nil {
+            throw GrantClaimRefused(user: invocation.user, reason: .privilegesNotInstalled)
+        }
+        let elapsed = invocation.invokedAt.timeIntervalSince(replaced.startedAt)
+        if elapsed > Self.grantReplacementWindow {
+            throw GrantClaimRefused(user: invocation.user, reason: .late(seconds: Int(elapsed.rounded())))
         }
     }
 

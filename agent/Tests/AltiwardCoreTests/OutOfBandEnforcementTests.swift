@@ -15,13 +15,14 @@ struct OutOfBandEnforcementTests {
     func tracker(
         _ mode: OutOfBandEnforcement, grace: TimeInterval = 300, permanent: Set<String> = ["itadmin"],
         integrity: @escaping @Sendable () -> [IntegrityCheck: IntegrityResult] = { [:] },
-        expiry: ExpiryEnforcement = .alert, store existing: AgentStore? = nil
+        expiry: ExpiryEnforcement = .alert, device: DeviceInfo = testDevice, store existing: AgentStore? = nil
     ) throws -> (ElevationTracker, AgentStore) {
         let store = try existing ?? makeStore()
         let config = AgentConfiguration(
             permanentAdmins: permanent, expiryEnforcement: expiry, outOfBandEnforcement: mode,
             outOfBandGracePeriod: grace)
-        let env = makeEnvironment(admins: admins, clock: clock, config: config, integrity: integrity)
+        let env = makeEnvironment(
+            admins: admins, clock: clock, config: config, device: { device }, integrity: integrity)
         return (ElevationTracker(store: store, environment: env), store)
     }
 
@@ -297,6 +298,69 @@ struct OutOfBandEnforcementTests {
         #expect(admins.removalAttempts == 0)
         #expect(admins.isAdmin(user: "jdoe"))
         #expect(try store.openSession(user: "jdoe")?.source == .privileges)
+    }
+
+    @Test func aLateGrantClaimDoesNotReplaceAnOutOfBandSession() throws {
+        // jdoe holds admin nobody granted and runs the hook by hand, long after any grant's
+        // hook would have arrived. The claim is refused and the rights are still removed.
+        let (tracker, store) = try tracker(.enforce)
+        let raised = try raise(tracker)
+        clock.advance(61)
+        let pending = try store.pendingCount()
+        let error = #expect(throws: ElevationTracker.GrantClaimRefused.self) {
+            try tracker.record(HookInvocation(user: "jdoe", state: .admin, reason: "work", invokedAt: clock.now))
+        }
+        #expect(error?.reason == .late(seconds: 61))
+        let message = error.map { String(describing: $0) } ?? ""
+        #expect(message.contains("jdoe"))
+        #expect(message.contains("61 s"))
+        let session = try #require(try store.openSession(user: "jdoe"))
+        #expect(session.source == .outOfBand)
+        #expect(session.sessionID == raised.sessionID)
+        #expect(session.startedAt == raised.timestamp)
+        #expect(try store.pendingCount() == pending)
+
+        clock.advance(300 - 61)
+        let events = try tracker.heartbeat()
+        #expect(types(events) == [.adminOutOfBandRemoved, .agentHealth])
+        #expect(events.first?.sessionID == raised.sessionID)
+        #expect(!admins.isAdmin(user: "jdoe"))
+        #expect(try store.openSession(user: "jdoe") == nil)
+    }
+
+    @Test func withoutPrivilegesAGrantClaimNeverReplaces() throws {
+        // Without SAP Privileges nothing legitimate runs the hook, however soon the claim.
+        var device = testDevice
+        device.privilegesVersion = nil
+        let (tracker, store) = try tracker(.enforce, device: device)
+        let raised = try raise(tracker)
+        clock.advance(10)
+        let pending = try store.pendingCount()
+        let error = #expect(throws: ElevationTracker.GrantClaimRefused.self) {
+            try tracker.record(HookInvocation(user: "jdoe", state: .admin, reason: "work", invokedAt: clock.now))
+        }
+        #expect(error?.reason == .privilegesNotInstalled)
+        let message = error.map { String(describing: $0) } ?? ""
+        #expect(message.contains("jdoe"))
+        #expect(message.contains("without SAP Privileges"))
+        let session = try #require(try store.openSession(user: "jdoe"))
+        #expect(session.source == .outOfBand)
+        #expect(session.sessionID == raised.sessionID)
+        #expect(try store.pendingCount() == pending)
+    }
+
+    @Test func alertModeStillLetsALateClaimReplace() throws {
+        let (tracker, store) = try tracker(.alert)
+        let raised = try raise(tracker)
+        clock.advance(120)
+        let granted = try tracker.record(
+            HookInvocation(user: "jdoe", state: .admin, reason: "work", invokedAt: clock.now))
+        #expect(granted.type == .elevationGranted)
+        #expect(granted.sessionID != raised.sessionID)
+        #expect(granted.detail["replaced_out_of_band"] == true)
+        let session = try #require(try store.openSession(user: "jdoe"))
+        #expect(session.source == .privileges)
+        #expect(session.sessionID == granted.sessionID)
     }
 
     @Test func graceCountsFromWhenTheRightsWereRaisedAcrossRestarts() throws {
