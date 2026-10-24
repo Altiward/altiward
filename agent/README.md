@@ -32,6 +32,8 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
   picked, read from Privileges' own timer and capped by `ExpirationIntervalMax`.
 - **Keeps every event until your server has it.** Each event is written to the outbox in
   the same transaction as the ledger, and removed only once the server acknowledges it.
+  While the server can't be reached it retries with backoff, up to an hour apart, and sends
+  at once when the network comes back or the server answers its command poll.
 - **Raises admin rights nobody granted** as `admin.out_of_band`, once they have gone 30
   seconds without a grant, checked every 15 seconds; the wait is longer than a Privileges
   hook can take to report a grant. Accounts in `PermanentAdmins` are left out. With

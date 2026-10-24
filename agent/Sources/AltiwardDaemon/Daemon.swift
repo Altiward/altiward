@@ -138,6 +138,8 @@ final class Daemon: Sendable {
             while true {
                 let started = Date()
                 let summary = await commands.poll(wait: CommandLoop.longPollWait)
+                // The server answered, so events held back because it couldn't be reached go now.
+                if summary.error == nil { await delivery.serverAnswered() }
                 // A revoke queues elevation.revoked events; send them straight away.
                 if summary.executed > 0 {
                     Self.checkPersistence(tracker)

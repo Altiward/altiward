@@ -28,6 +28,8 @@ export interface Latest {
   security: boolean;
   /** The agent's package; null for the server. */
   packageUrl: string | null;
+  /** A release candidate: GitHub marks it a pre-release, or its version is one. */
+  prerelease: boolean;
 }
 
 const tagPrefix: Record<Product, string> = { server: "server-v", agent: "agent-v" };
@@ -100,14 +102,20 @@ export function latestRelease(releases: GitHubRelease[], product: Product, { pre
   }
   if (!best) return null;
   const pkg = product === "agent" ? best.release.assets?.find((a) => a.name.endsWith(".pkg")) : undefined;
-  return { version: best.version, url: best.release.html_url, security: hasSecurityFix(best.release.body), packageUrl: pkg?.browser_download_url ?? null };
+  return {
+    version: best.version, url: best.release.html_url, security: hasSecurityFix(best.release.body),
+    packageUrl: pkg?.browser_download_url ?? null, prerelease: best.release.prerelease || isPrerelease(best.version),
+  };
 }
 
 export interface Available {
-  /** The newest of each product this server should hear about. */
+  /** The newest release of each product. */
   server: Latest | null;
   agent: Latest | null;
-  /** The same, when newer than what runs: the server, and the newest agent in the fleet. */
+  /** The newest release candidate, when candidates count and it's newer than the release. */
+  serverCandidate: Latest | null;
+  agentCandidate: Latest | null;
+  /** The newest of each, when newer than what runs: the server, and the newest agent in the fleet. */
   newerServer: Latest | null;
   newerAgent: Latest | null;
   /** The newest agent version in the fleet, if any Mac reported one. */
@@ -115,17 +123,23 @@ export interface Available {
 }
 
 /** What's newer than the running server and the newest agent in the fleet. Release
- *  candidates count only for a server running one; a server that isn't X.Y.Z, such as
- *  dev, gets no notice. */
-export function available(running: string, fleetAgents: string[], releases: GitHubRelease[]): Available {
-  const prereleases = isPrerelease(running);
-  const server = latestRelease(releases, "server", { prereleases });
-  const agent = latestRelease(releases, "agent", { prereleases });
+ *  candidates count when an admin shows pre-releases, and always for a server running
+ *  one; a server that isn't X.Y.Z, such as dev, gets no notice. */
+export function available(running: string, fleetAgents: string[], releases: GitHubRelease[],
+  { prereleases = false }: { prereleases?: boolean } = {}): Available {
+  const candidates = prereleases || isPrerelease(running);
+  const newest = (product: Product) => {
+    const release = latestRelease(releases, product, { prereleases: false });
+    const any = candidates ? latestRelease(releases, product, { prereleases: true }) : null;
+    const candidate = any && (!release || compareVersions(any.version, release.version) > 0) ? any : null;
+    return { release, candidate, top: candidate ?? release };
+  };
+  const server = newest("server"), agent = newest("agent");
   const fleetAgent = fleetAgents.filter(isVersion).sort(compareVersions).at(-1) ?? null;
   return {
-    server, agent, fleetAgent,
-    newerServer: server && isVersion(running) && compareVersions(server.version, running) > 0 ? server : null,
-    newerAgent: agent && fleetAgent && compareVersions(agent.version, fleetAgent) > 0 ? agent : null,
+    server: server.release, agent: agent.release, serverCandidate: server.candidate, agentCandidate: agent.candidate, fleetAgent,
+    newerServer: server.top && isVersion(running) && compareVersions(server.top.version, running) > 0 ? server.top : null,
+    newerAgent: agent.top && fleetAgent && compareVersions(agent.top.version, fleetAgent) > 0 ? agent.top : null,
   };
 }
 
@@ -139,9 +153,12 @@ export interface Check {
 
 const CACHE_KEY = "altiward.releases";
 const DISMISSED_KEY = "altiward.updates.dismissed";
+const PRERELEASES_KEY = "altiward.updates.prereleases";
 const DAY = 24 * 60 * 60 * 1000;
 /** After a failure, wait this long before asking again. */
 const RETRY_AFTER = 60 * 60 * 1000;
+/** Check now asks at most this often. */
+const PRESS_AFTER = 60 * 1000;
 
 interface Cache { checkedAt?: string; releases?: GitHubRelease[]; failedAt?: string }
 
@@ -187,18 +204,32 @@ const trim = (r: GitHubRelease): GitHubRelease => ({
   assets: Array.isArray(r.assets) ? r.assets.map((a) => ({ name: String(a.name ?? ""), browser_download_url: String(a.browser_download_url ?? "") })) : [],
 });
 
+/** Whether the list predates the running server: it's newer than every server release
+ *  listed. A server that isn't X.Y.Z, such as dev, never is. */
+function predates(releases: GitHubRelease[], running: string): boolean {
+  if (!isVersion(running)) return false;
+  const newest = latestRelease(releases, "server", { prereleases: true });
+  return !newest || compareVersions(running, newest.version) > 0;
+}
+
 /** Asks GitHub for the release list: at most once a day per browser after a successful
  *  check (the answer is kept in localStorage, or in memory for the tab when storage is
- *  blocked), and at most once an hour while GitHub can't be reached. A failure is quiet.
- *  It sends no cookies, no referrer and no versions. */
-export async function checkReleases(now = Date.now()): Promise<Check> {
+ *  blocked), and at most once an hour while GitHub can't be reached. A list that predates
+ *  the running server, as after an upgrade, is asked for again at most once an hour, and
+ *  kept if that fails. A failure is quiet. With force (Check now), it asks whatever it
+ *  has, at most once a minute, and reports a failure. It sends no cookies, no referrer
+ *  and no versions. */
+export async function checkReleases(now = Date.now(), { running, force = false }: { running?: string; force?: boolean } = {}): Promise<Check> {
   const cache = read<Cache>(CACHE_KEY) ?? {};
   const lastSuccess = cache.checkedAt ?? null;
-  if (cache.releases && lastSuccess && now - Date.parse(lastSuccess) < DAY && now >= Date.parse(lastSuccess)) {
-    return { releases: cache.releases, checkedAt: lastSuccess, failed: false };
-  }
-  if (cache.failedAt && now - Date.parse(cache.failedAt) < RETRY_AFTER && now >= Date.parse(cache.failedAt)) {
-    return { releases: null, checkedAt: lastSuccess, failed: true };
+  const within = (at: string | null | undefined, ms: number) => !!at && now >= Date.parse(at) && now - Date.parse(at) < ms;
+  const cached: Check | null = cache.releases && within(lastSuccess, DAY)
+    ? { releases: cache.releases, checkedAt: lastSuccess, failed: false } : null;
+  const failed: Check = { releases: null, checkedAt: lastSuccess, failed: true };
+  const pressed = force && !within(lastSuccess, PRESS_AFTER) && !within(cache.failedAt, PRESS_AFTER);
+  if (!pressed) {
+    if (cached && !(running && predates(cache.releases!, running) && !within(lastSuccess, RETRY_AFTER))) return cached;
+    if (within(cache.failedAt, RETRY_AFTER)) return cached ?? failed;
   }
   try {
     const res = await fetch(RELEASES_URL, {
@@ -213,7 +244,7 @@ export async function checkReleases(now = Date.now()): Promise<Check> {
     return { releases, checkedAt, failed: false };
   } catch {
     write(CACHE_KEY, { ...cache, failedAt: new Date(now).toISOString() } satisfies Cache);
-    return { releases: null, checkedAt: lastSuccess, failed: true };
+    return pressed ? failed : cached ?? failed;
   }
 }
 
@@ -225,4 +256,14 @@ export function isDismissed(product: Product, version: string): boolean {
 /** Hides the notice for this version; the next version shows again. */
 export function dismiss(product: Product, version: string) {
   write(DISMISSED_KEY, { ...read<Partial<Record<Product, string>>>(DISMISSED_KEY), [product]: version });
+}
+
+/** Whether this browser's admin asked to hear about release candidates (Settings' Show
+ *  pre-releases). Off until turned on; nothing is sent to the server. */
+export function showsPrereleases(): boolean {
+  return read<boolean>(PRERELEASES_KEY) === true;
+}
+
+export function setShowPrereleases(on: boolean) {
+  write(PRERELEASES_KEY, on);
 }

@@ -9,6 +9,57 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Server 0.3.0 - unreleased
+
+### Upgrade order
+
+None.
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+- After an upgrade, the console's update check no longer says "Up to date" from a release
+  list fetched before the release. When the list doesn't include the running server's
+  version, the admin's browser asks GitHub again, at most once an hour, and keeps the list
+  it has if that fails. A server newer than every release, such as a build that isn't
+  released, says "newer than the latest release" (`docs/data-handling.md`).
+- Settings → Updates has a **Check now** button for admins, beside "Last checked" and on
+  "Couldn’t check for updates", which asks GitHub for the release list straight away
+  instead of waiting out the day. It asks at most once a minute (`docs/data-handling.md`).
+- Settings → Updates has a **Show pre-releases** switch, off by default, kept in the
+  admin's browser. When it's on, the console's notices offer release candidates too, saying
+  so, with the `upgrade.sh` command for the candidate, and Settings names the newest
+  candidate next to the latest release. A server running a candidate hears about newer
+  candidates whatever the switch says, as before.
+
+## Agent 0.2.0 - unreleased
+
+### Upgrade order
+
+None.
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+- After the server has been unreachable, a Mac sends its waiting events as soon as the
+  server answers its command poll, instead of waiting out its retry backoff, which grows to
+  an hour during a long outage. Before, only a network change on the Mac cut the wait
+  short. A server that answered with an error is still retried with backoff.
+
 ## Agent 0.1.1 - 2026-10-23
 
 ### Upgrade order

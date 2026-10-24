@@ -93,6 +93,8 @@ public actor DeliveryLoop {
     private var rerun = false
     private var consecutiveFailures = 0
     private var retryNotBefore: Date?
+    /// The last failure was the server answering with an error, not failing to reach it.
+    private var refused = false
 
     public init(
         store: AgentStore,
@@ -114,6 +116,16 @@ public actor DeliveryLoop {
     public func resetBackoff() {
         consecutiveFailures = 0
         retryNotBefore = nil
+    }
+
+    /// The server answered another request, such as the command long poll. A backoff
+    /// because it couldn't be reached is over, so the outbox is sent at once instead of
+    /// waiting up to an hour after an outage. A backoff after the server refused events
+    /// stays, so a server that keeps refusing them isn't asked again on every poll.
+    public func serverAnswered() async {
+        guard retryNotBefore != nil, !refused else { return }
+        resetBackoff()
+        await flush()
     }
 
     /// Sends until the outbox is empty or a send fails. Concurrent calls coalesce:
@@ -144,6 +156,7 @@ public actor DeliveryLoop {
                 consecutiveFailures += 1
                 let delay = min(3600, 15 * pow(2, Double(min(consecutiveFailures - 1, 8))))
                 retryNotBefore = now().addingTimeInterval(delay)
+                refused = error is DeliveryError
                 result.error = String(describing: error)
                 log("delivery failed (attempt \(consecutiveFailures), retry in \(Int(delay))s): \(error)")
                 break

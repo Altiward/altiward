@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { githubFetch, notes, release, releases } from "./test/fixtures";
 import {
   RELEASES_URL, available, checkReleases, compareVersions, dismiss, forgetMemory, hasSecurityFix, isDismissed, isVersion,
-  latestRelease,
+  latestRelease, setShowPrereleases, showsPrereleases,
 } from "./updates";
 
 describe("compareVersions", () => {
@@ -36,15 +36,16 @@ describe("latestRelease", () => {
   it("picks the newest server and agent from one mixed list, skipping drafts and pre-releases", () => {
     expect(latestRelease(releases(), "server", { prereleases: false })).toEqual({
       version: "0.2.0", url: "https://github.com/Altiward/altiward/releases/tag/server-v0.2.0", security: true, packageUrl: null,
+      prerelease: false,
     });
     expect(latestRelease(releases(), "agent", { prereleases: false })).toEqual({
       version: "0.2.0", url: "https://github.com/Altiward/altiward/releases/tag/agent-v0.2.0", security: false,
-      packageUrl: "https://github.com/Altiward/altiward/releases/download/agent-v0.2.0/Altiward-0.2.0.pkg",
+      packageUrl: "https://github.com/Altiward/altiward/releases/download/agent-v0.2.0/Altiward-0.2.0.pkg", prerelease: false,
     });
   });
 
   it("includes release candidates when asked, never drafts", () => {
-    expect(latestRelease(releases(), "server", { prereleases: true })?.version).toBe("0.3.0-rc.1");
+    expect(latestRelease(releases(), "server", { prereleases: true })).toMatchObject({ version: "0.3.0-rc.1", prerelease: true });
   });
 
   it("doesn't trust the list's order", () => {
@@ -80,6 +81,34 @@ describe("available", () => {
   it("offers release candidates only to a server running one", () => {
     expect(available("0.2.0", [], releases()).newerServer).toBeNull();
     expect(available("0.2.1-rc.1", [], releases()).newerServer?.version).toBe("0.3.0-rc.1");
+  });
+
+  it("names the release, and the newest candidate for a server running one", () => {
+    const a = available("0.2.1-rc.1", [], releases());
+    expect(a.server?.version).toBe("0.2.0");
+    expect(a.serverCandidate?.version).toBe("0.3.0-rc.1");
+  });
+
+  it("offers release candidates to a server on a release when pre-releases are shown", () => {
+    const a = available("0.2.0", [], releases(), { prereleases: true });
+    expect(a.server?.version).toBe("0.2.0");
+    expect(a.serverCandidate?.version).toBe("0.3.0-rc.1");
+    expect(a.newerServer).toMatchObject({ version: "0.3.0-rc.1", prerelease: true });
+    const off = available("0.2.0", [], releases(), { prereleases: false });
+    expect(off.serverCandidate).toBeNull();
+    expect(off.newerServer).toBeNull();
+  });
+
+  it("offers agent release candidates when pre-releases are shown", () => {
+    const list = [release("agent-v0.3.0-rc.1"), release("agent-v0.2.0")];
+    expect(available("0.2.0", ["0.2.0"], list, { prereleases: true }).newerAgent?.version).toBe("0.3.0-rc.1");
+    expect(available("0.2.0", ["0.2.0"], list).newerAgent).toBeNull();
+  });
+
+  it("names no candidate older than the release", () => {
+    const a = available("0.1.0", [], [release("server-v0.2.0-rc.2"), release("server-v0.2.0")], { prereleases: true });
+    expect(a.serverCandidate).toBeNull();
+    expect(a.newerServer?.version).toBe("0.2.0");
   });
 
   it("gives no notice for a dev build", () => {
@@ -188,6 +217,71 @@ describe("checkReleases", () => {
     });
   });
 
+  describe("for a server newer than every server release listed", () => {
+    const before = [release("server-v0.1.1"), release("server-v0.2.0-rc.2"), release("agent-v0.1.0")];
+
+    it("asks again within the day, at most once an hour, until the list has it", async () => {
+      const fetch = githubFetch(before);
+      await checkReleases(t0, { running: "0.2.0" });
+      await checkReleases(t0 + 59 * 60_000, { running: "0.2.0" });
+      expect(fetch).toHaveBeenCalledTimes(1);
+      await checkReleases(t0 + 61 * 60_000, { running: "0.2.0" });
+      expect(fetch).toHaveBeenCalledTimes(2);
+
+      const after = githubFetch([release("server-v0.2.0"), ...before]);
+      const check = await checkReleases(t0 + 3 * 60 * 60_000, { running: "0.2.0" });
+      expect(check.releases?.map((r) => r.tag_name)).toContain("server-v0.2.0");
+      await checkReleases(t0 + 5 * 60 * 60_000, { running: "0.2.0" });
+      expect(after).toHaveBeenCalledTimes(1);
+    });
+
+    it("doesn't ask again for a server the list has, an older one or a dev build", async () => {
+      const fetch = githubFetch(before);
+      await checkReleases(t0);
+      for (const running of ["0.1.1", "0.1.0", "0.2.0-rc.2", "dev"]) await checkReleases(t0 + 2 * 60 * 60_000, { running });
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the list it has when asking again fails", async () => {
+      githubFetch(before);
+      const first = await checkReleases(t0);
+      const fetch = githubFetch("offline");
+      expect(await checkReleases(t0 + 2 * 60 * 60_000, { running: "0.2.0" })).toEqual(first);
+      expect(await checkReleases(t0 + 2 * 60 * 60_000 + 30 * 60_000, { running: "0.2.0" })).toEqual(first);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("when an admin presses Check now", () => {
+    it("asks GitHub within the day, at most once a minute", async () => {
+      const fetch = githubFetch();
+      await checkReleases(t0);
+      await checkReleases(t0 + 59_000, { force: true });
+      expect(fetch).toHaveBeenCalledTimes(1);
+      const check = await checkReleases(t0 + 61_000, { force: true });
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(check.checkedAt).toBe(new Date(t0 + 61_000).toISOString());
+    });
+
+    it("asks within the hour after a failure, at most once a minute", async () => {
+      githubFetch("offline");
+      await checkReleases(t0);
+      const fetch = githubFetch();
+      await checkReleases(t0 + 59_000, { force: true });
+      expect(fetch).not.toHaveBeenCalled();
+      expect((await checkReleases(t0 + 61_000, { force: true })).failed).toBe(false);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("says it couldn't check, even with a list from earlier that day", async () => {
+      githubFetch();
+      const first = await checkReleases(t0);
+      githubFetch("offline");
+      expect(await checkReleases(t0 + 2 * 60_000, { force: true }))
+        .toEqual({ releases: null, checkedAt: first.checkedAt, failed: true });
+    });
+  });
+
   it("asks again an hour after a failure, not sooner", async () => {
     const fetch = githubFetch("offline");
     await checkReleases(t0);
@@ -195,6 +289,28 @@ describe("checkReleases", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     await checkReleases(t0 + 61 * 60_000);
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("the pre-releases setting", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    forgetMemory();
+  });
+
+  it("is off until an admin turns it on in this browser", () => {
+    expect(showsPrereleases()).toBe(false);
+    setShowPrereleases(true);
+    expect(showsPrereleases()).toBe(true);
+    setShowPrereleases(false);
+    expect(showsPrereleases()).toBe(false);
+  });
+
+  it("holds for the tab without storage", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("blocked"); });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("blocked"); });
+    setShowPrereleases(true);
+    expect(showsPrereleases()).toBe(true);
   });
 });
 

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Overview, Role } from "../api";
 import { ApiContext, MeContext } from "../context";
 import { fakeApi, githubFetch, overview, signedIn } from "../test/fixtures";
+import { setShowPrereleases } from "../updates";
 import { OverviewView } from "./Overview";
 
 const busy = (): Overview => {
@@ -165,6 +166,15 @@ describe("Overview update notice", () => {
     await screen.findByText("No one has admin rights now. Nothing needs a look.");
     await waitFor(() => expect(api.about).toHaveBeenCalled());
     expect(screen.queryByText(/is available/)).toBeNull();
+  });
+
+  it("tells an admin who shows pre-releases about a release candidate", async () => {
+    githubFetch();
+    setShowPrereleases(true);
+    renderAs("admin", { version: "0.2.0", agents: ["0.2.0"] });
+    const notice = await screen.findByRole("region", { name: "Server release candidate 0.3.0-rc.1 is available" });
+    expect(within(notice).getByText("Server release candidate 0.3.0-rc.1 is available. You’re running 0.2.0.")).toBeInTheDocument();
+    expect(within(notice).getByText("./upgrade.sh ~/altiward-0.3.0-rc.1")).toBeInTheDocument();
   });
 
   it("isn't shown to a viewer, who never asks GitHub", async () => {

@@ -3,8 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { ApiContext, MeContext } from "../context";
-import { fakeApi, githubFetch, signedIn } from "../test/fixtures";
-import { checkReleases } from "../updates";
+import { fakeApi, githubFetch, release, signedIn } from "../test/fixtures";
+import { checkReleases, showsPrereleases } from "../updates";
 import type { ConsoleSignIn } from "../api";
 import { dateTime } from "../format";
 import { setLook } from "../theme";
@@ -250,6 +250,41 @@ describe("Settings updates", () => {
     expect(within(server).getByText("Up to date")).toBeInTheDocument();
   });
 
+  it("says a server newer than the latest release is newer, not up to date", async () => {
+    githubFetch();
+    renderView(withCheck("0.2.1"));
+    const server = await screen.findByRole("group", { name: "Server" });
+    expect(within(server).getByText("You’re running 0.2.1, newer than the latest release, 0.2.0.")).toBeInTheDocument();
+    expect(within(server).queryByText("Up to date")).toBeNull();
+  });
+
+  it("shows release candidates once an admin turns on Show pre-releases", async () => {
+    githubFetch();
+    renderView(withCheck("0.2.0"));
+    const group = await screen.findByRole("group", { name: "Updates" });
+    const server = await within(group).findByRole("group", { name: "Server" });
+    expect(within(server).getByText("You’re running 0.2.0. The latest release is 0.2.0.")).toBeInTheDocument();
+    const toggle = within(group).getByRole("switch", { name: /Show pre-releases/ });
+    expect(toggle).not.toBeChecked();
+
+    await userEvent.click(toggle);
+    expect(showsPrereleases()).toBe(true);
+    expect(within(server).getByText("You’re running 0.2.0. The latest release is 0.2.0. The newest release candidate is 0.3.0-rc.1."))
+      .toBeInTheDocument();
+    expect(within(server).getByText("Update available")).toBeInTheDocument();
+    const notice = within(group).getByRole("region", { name: "Server release candidate 0.3.0-rc.1 is available" });
+    expect(within(notice).getByText("./upgrade.sh ~/altiward-0.3.0-rc.1")).toBeInTheDocument();
+  });
+
+  it("names the release and the candidate for a server running one", async () => {
+    githubFetch();
+    renderView(withCheck("0.3.0-rc.1"));
+    const server = await screen.findByRole("group", { name: "Server" });
+    expect(within(server).getByText("You’re running 0.3.0-rc.1. The latest release is 0.2.0. The newest release candidate is 0.3.0-rc.1."))
+      .toBeInTheDocument();
+    expect(within(server).getByText("Up to date")).toBeInTheDocument();
+  });
+
   it("says it couldn’t check, and when it last could", async () => {
     githubFetch();
     const before = await checkReleases(Date.now() - 2 * 24 * 60 * 60 * 1000);
@@ -259,6 +294,30 @@ describe("Settings updates", () => {
     expect(await within(group).findByText("Couldn’t check for updates")).toBeInTheDocument();
     expect(within(group).getByText(`Last checked ${dateTime(before.checkedAt!)}.`)).toBeInTheDocument();
     expect(within(group).queryByText("Update available")).toBeNull();
+  });
+
+  it("checks again when an admin presses Check now", async () => {
+    githubFetch([release("server-v0.1.0"), release("agent-v0.1.2")]);
+    await checkReleases(Date.now() - 2 * 60_000);
+    const fetch = githubFetch();
+    renderView(withCheck());
+    const server = await screen.findByRole("group", { name: "Server" });
+    expect(within(server).getByText("Up to date")).toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Check now" }));
+    expect(await within(await screen.findByRole("group", { name: "Server" })).findByText("Update available")).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers Check now after a failed check", async () => {
+    githubFetch("offline");
+    await checkReleases(Date.now() - 2 * 60_000);
+    renderView(withCheck());
+    const group = await screen.findByRole("group", { name: "Updates" });
+    await within(group).findByText("Couldn’t check for updates");
+    githubFetch();
+    await userEvent.click(within(group).getByRole("button", { name: "Check now" }));
+    expect(await within(group).findByText("You’re running 0.1.0. The latest release is 0.2.0.")).toBeInTheDocument();
   });
 
   it("says the check is off when the server turned it off", async () => {

@@ -309,6 +309,7 @@ dialog.sheet .buttons { display: flex; justify-content: flex-end; gap: var(--spa
 .form .box { padding: var(--space-4); }
 .form label.row, .form form.row, .form div.row { display: flex; gap: var(--space-4); align-items: flex-start; justify-content: space-between; }
 .form .box > .row + .row { border-top: 1px solid var(--hairline); margin-top: var(--space-3); padding-top: var(--space-3); }
+.form .row > .button { flex: none; }
 .form .hint code { overflow-wrap: anywhere; }
 .form .hint { color: var(--muted); font-size: 13px; line-height: 18px; margin-top: var(--space-1); max-width: 60ch; }
 .form input[type="checkbox"] { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--action); }
