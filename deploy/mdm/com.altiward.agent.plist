@@ -18,6 +18,10 @@
                        within minutes. In "enforce" mode the agent keeps at least one
                        standing admin: a permanent admin, or else the out-of-band admin
                        it has seen longest. Admin through a Privileges grant doesn't count.
+                       Their use is recorded, always on, as admin.permanent_use (needs
+                       server 0.4.0): each sign-in at the Mac, in Terminal or over SSH,
+                       each prompt approval on another user's session, and their sudo and
+                       su, never the command. Evidence only; nothing alerts.
   UserPrincipalNames   Local short name → corporate UPN. Use your MDM's user variables.
   HookCodeRequirement  Code-signing requirement the hook must meet to reach the daemon.
                        Replace TEAMID with the Developer ID team that signs the agent.

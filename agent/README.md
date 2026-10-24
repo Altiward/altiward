@@ -36,7 +36,8 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
   at once when the network comes back or the server answers its command poll.
 - **Raises admin rights nobody granted** as `admin.out_of_band`, once they have gone 30
   seconds without a grant, checked every 15 seconds; the wait is longer than a Privileges
-  hook can take to report a grant. Accounts in `PermanentAdmins` are left out. By default
+  hook can take to report a grant. Accounts in `PermanentAdmins` are left out (their use is
+  recorded, below). By default
   it only reports them; `OutOfBandEnforcement` (below) can remove them. With
   Privileges 2.6+ and its system extension on (macOS 14+), the event names the process
   that added them (`detail.instigator`), read from the extension's unified log entries.
@@ -73,6 +74,30 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
   and is logged on the Mac. A Privileges grant whose hook never reached the agent looks like
   rights nobody granted and can be removed; the person can request again. Upgrade the
   server to 0.3.0 first.
+- **Records use of permanent admin accounts** (`admin.permanent_use`), always on for every
+  account in `PermanentAdmins`. It is evidence, not an alert: it changes nothing in
+  **Admins now** or the alerts.
+  - *Sign-ins* come from macOS's sign-in records (utmpx and wtmp), checked every 15
+    seconds: at the Mac (login window, fast user switching), in Terminal (`login`) and
+    over interactive SSH, which also records the address it came from. A `started` event
+    follows within about 15 seconds, and an `ended` event at sign-out with both times. A
+    sign-in shorter than that is reported by the next heartbeat, and one while the agent
+    was stopped when it starts, up to a day back.
+  - *Prompt approvals* are a permanent admin's name and password typed into an admin
+    prompt on another user's session: whose session, the authorisation right, and the app
+    that asked, when the log names it.
+  - *`sudo`* by a permanent admin records the terminal and the user it ran as, never the
+    command or working directory. *`su`* to one records whose session and the terminal.
+  - Prompts, `sudo` and `su` are read from the unified log each heartbeat, so they are
+    recorded only where macOS keeps those lines: on some Macs it doesn't keep successful
+    `sudo` runs. Apple's Endpoint Security, if Apple grants the entitlement, would make
+    this reliable.
+  - Not recorded yet, pending a test on a real Mac: screen sharing, and SSH file copies or
+    one-off commands (`scp`, `ssh host command`) that open no terminal.
+  - `sudo altiward-agent permanent-uses [HOURS]` prints what the agent reads (default 24
+    hours; run as root).
+  - Needs server 0.4.0. The server keeps the newest 20 uses per Mac for the console; the
+    SIEM gets them all.
 - **Runs revokes from the console** (below), removing the user from `admin` itself.
   Permanent admins are never removed.
 - **Runs tamper checks** each heartbeat and sends `agent.tamper` when one changes: the

@@ -9,6 +9,47 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Agent 0.3.0 - unreleased
+
+### Upgrade order
+
+Upgrade the server to 0.4.0 first: older servers reject `admin.permanent_use`, and the
+agent drops events the server rejects. Update altiward-siem to 0.4.0 too.
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+- The agent records each use of an account in `PermanentAdmins`, as `admin.permanent_use`.
+  It is always on for every account listed, needs no new setting, and is evidence, not an
+  alert: **Admins now** and the alerts don't change.
+  - Sign-ins at the Mac (login window, fast user switching), in Terminal and over
+    interactive SSH, from macOS's sign-in records. A `started` event follows within about
+    15 seconds, and an `ended` event at sign-out with both times. A sign-in shorter than
+    that is reported by the next heartbeat, and one while the agent was stopped when it
+    starts, up to a day back. SSH records the address it came from.
+  - Prompt approvals: a permanent admin's name and password typed into an admin prompt on
+    another user's session. It records whose session, the right, and the app that asked,
+    when the log names it.
+  - `sudo` by a permanent admin (the terminal and the user it ran as, never the command or
+    working directory) and `su` to one (whose session, and the terminal).
+  - Prompts, `sudo` and `su` are read from the unified log each heartbeat, so they are
+    recorded only where macOS keeps those lines. On some Macs it doesn't keep successful
+    `sudo` runs. Endpoint Security, if Apple grants the entitlement, would make this
+    reliable.
+  - Screen sharing, and SSH file copies or one-off commands that open no terminal (`scp`,
+    `ssh host command`), aren't recorded yet.
+- New command: `sudo altiward-agent permanent-uses [HOURS]` prints what the agent reads
+  about permanent admins (default 24 hours; run as root).
+- `docs/data-handling.md` lists what the agent collects. The server keeps the newest 20
+  uses per Mac for the console, and the SIEM gets them all.
+
 ## Server 0.4.0 - unreleased
 
 ### Upgrade order
@@ -33,7 +74,8 @@ None.
   and its newest 20 other uses, and shows up to 10 under **Permanent admins** in the
   Mac's details, open sign-ins first: who, how (signed in at the Mac, in Terminal or over
   SSH, shared the screen, approved a prompt, ran sudo or su), from where, and whether the
-  sign-in is still open. The SIEM gets every use (`docs/data-handling.md`).
+  sign-in is still open. The SIEM gets every use.
+  `docs/data-handling.md` lists what is kept and sent.
 
 ## Agent 0.2.0 - 2026-10-24
 

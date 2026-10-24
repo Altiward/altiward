@@ -25,7 +25,8 @@ on your infrastructure. The Altiward project receives none of it.
 
 ## What the agent collects on each Mac
 
-The agent records changes to admin rights, not what people do with them.
+The agent records changes to admin rights and each use of a permanent admin account, not
+what people do with them otherwise.
 
 | What | Detail |
 | --- | --- |
@@ -36,10 +37,11 @@ The agent records changes to admin rights, not what people do with them.
 | Health | Whether the agent, SAP Privileges and their settings are intact (including Privileges' daily admin budget, if set), and how many events are waiting to send. While someone holds rights from SAP Privileges, this includes whether Privileges' timer is still running for them: the agent looks for its process in the Mac's process list and sends only the answer |
 | Revokes | The results of revokes sent from the console, and, when `OutOfBandEnforcement` is `enforce`, each admin nobody granted that the agent removed |
 | From SAP Privileges' system extension | Only with Privileges 2.6 or later and its system extension on. For admin rights nobody granted, the process that added the account to `admin`; for each attempt the extension blocked on Privileges, the item and the process that tried. For each process: its path, signing ID, team ID, whether it is part of macOS, its process and parent IDs, and its terminal. Read from the records the extension keeps in the Mac's unified log |
+| Permanent admin use | Only for accounts in `PermanentAdmins`, always on. Each sign-in at the Mac (login window or fast user switching), in Terminal or over interactive SSH: when it started and ended, the terminal, and for SSH the address it came from. Each time one of these accounts' name and password is typed into an admin prompt on another user's session: whose session, the authorisation right, and the app that asked, when the log names it. Each `sudo` by one of these accounts (the terminal and the user it ran as) and each `su` to one (whose session, and the terminal). Never the command or its working directory. Sign-ins are read from macOS's sign-in records (utmpx and wtmp); prompts, `sudo` and `su` from the Mac's unified log every 5 minutes, so only as far as macOS keeps those lines: on some Macs it doesn't keep successful `sudo` runs. Screen sharing, and SSH file copies or one-off commands that open no terminal (`scp`, `ssh host command`), aren't recorded yet. It is evidence, not an alert. `sudo altiward-agent permanent-uses` prints what the agent reads |
 | What changed while someone was admin | New or changed LaunchDaemons and LaunchAgents (their path, label, program and arguments), new sudoers rules, new SSH keys allowed to log in (their type and fingerprint, never the key), new local accounts (name, ID and whether it is an admin), and Remote Login or Screen Sharing switched on. Only changes made while an elevation was open are sent; the Mac keeps the last snapshot in the agent's own folder |
 
 The agent does **not** collect the Mac's name, IP address, process or command
-history (beyond the one process behind each change above), the contents of people's files, browsing, keystrokes or location. (Your server sees the address each
+history (beyond the one process behind each change above, and that `sudo` ran, above), the contents of people's files, browsing, keystrokes or location. (Your server sees the address each
 connection comes from, as any web server does.)
 
 The event format is published in full in `docs/schema/event.schema.json` in the source
@@ -77,7 +79,8 @@ Each connection exists only if you configure it.
 
 **What your SIEM receives:** each event as an OCSF record, with the Mac's serial and
 macOS version, the person's short name and UPN, the reason they typed, and the event's
-details. Console actions go there too, naming the person who made them.
+details. That includes every use of a permanent admin account the agent records: sign-in
+times, terminals and SSH addresses, and who approved or ran what, as listed above. Console actions go there too, naming the person who made them.
 
 In the example deployment, Caddy also asks Let's Encrypt for TLS certificates unless you
 provide your own. If you pull the image from the registry instead of loading the file,
@@ -121,7 +124,7 @@ Everything is in your Postgres database.
 | --- | --- |
 | Every event from every Mac, in full | Forever, for now |
 | Elevation sessions, including the person's UPN and reason | Forever, for now |
-| Each Mac's latest state: versions, admins, health | Forever, replaced as it changes |
+| Each Mac's latest state: versions, admins, health, and the newest 20 uses of its permanent admin accounts (the console shows the newest 10) | Forever, replaced as it changes |
 | Each Mac's enrollment: serial, hardware UUID, **public** key, and whether the Mac says its key is in its Secure Enclave | Forever; revoking stops the Mac reporting |
 | Commands sent from the console, who sent them, and their results | Forever |
 | Activity: every change made in the console, and every sign-in | Forever by default; or from 365 days, with `ALTIWARD_AUDIT_RETENTION_DAYS` |

@@ -94,7 +94,8 @@ sends `retired` if it was failing, and is dropped without an event if it was pas
 account; it has no `session_id` and no `elevation`, so it is never a session. A sign-in sends
 `started` and later `ended`, paired by `use_id`. A prompt, `sudo` or `su`, and an SSH or screen
 sharing sign-in seen only in the log, send `single`: one event per grouped use, with `count`
-and `last`.
+and `last`. Agent 0.3.0 sends sign-ins, prompts, `sudo` and `su`; it doesn't yet send
+`screen_sharing`, or an SSH use seen only in the log.
 
 Older agents' events are frozen in [`compat/`](compat/), one directory per agent release,
 and the server must keep accepting the last two.

@@ -136,14 +136,15 @@ Create these in your MDM and scope them to a pilot group first.
    - `ServerURL`: `https://<agent hostname>`
    - `EnrollmentToken`: the token after `yourcompany=` in `ALTIWARD_AGENT_TOKENS`
    - `PermanentAdmins`: accounts that should always be admins, such as your IT or
-     break-glass accounts. Altiward never reports or removes them. Include the local
+     break-glass accounts. Altiward never flags or removes them. Include the local
      admin account your MDM manages with LAPS (Jamf Pro's managed local administrator,
      or the macOS local admin account Intune creates at enrollment): enter the short name
      you set in the MDM, exactly. Left out, it shows in the console as an admin nobody
      granted, revoking every admin on a Mac would remove its rights too, and with
      `OutOfBandEnforcement` set to `enforce` Altiward removes them itself. Altiward
-     doesn't record when someone uses a permanent admin account; your MDM records who
-     looked up its password.
+     records each sign-in and prompt approval by these accounts, and their `sudo` and `su`
+     as far as macOS logs them ([what it records](data-handling.md)); the MDM records who
+     looked up the password.
 
      > **Warning:** With `OutOfBandEnforcement` set to `enforce`, every admin nobody
      > granted loses their rights within minutes, including the LAPS account your MDM
