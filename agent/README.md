@@ -89,18 +89,20 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
   - *Prompt approvals* are a permanent admin's name and password typed into an admin
     prompt on another user's session: whose session, the authorisation right, and the app
     that asked, when the log names it.
-  - *`sudo`* by a permanent admin records the terminal and the user it ran as, never the
-    command or working directory. *`su`* to one records whose session and the terminal.
-  - Prompts, `sudo` and `su` that differ only in time are one event, with a `count` and
-    the time of the `last`: a script that runs `sudo` 300 times within one heartbeat
-    sends one. Each heartbeat sends at most 20 such events, and the last carries
-    `truncated`, how many more groups it left out.
-  - Prompts, `sudo` and `su` are read from the unified log each heartbeat, so they are
-    recorded only where macOS keeps those lines: on some Macs it doesn't keep successful
-    `sudo` runs. Apple's Endpoint Security, if Apple grants the entitlement, would make
-    this reliable.
-  - Not recorded yet, pending a test on a real Mac: screen sharing, and SSH file copies or
-    one-off commands (`scp`, `ssh host command`) that open no terminal.
+  - *Screen sharing* is one event for each connection that signs in as the account, with
+    the viewer's address, read from `screensharingd`'s log line. The viewer types a short
+    name or the account's full name, in any case; it is matched to the short name listed
+    in `PermanentAdmins`, which is the event's user. A wrong password isn't a use. The
+    line is written when the connection starts ("Log In as Yourself") or when it closes
+    ("Ask to Share Screen"), so the event has a `started` time and no end.
+  - Prompts and screen sharing that differ only in time are one event, with a `count` and
+    the time of the `last`: a script that approves 300 prompts within one heartbeat sends
+    one. Each heartbeat sends at most 20 such events, and the last carries `truncated`,
+    how many more groups it left out.
+  - Prompts and screen sharing are read from the unified log each heartbeat.
+  - Not recorded until Apple grants the Endpoint Security entitlement: `sudo`, `su`, and
+    SSH file copies or one-off commands (`scp`, `ssh host command`) that open no terminal.
+    macOS doesn't keep a log line for them.
   - `sudo altiward-agent permanent-uses [HOURS]` prints what the agent reads (default 24
     hours; run as root).
   - Needs server 0.4.0. The SIEM gets every event the agent sends; for the console, the

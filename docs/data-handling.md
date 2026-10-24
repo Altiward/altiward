@@ -38,13 +38,13 @@ what people do with them otherwise.
 | Revokes | The results of revokes sent from the console, and, when `OutOfBandEnforcement` is `enforce`, each admin nobody granted that the agent removed |
 | From SAP Privileges' system extension | Only with Privileges 2.6 or later and its system extension on. For admin rights nobody granted, the process that added the account to `admin`; for each attempt the extension blocked on Privileges, the item and the process that tried. For each process: its path, signing ID, team ID, whether it is part of macOS, its process and parent IDs, and its terminal. Read from the records the extension keeps in the Mac's unified log |
 | Permanent admin use: sign-ins | Only for accounts in `PermanentAdmins`, always on. Each sign-in at the Mac (login window or fast user switching), in Terminal or over interactive SSH: when it started and ended, the terminal, and for SSH the address it came from. A Terminal tab opened while the account is signed in at the Mac is part of that sign-in, not a sign-in of its own. Read from macOS's sign-in records (utmpx and wtmp) |
-| Permanent admin use: prompts, `sudo` and `su` | Each time one of these accounts' name and password is typed into an admin prompt on another user's session: whose session, the authorisation right, and the app that asked, when the log names it. Each `sudo` by one of these accounts (the terminal and the user it ran as) and each `su` to one (whose session, and the terminal). Never the command or its working directory |
-| Permanent admin use: how prompts, `sudo` and `su` are read | Uses that differ only in time are sent as one event, with a count and the time of the last, so a script running `sudo` 300 times within one heartbeat sends one; at most 20 events are sent for each heartbeat, and the last says how many more groups were left out. Read from the Mac's unified log at each heartbeat (every 5 minutes by default), so only as far as macOS keeps those lines: on some Macs it doesn't keep successful `sudo` runs |
-| Permanent admin use: not recorded | Screen sharing, and SSH file copies or one-off commands that open no terminal (`scp`, `ssh host command`), aren't recorded yet. Permanent admin use is evidence, not an alert. `sudo altiward-agent permanent-uses` prints what the agent reads |
+| Permanent admin use: prompts and screen sharing | Each time one of these accounts' name and password is typed into an admin prompt on another user's session: whose session, the authorisation right, and the app that asked, when the log names it. Each screen sharing connection that signs in as one of these accounts: when the connection was authenticated (when it closes, for a shared screen) and the viewer's address, one event per connection |
+| Permanent admin use: how prompts and screen sharing are read | Uses that differ only in time are sent as one event, with a count and the time of the last, so a script approving 300 prompts within one heartbeat sends one; at most 20 events are sent for each heartbeat, and the last says how many more groups were left out. Read from the Mac's unified log at each heartbeat (every 5 minutes by default), so only as far as macOS keeps those lines |
+| Permanent admin use: not recorded | `sudo`, `su`, and SSH file copies or one-off commands that open no terminal (`scp`, `ssh host command`) aren't recorded until Apple grants Altiward the Endpoint Security entitlement: macOS keeps no log line for them. So no command is ever collected. Permanent admin use is evidence, not an alert. `sudo altiward-agent permanent-uses` prints what the agent reads |
 | What changed while someone was admin | New or changed LaunchDaemons and LaunchAgents (their path, label, program and arguments), new sudoers rules, new SSH keys allowed to log in (their type and fingerprint, never the key), new local accounts (name, ID and whether it is an admin), and Remote Login or Screen Sharing switched on. Only changes made while an elevation was open are sent; the Mac keeps the last snapshot in the agent's own folder |
 
 The agent does **not** collect the Mac's name, the Mac's own IP address, process or command
-history (beyond the one process behind each change above, and that `sudo` ran, above), the contents of people's files, browsing, keystrokes or location. (Your server sees the address each
+history (beyond the one process behind each change above), the contents of people's files, browsing, keystrokes or location. (Your server sees the address each
 connection comes from, as any web server does.)
 
 The event format is published in full in `docs/schema/event.schema.json` in the source
@@ -83,7 +83,7 @@ Each connection exists only if you configure it.
 **What your SIEM receives:** each event as an OCSF record, with the Mac's serial and
 macOS version, the person's short name and UPN, the reason they typed, and the event's
 details. That includes every permanent admin use event the agent sends: sign-in
-times, terminals and SSH addresses, who approved prompts, and that `sudo` or `su` ran, as listed above. Console
+times, terminals and SSH addresses, who approved prompts, and screen sharing viewers' addresses, as listed above. Console
 actions go there too, naming the person who made them.
 
 In the example deployment, Caddy also asks Let's Encrypt for TLS certificates unless you

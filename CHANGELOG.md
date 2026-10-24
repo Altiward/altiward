@@ -39,16 +39,16 @@ None.
   - Prompt approvals: a permanent admin's name and password typed into an admin prompt on
     another user's session. It records whose session, the right, and the app that asked,
     when the log names it.
-  - `sudo` by a permanent admin (the terminal and the user it ran as, never the command or
-    working directory) and `su` to one (whose session, and the terminal).
-  - Prompts, `sudo` and `su` are read from the unified log each heartbeat, so they are
-    recorded only where macOS keeps those lines. On some Macs it doesn't keep successful
-    `sudo` runs. Endpoint Security, if Apple grants the entitlement, would make this
-    reliable.
-  - Screen sharing, and SSH file copies or one-off commands that open no terminal (`scp`,
-    `ssh host command`), aren't recorded yet.
-- Prompts, `sudo` and `su` that differ only in time are one event, with a count and the
-  time of the last: a script that runs `sudo` 300 times within one heartbeat sends one.
+  - Screen sharing: one event for each connection that signs in as the account, with the
+    viewer's address. The name the viewer types can be the short name or the account's
+    full name, in any case; the event always names the short name. A viewer who gets the
+    password wrong isn't a use.
+  - Prompts and screen sharing are read from the unified log each heartbeat. macOS keeps
+    no log line for `sudo`, `su`, or SSH file copies and one-off commands that open no
+    terminal (`scp`, `ssh host command`), so they aren't recorded until Apple grants the
+    Endpoint Security entitlement.
+- Prompts and screen sharing that differ only in time are one event, with a count and the
+  time of the last: a script that approves 300 prompts within one heartbeat sends one.
   Each heartbeat sends at most 20 such events, and the last says how many more groups it
   left out.
 - New command: `sudo altiward-agent permanent-uses [HOURS]` prints what the agent reads
@@ -80,9 +80,10 @@ None.
   as an OCSF Authentication record. **Fleet** keeps each Mac's open sign-ins (up to 20)
   and its newest 20 other uses, and shows up to 10 under **Permanent admins** in the
   Mac's details, open sign-ins first: who, how (signed in at the Mac, in Terminal or over
-  SSH, approved a prompt, ran sudo or su), from where, and whether the sign-in is still
-  open. The SIEM gets every event the agent sends. The server and console also accept and
-  show screen sharing, which Agent 0.3.0 doesn't send yet.
+  SSH, approved a prompt, shared the screen), from where, and whether the sign-in is still
+  open. The SIEM gets every event the agent sends. Agent 0.3.0 sends screen sharing; the
+  server and console also accept and show `sudo` and `su`, for a later agent that can
+  record them, which needs Apple's Endpoint Security entitlement.
   `docs/data-handling.md` lists what is kept and sent.
 
 ## Agent 0.2.0 - 2026-10-24

@@ -142,8 +142,9 @@ Create these in your MDM and scope them to a pilot group first.
      you set in the MDM, exactly. Left out, it shows in the console as an admin nobody
      granted, revoking every admin on a Mac would remove its rights too, and with
      `OutOfBandEnforcement` set to `enforce` Altiward removes them itself. Altiward
-     records each sign-in and prompt approval by these accounts, and their `sudo` and `su`
-     as far as macOS logs them ([what it records](data-handling.md)); the MDM records who
+     records each sign-in, prompt approval and screen sharing connection by these accounts
+     (`sudo`, `su` and SSH file copies wait for Apple's Endpoint Security entitlement;
+     [what it records](data-handling.md)); the MDM records who
      looked up the password.
 
      > **Warning:** With `OutOfBandEnforcement` set to `enforce`, every admin nobody

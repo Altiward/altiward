@@ -43,9 +43,10 @@ and the console shows it:
   the rights from `admin` itself. Accounts you list as permanent admins are never removed.
 - **Use of permanent admin accounts.** Each sign-in by an account in `PermanentAdmins`
   (at the Mac, in Terminal or over SSH), each time its password is typed into an admin
-  prompt on someone else's session, and its `sudo` and `su`. This is evidence for your
-  SIEM and the Mac's details, not an alert. Screen sharing and SSH file copies aren't
-  recorded yet ([what is recorded](docs/data-handling.md)).
+  prompt on someone else's session, and its screen sharing. This is evidence for your
+  SIEM and the Mac's details, not an alert. `sudo`, `su` and SSH file copies aren't
+  recorded until Apple grants the Endpoint Security entitlement, as macOS keeps no log
+  line for them ([what is recorded](docs/data-handling.md)).
 - **Tamper and health.** Alerts when the agent's LaunchDaemon or signature is changed, its
   server, permanent admins, expiry enforcement, out-of-band enforcement or hook requirement
   settings are set outside MDM, or it is downgraded; when Privileges' own protection is off
