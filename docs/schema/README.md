@@ -38,6 +38,10 @@ decoder rejects unknown fields, so drift fails loudly.
 | | `observed_admin`, `verified` | `false`, `true`: the daemon removed the rights and confirmed it |
 | `admin.out_of_band` | `first_observed` | When the agent raised these rights: at a heartbeat, or at the check every 15 seconds once they had gone 30 seconds without a grant |
 | | `instigator` | The process that added the user to `admin`, from SAP Privileges' system extension log (Privileges 2.6+, extension on, macOS 14+): `executable`, `signing_id`, `team_id` (empty for Apple's own), `platform_binary`, `pid`, `ppid`, `tty` (empty when not from a terminal) and `logged_at`. Absent when the extension logged nothing for this user in the last heartbeat interval plus 10 minutes |
+| `admin.out_of_band_removed` | `trigger` | `heartbeat` |
+| | `first_observed` | When the agent raised these rights, the same as its `admin.out_of_band` |
+| | `grace_seconds` | Configured `OutOfBandGraceMinutes`, in seconds |
+| | `observed_admin`, `verified` | `false`, `true`: the daemon removed the rights and confirmed it |
 | `agent.health` | `admin_members` | Every human account that is admin right now |
 | | `permanent_admins` | Configured standing admins |
 | | `open_sessions` | `[{user, session_id, source}]` from the agent's ledger |
@@ -63,6 +67,9 @@ decoder rejects unknown fields, so drift fails loudly.
 
 `elevation.overdue` is sent at most once per session expiry (a renewal re-arms it) and
 leaves the session open. `elevation.expired_enforced` ends it.
+
+`admin.out_of_band_removed` ends an out-of-band session; the agent sends it only when
+`OutOfBandEnforcement` is `enforce`.
 
 `agent.tamper` is sent when a check changes, not on every heartbeat: the agent keeps each
 check's last result, so a restart doesn't repeat an alert. A check that stops applying

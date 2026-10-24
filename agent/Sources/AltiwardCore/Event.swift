@@ -7,6 +7,7 @@ public enum EventType: String, Codable, Sendable, CaseIterable {
     case elevationExpiredEnforced = "elevation.expired_enforced"
     case elevationOverdue = "elevation.overdue"
     case adminOutOfBand = "admin.out_of_band"
+    case adminOutOfBandRemoved = "admin.out_of_band_removed"
     case activity = "activity"
     case persistenceDetected = "persistence.detected"
     case agentHealth = "agent.health"

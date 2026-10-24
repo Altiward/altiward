@@ -53,6 +53,7 @@ const endReasons: Record<string, string> = {
   remote_revoke: "Revoked from the console",
   permanent_admin: "Now a permanent admin",
   privileges_grant: "Replaced by a Privileges grant",
+  out_of_band_removed: "Removed without a grant",
 };
 
 export function endReasonLabel(reason: string | null): string {

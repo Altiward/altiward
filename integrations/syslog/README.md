@@ -46,7 +46,7 @@ Header: `CEF:0|Altiward|Altiward|<agent version>|<signature>|<name>|<severity>|`
 | Key | Value |
 | --- | --- |
 | `rt` | When it happened, epoch milliseconds |
-| `externalId` | Unique per record: the event ID, with `/account/<name>` added for each new account a persistence event found |
+| `externalId` | Unique per record: the event ID. A second record from one event adds `/finding`: the finding of an `elevation.expired_enforced`, and the Close of the out-of-band finding when the rights were removed. Each new account a persistence event found adds `/account/<name>` |
 | `cat`, `act`, `outcome` | OCSF class, activity and status |
 | `dvchost` | The Mac's serial number |
 | `deviceExternalId` | The Mac's hardware UUID |
@@ -74,7 +74,10 @@ sign-outs are OCSF Authentication records, with the event types `console.sign_in
 ## Starter rules
 
 - **Admin rights nobody granted:** signature `altiward.admin_out_of_band` with `act=Create`.
-  The matching `act=Close` with the same `cs5` means the account became a permanent admin.
+  The matching `act=Close` with the same `cs5` explains them only with `outcome=Resolved`
+  (the account became a permanent admin) or `outcome=Replaced by a Privileges grant`. A
+  Close with `outcome=Rights removed` means the rights were taken away, by Altiward, from
+  the console or by someone on the Mac, but nobody explained them: keep alerting on it.
 - **New local account:** signature `altiward.account_created`, named "Admin account
   created" (severity 8) or "Local account created" (severity 5).
 - **Rights after expiry:** signature `altiward.rights_after_expiry`, raised whether or not

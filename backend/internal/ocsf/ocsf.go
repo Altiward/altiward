@@ -2,6 +2,7 @@
 //
 //	elevation.granted           → User Access Management (3005), Assign Privileges (1)
 //	elevation.revoked           → User Access Management (3005), Revoke Privileges (2)
+//	admin.out_of_band_removed   → User Access Management (3005), Revoke Privileges (2), Low
 //	elevation.expired_enforced  → User Access Management (3005), Revoke Privileges (2), Low, and the
 //	                              rights_after_expiry Detection Finding (2004), Medium
 //	elevation.overdue           → Detection Finding (2004), Create (1), Medium; High if removal failed
@@ -9,7 +10,11 @@
 //	                              with trigger permanent_admin closes it (Resolved, Informational),
 //	                              and one with trigger privileges_grant closes it (Other: "Replaced
 //	                              by a Privileges grant", Informational); the process that added
-//	                              the user, when Privileges' system extension logged it, is evidence
+//	                              the user, when Privileges' system extension logged it, is evidence.
+//	                              Removing the rights closes it too (Other: "Rights removed",
+//	                              Informational), in a second record after the revoke: an
+//	                              admin.out_of_band_removed or elevation.revoked with source
+//	                              out_of_band, a session and observed_admin false, unless orphan
 //	persistence.detected        → Detection Finding (2004), Create (1), High; each new local
 //	                              account is a finding of its own (High for an admin account),
 //	                              and the rest of the persistence one more
@@ -52,12 +57,17 @@ var severityNames = map[int]string{1: "Informational", 2: "Low", 3: "Medium", 4:
 // Every record has its own metadata.uid; the first one's is the event ID.
 func Map(e store.StoredEvent, tenantID string) []Record {
 	switch e.Type {
-	case event.ElevationGranted, event.ElevationRevoked, event.ElevationExpiredEnforced:
+	case event.ElevationGranted, event.ElevationRevoked, event.ElevationExpiredEnforced, event.AdminOutOfBandRemoved:
 		if trigger, _ := e.Detail["trigger"].(string); e.Type == event.ElevationRevoked {
 			switch trigger {
 			case "permanent_admin", "privileges_grant":
 				return []Record{outOfBandClosed(e, tenantID, trigger)}
 			}
+		}
+		if removesOutOfBand(e) {
+			// The rights are gone but nobody explained them: the finding closes, as
+			// "Rights removed", after the revoke.
+			return []Record{userAccess(e, tenantID), outOfBandClosed(e, tenantID, "removed")}
 		}
 		if e.Type == event.ElevationExpiredEnforced {
 			// Rights that outlived their expiry mean Privileges' timer failed or was stopped:
@@ -77,6 +87,20 @@ func Map(e store.StoredEvent, tenantID string) []Record {
 	return nil
 }
 
+// removesOutOfBand reports whether e ends a session of rights nobody granted by removing
+// them: its user no longer holds admin, and it isn't an orphan revoke, which ends no session.
+func removesOutOfBand(e store.StoredEvent) bool {
+	if e.Type != event.ElevationRevoked && e.Type != event.AdminOutOfBandRemoved {
+		return false
+	}
+	if e.Elevation == nil || e.Elevation.Source != event.SourceOutOfBand || e.SessionID == nil {
+		return false
+	}
+	observedAdmin, ok := e.DetailBool("observed_admin")
+	orphan, _ := e.DetailBool("orphan")
+	return ok && !observedAdmin && !orphan
+}
+
 // UID is a record's metadata.uid.
 func UID(r Record) string {
 	m, _ := r["metadata"].(map[string]any)
@@ -90,7 +114,7 @@ func userAccess(e store.StoredEvent, tenantID string) Record {
 		activityID, activity = 1, "Assign Privileges"
 	}
 	severity := SeverityInformational
-	if e.Type == event.ElevationExpiredEnforced {
+	if e.Type == event.ElevationExpiredEnforced || e.Type == event.AdminOutOfBandRemoved {
 		severity = SeverityLow
 	}
 	r := base(e, tenantID, 3005, "User Access Management", 3, "Identity & Access Management", activityID, activity, severity)
@@ -119,6 +143,8 @@ func accessMessage(e store.StoredEvent) string {
 		return msg
 	case event.ElevationExpiredEnforced:
 		return fmt.Sprintf("Altiward removed %s's admin rights on %s after they outlived their expiry", user, e.Device.Serial)
+	case event.AdminOutOfBandRemoved:
+		return fmt.Sprintf("Altiward removed %s's admin rights on %s, which nobody granted", user, e.Device.Serial)
 	}
 	trigger, _ := e.Detail["trigger"].(string)
 	// Inferred first, as the session reducer does: an inferred end says how the agent
@@ -158,20 +184,39 @@ func TamperSeverities() map[string]string {
 	return out
 }
 
-// outOfBandClosed maps the elevation.revoked that ends an out-of-band session while the
-// rights stay: its user became a permanent admin, so the rights are now expected, or a
-// Privileges grant replaced it. It closes the admin.out_of_band finding, which used the
-// session ID as its uid, rather than reporting a revoke. A grant is reported by the hook,
-// which the user can run by hand, so it closes the finding as Other, not Resolved.
-func outOfBandClosed(e store.StoredEvent, tenantID, trigger string) Record {
+// outOfBandClosed closes the admin.out_of_band finding, which used the session ID as its
+// uid, for the event that ends the out-of-band session; ended says how. While the rights
+// stay, it is the only record: the user became a permanent admin ("permanent_admin"), so
+// the rights are now expected, or a Privileges grant replaced the session
+// ("privileges_grant"). A grant is reported by the hook, which the user can run by hand, so
+// it closes the finding as Other, not Resolved. When the rights were removed ("removed"),
+// it follows the revoke record and closes as Other, "Rights removed": they are gone, but
+// nobody explained them.
+func outOfBandClosed(e store.StoredEvent, tenantID, ended string) Record {
 	const title = "Admin rights without a grant"
 	r := base(e, tenantID, 2004, "Detection Finding", 2, "Findings", 3, "Close", SeverityInformational)
 	var desc string
-	if trigger == "privileges_grant" {
+	switch ended {
+	case "removed":
+		trigger, _ := e.Detail["trigger"].(string)
+		inferred, _ := e.DetailBool("inferred")
+		switch {
+		case e.Type == event.AdminOutOfBandRemoved:
+			desc = fmt.Sprintf("Removed on %s: Altiward removed %s's admin rights, which nobody granted, after the grace period",
+				e.Device.Serial, userName(e))
+		case trigger == "command" && !inferred: // inferred first, as in accessMessage
+			desc = fmt.Sprintf("Removed on %s: %s's admin rights, which nobody granted, were revoked from the Altiward console",
+				e.Device.Serial, userName(e))
+		default:
+			desc = fmt.Sprintf("Removed on %s: %s no longer holds the admin rights nobody granted", e.Device.Serial, userName(e))
+		}
+		r["status_id"], r["status"] = 99, "Rights removed"
+		r["metadata"].(map[string]any)["uid"] = e.EventID + "/finding" // a second record: its own uid
+	case "privileges_grant":
 		desc = fmt.Sprintf("Replaced on %s: a Privileges grant was reported for %s, who held admin rights without one",
 			e.Device.Serial, userName(e))
 		r["status_id"], r["status"] = 99, "Replaced by a Privileges grant"
-	} else {
+	default:
 		desc = fmt.Sprintf("Resolved on %s: %s is now a permanent admin, so their admin rights are expected",
 			e.Device.Serial, userName(e))
 		r["status_id"], r["status"] = 4, "Resolved"

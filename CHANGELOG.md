@@ -13,7 +13,9 @@ Every section has the four headings below, with "None." under any that don't app
 
 ### Upgrade order
 
-None.
+Update altiward-siem to 0.3.0 before or with this release. A removal now closes the
+out-of-band finding, and older rules take any close as an explanation, so rights nobody
+granted that were removed within the rule's hour would stop alerting.
 
 ### Breaking changes
 
@@ -38,6 +40,14 @@ None.
   so, with the `upgrade.sh` command for the candidate, and Settings names the newest
   candidate next to the latest release. A server running a candidate hears about newer
   candidates whatever the switch says, as before.
+- The server accepts `admin.out_of_band_removed` from agent 0.2.0, ends the session as
+  "Removed without a grant" and exports a Revoke Privileges record.
+- A console revoke, an automatic removal, or rights the heartbeat sees gone now close the
+  out-of-band finding with status "Rights removed". Before, a console revoke left it open.
+- The Sentinel workbook (`integrations/sentinel/workbook.arm.json`) and the Splunk
+  dashboard (`integrations/splunk/altiward_overview.xml`) count `admin.out_of_band_removed`
+  as a session end, so re-import them: older copies show sessions agent 0.2.0 removed as
+  still open.
 
 ## Agent 0.2.0 - unreleased
 

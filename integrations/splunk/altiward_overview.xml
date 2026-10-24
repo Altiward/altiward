@@ -21,7 +21,8 @@
   <search id="sessions">
     <query>index="$index$" sourcetype="altiward:ocsf" metadata.correlation_uid=*
   (unmapped.altiward.event_type="elevation.granted" OR unmapped.altiward.event_type="admin.out_of_band"
-   OR unmapped.altiward.event_type="elevation.revoked" OR unmapped.altiward.event_type="elevation.expired_enforced")
+   OR unmapped.altiward.event_type="elevation.revoked" OR unmapped.altiward.event_type="elevation.expired_enforced"
+   OR unmapped.altiward.event_type="admin.out_of_band_removed")
 | eval ev='unmapped.altiward.event_type', is_start=if(ev="elevation.granted" OR ev="admin.out_of_band", 1, 0)
 | eval start_time=if(is_start=1, _time, null()), end_time=if(is_start=0, _time, null()),
     exp=if(ev="elevation.granted", 'unmapped.altiward.expires_time' / 1000, null()),

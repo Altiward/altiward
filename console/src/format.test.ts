@@ -43,6 +43,7 @@ describe("labels", () => {
     expect(endReasonLabel("expired_enforced")).toBe("Removed at expiry");
     expect(endReasonLabel("permanent_admin")).toBe("Now a permanent admin");
     expect(endReasonLabel("privileges_grant")).toBe("Replaced by a Privileges grant");
+    expect(endReasonLabel("out_of_band_removed")).toBe("Removed without a grant");
     expect(endReasonLabel("something_new")).toBe("Ended");
   });
   it("hides flags that repeat the end reason and names the rest", () => {

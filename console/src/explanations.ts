@@ -9,7 +9,8 @@ export const explanations = {
   privileges: "Rights granted through SAP Privileges and reported to Altiward by its hook.",
   withoutGrant:
     "Admin rights that nobody granted through Privileges: someone was added to the admin group directly, " +
-    "or an account was created as an admin. Each one is a finding in your SIEM.",
+    "or an account was created as an admin. Each one is a finding in your SIEM. " +
+    "From agent 0.2.0, Macs whose profile sets OutOfBandEnforcement to enforce remove them after a grace period.",
   needsALook: "Things that need someone to look at them now. Each one clears by itself once it’s fixed.",
   pastExpiry:
     "Someone still holds admin rights after their allowed time ran out, usually because Privileges’ timer was stopped.",

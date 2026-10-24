@@ -30,6 +30,8 @@ const (
 	EndRemoteRevoke    = "remote_revoke"    // console revoke executed by the agent
 	EndPermanentAdmin  = "permanent_admin"  // found without a grant, then made a permanent admin; rights kept
 	EndPrivilegesGrant = "privileges_grant" // found without a grant, then replaced by a Privileges grant
+
+	EndOutOfBandRemoved = "out_of_band_removed" // found without a grant, then removed by the agent
 )
 
 // Session is one elevation window, from grant (or first observation) to revoke.
@@ -157,6 +159,8 @@ func (s *Session) Apply(e event.Event) {
 		s.end(e.Timestamp, reason)
 	case event.ElevationExpiredEnforced:
 		s.end(e.Timestamp, EndExpiredEnforced)
+	case event.AdminOutOfBandRemoved:
+		s.end(e.Timestamp, EndOutOfBandRemoved)
 	case event.ElevationOverdue:
 		s.flag(FlagOverdue)
 	case event.PersistenceDetected:
@@ -170,12 +174,24 @@ func (s *Session) start(t time.Time) {
 	}
 }
 
-// end keeps the earliest end; an enforced expiry outranks a plain revoke at the same instant.
+// end keeps the earliest end. At the same instant an enforced expiry outranks a removal of
+// out-of-band rights, and both outrank any other end, such as a plain or inferred revoke.
+// The rank keeps the result the same in whatever order the events arrive.
 func (s *Session) end(t time.Time, reason string) {
-	if s.EndedAt == nil || t.Before(*s.EndedAt) || (t.Equal(*s.EndedAt) && reason == EndExpiredEnforced) {
+	if s.EndedAt == nil || t.Before(*s.EndedAt) || (t.Equal(*s.EndedAt) && endRank(reason) > endRank(*s.EndReason)) {
 		s.EndedAt = &t
 		s.EndReason = &reason
 	}
+}
+
+func endRank(reason string) int {
+	switch reason {
+	case EndExpiredEnforced:
+		return 2
+	case EndOutOfBandRemoved:
+		return 1
+	}
+	return 0
 }
 
 func (s *Session) flag(f string) {

@@ -24,8 +24,9 @@ const goldenDir = "../../../integrations/ocsf-examples"
 
 // extraExamples are golden files for records no example event gives, so altiward-siem's
 // detections have one to check their fields against: a grant the admin group contradicts,
-// a new admin account (the persistence example has none) and console activity, which comes
-// from the audit log.
+// a new admin account (the persistence example has none), a console revoke of rights
+// nobody granted, which closes their finding, and console activity, which comes from the
+// audit log.
 func extraExamples(t *testing.T) map[string][]ocsf.Record {
 	unverified := stored(t, "elevation-granted")
 	unverified.Detail = maps.Clone(unverified.Detail)
@@ -35,7 +36,8 @@ func extraExamples(t *testing.T) map[string][]ocsf.Record {
 		return store.AuditEntry{ID: id, TenantID: "acme", Actor: actor, At: at, Action: action, Target: target, Detail: detail}
 	}
 	return map[string][]ocsf.Record{
-		"elevation-granted-unverified": ocsf.Map(unverified, "acme"),
+		"elevation-granted-unverified":          ocsf.Map(unverified, "acme"),
+		"elevation-revoked-out-of-band-command": ocsf.Map(consoleRevokeOfOutOfBand(t), "acme"),
 		"account-created": ocsf.Map(withAccount(t,
 			map[string]any{"kind": "local_account", "change": "added", "name": "support", "uid": 502.0, "admin": true}, false), "acme"),
 		"console-activity": {

@@ -222,6 +222,45 @@ func TestPermanentAdminEndsAnOutOfBandSession(t *testing.T) {
 	}
 }
 
+func TestOutOfBandRemovedEndsTheSession(t *testing.T) {
+	found := testfixture.Event(t, "admin-out-of-band")
+	removed := testfixture.Event(t, "admin-out-of-band-removed")
+	for _, events := range [][]event.Event{{found, removed}, {removed, found}} {
+		s := session.New("t1", *found.SessionID)
+		for _, e := range events {
+			s.Apply(e)
+		}
+		if s.Open() || *s.EndReason != session.EndOutOfBandRemoved ||
+			!s.EndedAt.Equal(time.Date(2026, 10, 16, 10, 5, 0, 0, time.UTC)) ||
+			s.Source != event.SourceOutOfBand || !slices.Contains(s.Flags, session.FlagOutOfBand) {
+			t.Fatalf("session = %+v", s)
+		}
+	}
+}
+
+func TestOutOfBandRemovedEndReasonValue(t *testing.T) {
+	if session.EndOutOfBandRemoved != "out_of_band_removed" {
+		t.Fatalf("end reason = %q", session.EndOutOfBandRemoved)
+	}
+}
+
+func TestOutOfBandRemovedWinsTieWithRevoke(t *testing.T) {
+	removed := testfixture.Event(t, "admin-out-of-band-removed")
+	revoked := testfixture.Event(t, "elevation-revoked")
+	revoked.SessionID = removed.SessionID
+	revoked.Timestamp = removed.Timestamp
+	revoked.Detail = map[string]any{"inferred": true}
+	for _, events := range [][]event.Event{{removed, revoked}, {revoked, removed}} {
+		s := session.New("t1", *removed.SessionID)
+		for _, e := range events {
+			s.Apply(e)
+		}
+		if *s.EndReason != session.EndOutOfBandRemoved {
+			t.Fatalf("end = %v", *s.EndReason)
+		}
+	}
+}
+
 func TestPrivilegesGrantEndsAnOutOfBandSession(t *testing.T) {
 	found := testfixture.Event(t, "admin-out-of-band")
 	ended := testfixture.Event(t, "elevation-revoked-privileges-grant")

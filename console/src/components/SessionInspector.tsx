@@ -21,6 +21,7 @@ const eventLabels: Record<string, string> = {
   "elevation.expired_enforced": "Removed at expiry",
   "elevation.overdue": "Past expiry",
   "admin.out_of_band": "Found without a grant",
+  "admin.out_of_band_removed": "Removed without a grant",
   "persistence.detected": "New persistence",
 };
 
@@ -33,6 +34,11 @@ function eventLabel(e: TimelineEvent): string {
 
 function eventNote(e: TimelineEvent): string | null {
   const d = e.detail;
+  if (e.type === "admin.out_of_band_removed") {
+    if (typeof d.grace_seconds !== "number" || !Number.isFinite(d.grace_seconds)) return null;
+    const minutes = Math.round((d.grace_seconds / 60) * 10) / 10;
+    return `After ${minutes} ${minutes === 1 ? "minute" : "minutes"} without a grant`;
+  }
   if (d.trigger === "permanent_admin") return "Rights kept, no longer unexplained";
   if (d.trigger === "privileges_grant") return "Rights kept, now under a Privileges grant";
   if (d.trigger === "command") return "From the console";
