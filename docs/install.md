@@ -191,16 +191,23 @@ Create these in your MDM and scope them to a pilot group first.
    > right Team ID before turning `enforce` on.
 
    Someone holding admin rights nobody granted can run the hook by hand to claim a
-   Privileges grant, or to claim they gave the rights back. In `enforce` mode, a grant
-   claimed more than a minute after Altiward raised the rights or on a Mac without SAP
-   Privileges, and a give-back claimed while they are still an admin, are refused and
-   logged on the Mac, and the rights are still removed; a real grant's hook arrives well
-   within that minute. In `alert` mode a claimed grant still turns their session into a
-   Privileges session. The console shows it as **Followed rights without a grant** and the
-   SIEM as "Replaced by a Privileges grant". Once it is a Privileges session, with
-   `ExpiryEnforcement` set to `enforce` and an expiry from Privileges' settings, the rights
-   end at expiry, unless they run the hook again before then: each claim renews the grant,
-   and each is reported as `elevation.granted`.
+   Privileges grant, or to claim they gave the rights back. In `enforce` mode the agent
+   refuses, and logs on the Mac, a grant claimed on a Mac without SAP Privileges, a grant
+   claimed more than a minute after Altiward raised the rights, and a give-back claimed
+   while they are still an admin, and the rights are still removed; a real grant's hook
+   arrives well within that minute. Hand-run claims can still keep the rights in two ways:
+   a grant claimed before the agent raises them (in the 30 seconds or so before it does, or
+   between heartbeats), and an account with root that removes itself from `admin`, gives
+   the rights back, adds itself again and claims a grant. The hook is untrusted and an
+   admin can do this. A later release will accept a grant claim in `enforce` mode only when
+   Privileges' own log shows Privileges added the user.
+
+   In `alert` mode a claimed grant still turns their session into a Privileges session. The
+   console shows it as **Followed rights without a grant** and the SIEM as "Replaced by a
+   Privileges grant". Once it is a Privileges session, with `ExpiryEnforcement` set to
+   `enforce` and an expiry from Privileges' settings, the rights end at expiry, unless they
+   run the hook again before then: each claim renews the grant, and each is reported as
+   `elevation.granted`.
 
    Deliver the profile through MDM rather than `defaults write`: Altiward reports
    `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`,
