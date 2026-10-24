@@ -61,6 +61,10 @@ func TestPostgresUpgradesFromEveryMigration(t *testing.T) {
 			if err != nil || sess.LocalUser != "jdoe" || len(evs) != 1 {
 				t.Fatalf("old session: %+v %v, %v", sess, evs, err)
 			}
+			cred, err := s.Credential(ctx, "7e8f90a1-b2c3-4d4e-8f5a-6b7c8d9e0f1a")
+			if err != nil || cred.Status != CredentialActive || cred.KeyStorage != KeyStorageUnknown {
+				t.Fatalf("old credential: %+v, %v", cred, err)
+			}
 			queued, err := s.ClaimExports(ctx, "splunk", 10, time.Minute, now)
 			if err != nil || len(queued) != 1 || queued[0].Audit != nil || queued[0].Event.User.LocalName != "jdoe" {
 				t.Fatalf("old export: %+v, %v", queued, err)
@@ -71,6 +75,13 @@ func TestPostgresUpgradesFromEveryMigration(t *testing.T) {
 			health.Timestamp = now
 			if res, err := s.Ingest(ctx, "acme", []event.Event{health}, now); err != nil || len(res.Accepted) != 1 {
 				t.Fatalf("ingest after upgrade: %+v, %v", res, err)
+			}
+			enrolled, err := s.Enroll(ctx, DeviceCredential{
+				DeviceID: newUUID(t), TenantID: "acme", Serial: "C02NEW000001", HardwareUUID: "HW-NEW", PublicKey: newKey(t),
+				KeyStorage: KeyStorageSecureEnclave, CreatedAt: now,
+			})
+			if err != nil || enrolled.Credential.KeyStorage != KeyStorageSecureEnclave {
+				t.Fatalf("enroll after upgrade: %+v, %v", enrolled, err)
 			}
 			if err := s.PutTenantSettings(ctx, "acme", TenantSettings{SilentAfterHours: 24}, auditFor(t, "acme", AuditChangeSettings)); err != nil {
 				t.Fatalf("settings after upgrade: %v", err)

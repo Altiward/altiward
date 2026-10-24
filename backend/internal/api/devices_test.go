@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -104,6 +105,49 @@ func TestEnrollmentIsActiveAndRetrySafe(t *testing.T) {
 	rec, out := a.enroll(t, fixtureSerial)
 	if rec.Code != http.StatusOK || out["device_id"] != a.deviceID {
 		t.Fatalf("retry: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestEnrollRecordsKeyStorage(t *testing.T) {
+	h := newServer(t)
+	cases := []struct {
+		name string
+		sent any // nil leaves the field out, as agents before 0.2.0 do
+		want string
+	}{
+		{"secure enclave", "secure_enclave", "secure_enclave"},
+		{"software", "software", "software"},
+		{"agent before 0.2.0", nil, ""},
+		{"a value this server doesn't know", "tpm", ""},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			serial := fmt.Sprintf("C02KEY%d", i)
+			key := newKey(t)
+			spki, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := map[string]any{
+				"serial": serial, "hardware_uuid": "HW-" + serial, "public_key": base64.StdEncoding.EncodeToString(spki),
+				// Agents add fields; the server must keep accepting ones it doesn't know.
+				"added_by_a_later_agent": true,
+			}
+			if tc.sent != nil {
+				body["key_storage"] = tc.sent
+			}
+			if rec, _ := do(t, h, "POST", "/v1/agent/enroll", agentToken, body); rec.Code != http.StatusCreated {
+				t.Fatalf("enroll: %d %s", rec.Code, rec.Body)
+			}
+			rec, out := do(t, h, "GET", "/v1/enrollments?serial="+serial, consoleToken, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("list: %d %s", rec.Code, rec.Body)
+			}
+			list, _ := out["enrollments"].([]any)
+			if len(list) != 1 || list[0].(map[string]any)["key_storage"] != tc.want {
+				t.Fatalf("enrollments = %v, want key_storage %q", list, tc.want)
+			}
+		})
 	}
 }
 

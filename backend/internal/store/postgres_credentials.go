@@ -10,16 +10,17 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const credentialColumns = `device_id::text, tenant_id, serial, hardware_uuid, public_key, status, created_at, activated_at, revoked_at`
+const credentialColumns = `device_id::text, tenant_id, serial, hardware_uuid, public_key, key_storage, status, created_at, activated_at, revoked_at`
 
 func scanCredential(row pgx.Row) (DeviceCredential, error) {
 	var c DeviceCredential
-	var status string
-	err := row.Scan(&c.DeviceID, &c.TenantID, &c.Serial, &c.HardwareUUID, &c.PublicKey, &status,
+	var keyStorage, status string
+	err := row.Scan(&c.DeviceID, &c.TenantID, &c.Serial, &c.HardwareUUID, &c.PublicKey, &keyStorage, &status,
 		&c.CreatedAt, &c.ActivatedAt, &c.RevokedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeviceCredential{}, ErrNotFound
 	}
+	c.KeyStorage = KeyStorage(keyStorage)
 	c.Status = CredentialStatus(status)
 	return c, err
 }
@@ -79,10 +80,10 @@ func (p *Postgres) Enroll(ctx context.Context, c DeviceCredential) (EnrollResult
 			}
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO device_credentials (device_id, tenant_id, serial, hardware_uuid, public_key, key_digest, status, created_at, activated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-			c.DeviceID, c.TenantID, c.Serial, c.HardwareUUID, c.PublicKey, keyDigest(c.PublicKey), string(c.Status),
-			c.CreatedAt, c.ActivatedAt); err != nil {
+			INSERT INTO device_credentials (device_id, tenant_id, serial, hardware_uuid, public_key, key_digest, key_storage, status, created_at, activated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+			c.DeviceID, c.TenantID, c.Serial, c.HardwareUUID, c.PublicKey, keyDigest(c.PublicKey), string(c.KeyStorage),
+			string(c.Status), c.CreatedAt, c.ActivatedAt); err != nil {
 			return fmt.Errorf("insert credential: %w", err)
 		}
 		res.Credential = c

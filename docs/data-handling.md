@@ -122,7 +122,7 @@ Everything is in your Postgres database.
 | Every event from every Mac, in full | Forever, for now |
 | Elevation sessions, including the person's UPN and reason | Forever, for now |
 | Each Mac's latest state: versions, admins, health | Forever, replaced as it changes |
-| Each Mac's enrollment: serial, hardware UUID and **public** key | Forever; revoking stops the Mac reporting |
+| Each Mac's enrollment: serial, hardware UUID, **public** key, and whether the Mac says its key is in its Secure Enclave | Forever; revoking stops the Mac reporting |
 | Commands sent from the console, who sent them, and their results | Forever |
 | Activity: every change made in the console, and every sign-in | Forever by default; or from 365 days, with `ALTIWARD_AUDIT_RETENTION_DAYS` |
 | Console sign-in sessions: the person's email, name, identity-provider ID and role | 12 hours at most, 1 hour idle; removed on sign-out, or when an admin ends it |
