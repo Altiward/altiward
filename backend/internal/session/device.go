@@ -36,9 +36,10 @@ type Device struct {
 	PersistenceUnreadable []string `json:"persistence_unreadable"`
 	// RecentTamper are the newest agent.tamper events, newest first, at most MaxRecentAlerts.
 	RecentTamper []TamperAlert `json:"recent_tamper"`
-	// RecentPermanentUses are the newest uses of the permanent admin accounts, newest
-	// first by when each began, at most MaxRecentAlerts. Nil in state stored before agent
-	// 0.3.0 reported them; nil means none recorded.
+	// RecentPermanentUses are recent uses of the permanent admin accounts: every open
+	// sign-in first (at most MaxRecentAlerts, newest start first), then the newest
+	// MaxRecentAlerts ended and single uses, newest first by PermanentUse.NewestAt. Nil in
+	// state stored before agent 0.3.0 reported them; nil means none recorded.
 	RecentPermanentUses []PermanentUse `json:"recent_permanent_uses"`
 	// Silence is the newest agent.silent the backend raised for this Mac, or nil if none.
 	// The Mac is reported silent while its State is silent.
@@ -92,6 +93,7 @@ type PermanentUse struct {
 	State       string     `json:"state"` // started, ended or single
 	StartedAt   time.Time  `json:"started_at"`
 	EndedAt     *time.Time `json:"ended_at"`
+	LastAt      *time.Time `json:"last_at"` // the newest use grouped into a single; nil otherwise
 	OnSessionOf *string    `json:"on_session_of"`
 	RemoteHost  *string    `json:"remote_host"`
 	Right       *string    `json:"right"`
@@ -99,8 +101,20 @@ type PermanentUse struct {
 	Count       int        `json:"count"`  // single uses grouped into this entry; 1 for a sign-in
 }
 
-// MaxRecentAlerts is how many tamper alerts, and how many uses of permanent admins, a
-// device keeps for the console; the SIEM gets them all.
+// NewestAt is the newest time the use is known for: when it ended, else the newest use
+// grouped into it, else when it began.
+func (u PermanentUse) NewestAt() time.Time {
+	switch {
+	case u.EndedAt != nil:
+		return *u.EndedAt
+	case u.LastAt != nil:
+		return *u.LastAt
+	}
+	return u.StartedAt
+}
+
+// MaxRecentAlerts is how many tamper alerts a device keeps for the console, and how many
+// open sign-ins and how many other uses of permanent admins; the SIEM gets them all.
 const MaxRecentAlerts = 20
 
 func NewDevice(tenantID, serial string) Device {
@@ -189,9 +203,17 @@ func (d *Device) addTamper(e event.Event) {
 	})
 }
 
-// addPermanentUse keeps e's use by its use ID. An ended replaces the started it ends, and
-// a started that arrives after its ended is dropped, so the order they arrive in doesn't
-// matter.
+// addPermanentUse keeps e's use by its use ID. Open sign-ins (started) are kept apart from
+// the cap on the rest, so any number of newer uses can't push an open sign-in off the list:
+// up to MaxRecentAlerts of them, newest start first. Ended and single uses are capped at
+// MaxRecentAlerts, newest first by NewestAt. An ended replaces the started it ends, and a
+// started is dropped while its ended is listed, so the order they arrive in doesn't matter,
+// with two exceptions that need more uses than a Mac sees between two heartbeats:
+//   - A started that arrives after its ended was trimmed (MaxRecentAlerts finished uses
+//     newer than it arrived in between) is listed as open. The agent sends oldest first,
+//     so a started reaching the server after its ended is already rare.
+//   - With more than MaxRecentAlerts sign-ins open at once, the oldest open one is trimmed,
+//     and stays off the list even if newer ones end later.
 func (d *Device) addPermanentUse(e event.Event) {
 	u := PermanentUse{Count: 1}
 	u.UseID, _ = e.Detail["use_id"].(string)
@@ -207,6 +229,9 @@ func (d *Device) addPermanentUse(e event.Event) {
 	if t := detailTime(e.Detail["ended"]); !t.IsZero() {
 		u.EndedAt = &t
 	}
+	if t := detailTime(e.Detail["last"]); !t.IsZero() {
+		u.LastAt = &t
+	}
 	u.OnSessionOf = detailString(e.Detail["on_session_of"])
 	u.RemoteHost = detailString(e.Detail["remote_host"])
 	u.Right = detailString(e.Detail["right"])
@@ -214,14 +239,31 @@ func (d *Device) addPermanentUse(e event.Event) {
 	if n, ok := e.Detail["count"].(float64); ok && n >= 1 {
 		u.Count = int(n)
 	}
-	if u.State == event.UseStateEnded {
-		d.RecentPermanentUses = slices.DeleteFunc(d.RecentPermanentUses, func(x PermanentUse) bool {
-			return x.UseID == u.UseID && x.State == event.UseStateStarted
+	var open, done []PermanentUse
+	for _, x := range d.RecentPermanentUses {
+		if x.State == event.UseStateStarted {
+			open = append(open, x)
+		} else {
+			done = append(done, x)
+		}
+	}
+	byID := func(x PermanentUse) bool { return x.UseID == u.UseID }
+	switch {
+	case u.State == event.UseStateStarted:
+		if !slices.ContainsFunc(done, byID) {
+			open = keepRecent(open, u, MaxRecentAlerts, func(u PermanentUse) (string, time.Time) {
+				return u.UseID, u.StartedAt
+			})
+		}
+	default:
+		if u.State == event.UseStateEnded {
+			open = slices.DeleteFunc(open, byID)
+		}
+		done = keepRecent(done, u, MaxRecentAlerts, func(u PermanentUse) (string, time.Time) {
+			return u.UseID, u.NewestAt()
 		})
 	}
-	d.RecentPermanentUses = keepRecent(d.RecentPermanentUses, u, MaxRecentAlerts, func(u PermanentUse) (string, time.Time) {
-		return u.UseID, u.StartedAt
-	})
+	d.RecentPermanentUses = append(append(make([]PermanentUse, 0, len(open)+len(done)), open...), done...)
 }
 
 func detailString(v any) *string {

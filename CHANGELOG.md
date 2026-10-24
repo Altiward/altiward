@@ -29,10 +29,11 @@ None.
 
 - The server accepts, stores, shows and exports `admin.permanent_use`, which Agent 0.3.0
   sends each time someone uses a permanent admin account (`PermanentAdmins`). It exports it
-  as an OCSF Authentication record. **Fleet** keeps the newest 20 uses per Mac and shows
-  the newest 10 under **Permanent admins** in the Mac's details: who, how (signed in at the Mac, in Terminal or over SSH, shared the
-  screen, approved a prompt, ran sudo or su), from where, and whether the sign-in is still
-  open. The SIEM gets every use (`docs/data-handling.md`).
+  as an OCSF Authentication record. **Fleet** keeps each Mac's open sign-ins (up to 20)
+  and its newest 20 other uses, and shows up to 10 under **Permanent admins** in the
+  Mac's details, open sign-ins first: who, how (signed in at the Mac, in Terminal or over
+  SSH, shared the screen, approved a prompt, ran sudo or su), from where, and whether the
+  sign-in is still open. The SIEM gets every use (`docs/data-handling.md`).
 
 ## Agent 0.2.0 - 2026-10-24
 

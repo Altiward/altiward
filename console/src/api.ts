@@ -58,7 +58,9 @@ export interface Device {
   persistence_unreadable?: string[] | null;
   /** Newest first, at most 20. Missing or null when there are none. */
   recent_tamper?: TamperAlert[];
-  /** Newest first by when each began, at most 20. Missing or null when none are recorded. */
+  /** Every open sign-in first (at most 20, newest first), then at most 20 ended and single
+   *  uses, newest first by when each ended, else its last use, else when it began. Missing or
+   *  null when none are recorded. */
   recent_permanent_uses?: PermanentUse[] | null;
   /** The newest agent.silent the server raised for this Mac; missing or null if none. */
   silence?: Silence | null;
@@ -93,6 +95,8 @@ export interface PermanentUse {
   state: "started" | "ended" | "single";
   started_at: string;
   ended_at: string | null;
+  /** The newest use grouped into a single; missing or null otherwise. */
+  last_at?: string | null;
   /** The user whose session it was, for a prompt or su; null when unknown. */
   on_session_of: string | null;
   remote_host: string | null;
