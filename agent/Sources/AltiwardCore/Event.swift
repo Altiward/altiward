@@ -15,7 +15,7 @@ public enum EventType: String, Codable, Sendable, CaseIterable {
     case agentTamper = "agent.tamper"
     /// Raised by the backend when a Mac stops checking in; the agent never sends it.
     case agentSilent = "agent.silent"
-    /// A permanent admin account was used: a sign-in, an authorisation prompt, sudo or su.
+    /// A permanent admin account was used: a sign-in, an authorisation prompt or screen sharing.
     case adminPermanentUse = "admin.permanent_use"
 }
 

@@ -119,11 +119,11 @@ struct AgentStoreTests {
     @Test func freshStoreHasCurrentSchemaVersion() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("altiward-fresh-\(UUID().uuidString)")
         _ = try AgentStore.open(directory: dir)
-        #expect(try userVersion(of: dir) == 1)
-        #expect(AgentStore.schemaVersion == 1)
+        #expect(try userVersion(of: dir) == 2)
+        #expect(AgentStore.schemaVersion == 2)
     }
 
-    /// 0.1.0 wrote no version. Its stores must open with their data and get version 1.
+    /// 0.1.0 wrote no version. Its stores must open with their data and get the current version.
     @Test func upgradesA010Store() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("altiward-v010-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -181,7 +181,52 @@ struct AgentStoreTests {
                     user: "jdoe", sessionID: "s1", source: .privileges, startedAt: start,
                     expiresAt: start.addingTimeInterval(1200), overdueReported: true))
         #expect(try store.value(forKey: "device_credential") == "secret")
+        #expect(try userVersion(of: dir) == 2)
+    }
+
+    /// Agent 0.2's stores are at version 1: they keep their data and gain `permanent_uses`.
+    @Test func migratesVersion1StoreToPermanentUses() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("altiward-v1-\(UUID().uuidString)")
+        try writeVersion1Store(in: dir)
+        try SQLiteConnection(path: dir.appendingPathComponent("agent.sqlite").path)
+            .execute("INSERT INTO kv (key, value) VALUES ('device_credential', 'secret')")
         #expect(try userVersion(of: dir) == 1)
+
+        let store = try AgentStore.open(directory: dir)
+        #expect(AgentStore.schemaVersion == 2)
+        #expect(try userVersion(of: dir) == 2)
+        #expect(try store.value(forKey: "device_credential") == "secret")
+        let tables = try SQLiteConnection(path: dir.appendingPathComponent("agent.sqlite").path)
+            .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'permanent_uses'")
+        #expect(tables.count == 1)
+        #expect(try store.openPermanentUses().isEmpty)
+    }
+
+    @Test func permanentUseRowsLiveUntilPruned() throws {
+        let store = try makeStore()
+        let start = Date(timeIntervalSince1970: 1_792_000_000)
+        let row = PermanentUseRow(
+            useID: "u1", user: "breakglass", method: .ssh, tty: "ttys003", host: "10.0.0.5", pid: 900,
+            startedAt: start, endedAt: nil)
+        try store.insertPermanentUse(row)
+        // A second insert of the same use is ignored, not an error.
+        try store.insertPermanentUse(
+            PermanentUseRow(
+                useID: "u1", user: "other", method: .console, tty: "console", host: "", pid: 1, startedAt: start,
+                endedAt: nil))
+        #expect(try store.openPermanentUses() == [row])
+        #expect(try store.hasPermanentUse(id: "u1"))
+        #expect(try !store.hasPermanentUse(id: "u2"))
+
+        try store.endPermanentUse(id: "u1", at: start.addingTimeInterval(60))
+        #expect(try store.openPermanentUses().isEmpty)
+        // Ended rows stay, so a restart or the catch-up doesn't report the use again.
+        #expect(try store.hasPermanentUse(id: "u1"))
+
+        try store.prunePermanentUses(endedBefore: start.addingTimeInterval(60))
+        #expect(try store.hasPermanentUse(id: "u1"))
+        try store.prunePermanentUses(endedBefore: start.addingTimeInterval(61))
+        #expect(try !store.hasPermanentUse(id: "u1"))
     }
 
     /// Opening a newer agent's store would risk misreading it: refuse, and leave it as it is.
@@ -192,12 +237,12 @@ struct AgentStoreTests {
             try store.setValue("secret", forKey: "device_credential")
         }
         let path = dir.appendingPathComponent("agent.sqlite").path
-        try SQLiteConnection(path: path).execute("PRAGMA user_version = 2")
+        try SQLiteConnection(path: path).execute("PRAGMA user_version = 3")
 
-        #expect(throws: AgentStoreError.newerSchema(found: 2, supported: 1)) {
+        #expect(throws: AgentStoreError.newerSchema(found: 3, supported: 2)) {
             try AgentStore.open(directory: dir)
         }
-        #expect(try userVersion(of: dir) == 2)
+        #expect(try userVersion(of: dir) == 3)
         #expect(try SQLiteConnection(path: path).query("SELECT value FROM kv").first?.text(0) == "secret")
     }
 
