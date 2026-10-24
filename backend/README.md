@@ -79,7 +79,8 @@ token in `X-CSRF-Token`; requests with a token don't.
 
 Session `end_reason`: `revoked`, `inferred`, `expired_enforced`, `remote_revoke`,
 `permanent_admin` (found without a grant, then made a permanent admin; the rights stay) or
-`privileges_grant` (found without a grant, then replaced by a Privileges grant; the rights stay).
+`privileges_grant` (found without a grant, then replaced by a Privileges grant; the rights stay) or
+`out_of_band_removed` (found without a grant, then removed by the agent).
 A session's `source` is `privileges` or `out_of_band`.
 
 Session `flags`: `unverified_claim`, `orphan_revoke`, `out_of_band`, `inferred_end`,
