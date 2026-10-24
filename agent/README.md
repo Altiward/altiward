@@ -36,7 +36,8 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
   at once when the network comes back or the server answers its command poll.
 - **Raises admin rights nobody granted** as `admin.out_of_band`, once they have gone 30
   seconds without a grant, checked every 15 seconds; the wait is longer than a Privileges
-  hook can take to report a grant. Accounts in `PermanentAdmins` are left out. With
+  hook can take to report a grant. Accounts in `PermanentAdmins` are left out. By default
+  it only reports them; `OutOfBandEnforcement` (below) can remove them. With
   Privileges 2.6+ and its system extension on (macOS 14+), the event names the process
   that added them (`detail.instigator`), read from the extension's unified log entries.
 - **Sends a heartbeat** every 5 minutes (`HeartbeatInterval`). It reconciles the `admin`
@@ -48,12 +49,28 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
   `enforce` removes the user from `admin` and sends `elevation.expired_enforced`; `off`
   does nothing. A grant Privileges gives no expiry never becomes overdue. Permanent admins
   and rights nobody granted are never removed by expiry.
+- **Can remove admin rights nobody granted,** each heartbeat, once they have lasted
+  `OutOfBandGraceMinutes` (default 5, minimum 1) since the agent raised them.
+  `OutOfBandEnforcement` decides what happens: `alert`, the default, only raises
+  `admin.out_of_band`, as before; `enforce` removes the user from `admin` at the next
+  heartbeat and sends `admin.out_of_band_removed`, so it acts up to `HeartbeatInterval` late.
+  Any other value means `alert`. The agent counts as a human admin any member of `admin`
+  with a UID of 500 or more, and any direct member of `admin` other than `root` and `_`
+  accounts, hidden ones included. So `enforce` also removes the LAPS account your MDM manages, and any hidden
+  management account with a low UID, unless it is in `PermanentAdmins`. It never removes a
+  permanent admin and never leaves a Mac with no admin (it keeps the account it has seen
+  longest; admins still in their grace period, or not yet raised, don't count as remaining).
+  It pauses all removals while the `privileges_hook` tamper check fails, because then every
+  Privileges grant would look like rights nobody granted. A kept, paused or failed removal
+  leaves the finding open, retries at every heartbeat and is logged on the Mac. A Privileges
+  grant whose hook never reached the agent looks like rights nobody granted and can be
+  removed; the person can request again. Upgrade the server to 0.3.0 first.
 - **Runs revokes from the console** (below), removing the user from `admin` itself.
   Permanent admins are never removed.
 - **Runs tamper checks** each heartbeat and sends `agent.tamper` when one changes: the
-  LaunchDaemon plist, the app's code signature, five settings set outside MDM
+  LaunchDaemon plist, the app's code signature, seven settings set outside MDM
   (`ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`,
-  `HookCodeRequirement`), a downgrade, and, with Privileges installed, its tamper protection, its hook setting, and its timer
+  `OutOfBandEnforcement`, `OutOfBandGraceMinutes`, `HookCodeRequirement`), a downgrade, and, with Privileges installed, its tamper protection, its hook setting, and its timer
   stopped while someone holds rights it granted. It also reports each attempt Privileges'
   system extension blocked on Privileges since the last heartbeat (`privileges_blocked`),
   which Privileges itself only logs on the Mac. `sudo altiward-agent privileges-audit [HOURS]`
@@ -94,7 +111,9 @@ with an unverified claim. The daemon's clock replaces the hook's, and the caller
 goes into `detail.caller_uid`. `HookCodeRequirement` and Privileges' checksum pin the
 hook, but that is defence in depth. Every 5 minutes the heartbeat reconciles the `admin`
 group with the ledger: it closes sessions whose revoke never arrived and raises admins
-nobody granted.
+nobody granted, and, with `OutOfBandEnforcement` on `enforce`, removes those admins once the
+grace period has passed. A hook that isn't reporting pauses that, because the agent can no
+longer tell a grant from rights nobody granted.
 
 **Privileges stays at the edge.** Altiward depends on a project it doesn't control, and
 must keep working when Privileges' timer is stopped or Privileges is removed. So expiry,

@@ -9,8 +9,8 @@ deployment configuration and supporting tools live.
 `agent/` is a Swift package. `AltiwardHook` is SAP Privileges' post-change executable;
 it forwards a claim over XPC. `AltiwardDaemon` runs as root, checks the real admin group,
 maintains the elevation ledger, performs integrity and persistence checks, enforces
-configured expiry, handles revoke commands and delivers queued events. Both use
-`AltiwardCore`.
+configured expiry, removes admin rights nobody granted if configured to, handles revoke
+commands and delivers queued events. Both use `AltiwardCore`.
 
 The hook is untrusted. The daemon verifies its claims and supplies timestamps. See the
 agent's [design notes](../agent/README.md#design-notes) for the trust model.

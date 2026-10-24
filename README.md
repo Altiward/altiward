@@ -34,17 +34,19 @@ and the console shows it:
   long and with what reason.
 - **Admin rights nobody granted.** Every claim is checked against the real `admin` group,
   and a regular reading of the group catches anyone added outside the normal route. With
-  Privileges' system extension on, it says which process added them.
+  Privileges' system extension on, it says which process added them. If you choose
+  (`OutOfBandEnforcement`), the agent removes them from `admin` after a few minutes.
 - **Expiry.** Rights that outlive the expiry Privileges set raise an alert, or, if you
   choose (`ExpiryEnforcement`), the agent removes the user from `admin`.
 - **Revoke from the console,** per session, per account on a Mac, or every admin on a
   Mac. The agent picks the command up from your server within about a second and removes
   the rights from `admin` itself. Accounts you list as permanent admins are never removed.
 - **Tamper and health.** Alerts when the agent's LaunchDaemon or signature is changed, its
-  server, permanent admins, expiry enforcement or hook requirement settings are set outside
-  MDM, or it is downgraded; when Privileges' own protection is off or Altiward's hook isn't
-  set in Privileges, someone stops Privileges' timer while holding rights it granted, or
-  Privileges blocks an attempt to remove or unload it; and when a Mac stops checking in.
+  server, permanent admins, expiry enforcement, out-of-band enforcement or hook requirement
+  settings are set outside MDM, or it is downgraded; when Privileges' own protection is off
+  or Altiward's hook isn't set in Privileges, someone stops Privileges' timer while holding
+  rights it granted, or Privileges blocks an attempt to remove or unload it; and when a Mac
+  stops checking in.
 - **What changed while someone was admin:** launch items, sudoers, SSH keys, local
   accounts and remote access.
 - **Your SIEM gets every event** as OCSF, along with every console action. Events wait
@@ -82,6 +84,13 @@ Known limits:
 
 - Altiward needs SAP Privileges to grant admin rights; it has no way to grant them itself.
   Without Privileges, every admin who isn't a permanent admin shows as one nobody granted.
+- `OutOfBandEnforcement` defaults to `alert`. If you set it to `enforce`, the agent removes
+  every admin nobody granted, within minutes, including the LAPS account your MDM manages
+  if it isn't in `PermanentAdmins`, and, without Privileges, every admin who isn't a
+  permanent admin. It never removes a permanent admin, never leaves a Mac with no admin,
+  and pauses while Privileges' hook isn't reporting; a removed Privileges grant whose hook
+  never reached the agent can be requested again. Pilot it on a small group first
+  ([the settings](docs/install.md#2-deploy-the-agent)).
 - Expiry comes from Privileges. A grant Privileges gives no expiry never counts as past
   its expiry, and `ExpiryEnforcement` defaults to `alert`: rights are removed only if you
   set it to `enforce`.
@@ -144,7 +153,9 @@ to a pilot group first:
 1. A configuration profile for `com.altiward.agent`, from the example in the bundle's
    `profiles/`, with at least `ServerURL`, `EnrollmentToken` and `PermanentAdmins`. Set
    `ExpiryEnforcement` to `enforce` if the agent should remove rights past their expiry;
-   by default it only alerts.
+   by default it only alerts. `OutOfBandEnforcement` works the same way for admins nobody
+   granted, and needs server 0.3.0 and a `PermanentAdmins` list that covers your MDM's
+   admin accounts.
 2. The login items profile, `altiward-login-items.mobileconfig`.
 3. The keys from `corp.sap.privileges.plist` in the **matching agent release** added
    to your Privileges profile, so Privileges reports each change to the agent.
