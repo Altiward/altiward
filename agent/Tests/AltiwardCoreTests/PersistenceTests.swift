@@ -129,6 +129,17 @@ struct PersistenceTests {
         #expect(sources.snapshot().unreadable == ["/Users/jdoe/.ssh/authorized_keys"])
     }
 
+    @Test func anEmptyFileIsReadNotUnreadable() throws {
+        // Reading an empty file gives nothing, which isn't failing to read it.
+        try write("/Users/jdoe/.ssh/authorized_keys", "")
+        try write("/Library/LaunchDaemons/com.example.empty.plist", "")
+        try write("/etc/sudoers", "")
+        let snapshot = sources.snapshot()
+        #expect(snapshot.unreadable.isEmpty)
+        #expect(snapshot.items.contains { $0.kind == .launchDaemon && $0.id.hasSuffix("com.example.empty.plist") })
+        #expect(snapshot.items.contains { $0.kind == .sudoers && $0.id == "/etc/sudoers" })
+    }
+
     // MARK: Which sessions changes are reported on
 
     @Test func theFirstCheckOnlyTakesABaseline() throws {
