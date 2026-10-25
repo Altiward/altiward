@@ -172,7 +172,8 @@ describe("expiresAfter", () => {
   it.each([
     [{ expiration_interval_minutes: 20, expiry_capped: true }, "20 min"],
     [{ expiration_interval_max_minutes: 60, expiry_capped: true }, "Up to 60 min"],
-    [{ expiration_interval_minutes: 0, expiration_interval_max_minutes: 60, expiry_capped: false }, "Never, not set by MDM"],
+    // MDM set no expiry on purpose: a fixed 0 wins over any maximum.
+    [{ expiration_interval_minutes: 0, expiration_interval_max_minutes: 60, expiry_capped: false }, "Never"],
     [{ expiration_interval_max_minutes: 60, expiry_capped: false }, "Up to 60 min, not set by MDM"],
     [{ expiry_capped: false }, "No cap"],
     // An older agent doesn't say whether MDM set it.

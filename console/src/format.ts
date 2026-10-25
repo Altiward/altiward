@@ -225,11 +225,12 @@ export function revokeNotice(c: Command, who?: string): { kind: "error" | "info"
 }
 
 /** How long a Privileges grant lasts: a fixed interval, or the cap on what the user picks.
- *  `expiry_capped` is false when MDM doesn't set it, so the user can change it. */
+ *  Agents from 0.5.0 report `expiration_interval_minutes` only when MDM sets it, so it is
+ *  fixed, and 0 is MDM's choice of no expiry. `expiry_capped` is false when MDM doesn't cap
+ *  grants, so a maximum shown then is one the user can change. */
 export function expiresAfter(p: Record<string, unknown>): string {
   const fixed = p.expiration_interval_minutes, max = p.expiration_interval_max_minutes;
-  const text = typeof fixed === "number" ? (fixed > 0 ? `${fixed} min` : "Never")
-    : typeof max === "number" && max > 0 ? `Up to ${max} min` : null;
-  if (text === null) return p.expiry_capped === false ? "No cap" : "—";
-  return p.expiry_capped === false ? `${text}, not set by MDM` : text;
+  if (typeof fixed === "number") return fixed > 0 ? `${fixed} min` : "Never";
+  if (typeof max === "number" && max > 0) return p.expiry_capped === false ? `Up to ${max} min, not set by MDM` : `Up to ${max} min`;
+  return p.expiry_capped === false ? "No cap" : "—";
 }

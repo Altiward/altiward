@@ -16,7 +16,9 @@ Every section has the four headings below, with "None." under any that don't app
 Add this release's `corp.sap.privileges.plist` keys to your Privileges profile with the
 package, as for every release. It now also sets `ExpirationIntervalMax` (60 minutes: change
 it to your policy), `AllowPrivilegeRenewal` and `PostChangeActionOnGrantOnly`, so the new
-checks pass. Upgrade the server to 0.6.0 first, for the console's labels.
+checks pass. Upgrade the server to 0.6.0 first: an older server exports the four new checks
+to the SIEM as high severity findings titled only by their names, and the console shows them
+unlabelled.
 
 ### Breaking changes
 
