@@ -117,8 +117,10 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
 - **Runs tamper checks** each heartbeat and sends `agent.tamper` when one changes: the
   LaunchDaemon plist, the app's code signature, seven settings set outside MDM
   (`ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`,
-  `OutOfBandEnforcement`, `OutOfBandGraceMinutes`, `HookCodeRequirement`), a downgrade, and, with Privileges installed, its tamper protection, its hook setting, and its timer
-  stopped while someone holds rights it granted. With either enforcement setting on `enforce`
+  `OutOfBandEnforcement`, `OutOfBandGraceMinutes`, `HookCodeRequirement`), a downgrade, and, with Privileges installed, its tamper protection, its hook setting, its timer
+  stopped while someone holds rights it granted, and the Privileges settings Altiward relies
+  on (an expiry cap, renewals off while `ExpiryEnforcement` is `enforce`, the hook run on
+  give-backs, and revoke exclusion lists that name every permanent admin). With either enforcement setting on `enforce`
   it also fails `grant_confirmation` while it can't confirm Privileges grants against
   Privileges' log, and it reports each claim it refuses or accepts unconfirmed as `grant_claim`.
   It also reports each attempt Privileges'

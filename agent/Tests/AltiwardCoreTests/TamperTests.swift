@@ -121,6 +121,21 @@ struct TamperTests {
         #expect(events.map { $0.detail["problem"] } == ["SAP Privileges isn't installed now"])
     }
 
+    @Test func aFailingRenewalCheckIsRetiredWithWhy() throws {
+        results.withLock { $0 = [.launchDaemon: .ok] }
+        try store.setValue(#"{"privileges_renewal": false}"#, forKey: "integrity_state")
+        var events = try tamper(tracker())
+        #expect(events.map { $0.detail["problem"] } == ["ExpiryEnforcement isn't enforce now"])
+
+        try store.setValue(#"{"privileges_renewal": false, "privileges_expiry_cap": false}"#, forKey: "integrity_state")
+        privilegesVersion.withLock { $0 = nil }
+        events = try tamper(tracker())
+        #expect(events.map { $0.detail["check"] } == ["privileges_expiry_cap", "privileges_renewal"])
+        #expect(
+            events.map { $0.detail["problem"] }
+                == ["SAP Privileges isn't installed now", "SAP Privileges isn't installed now"])
+    }
+
     @Test func aPassingCheckThatStopsApplyingSaysNothing() throws {
         results.withLock { $0 = [.privilegesHook: .ok, .launchDaemon: .ok] }
         _ = try tamper(tracker())

@@ -334,7 +334,7 @@ func TestDeviceKeepsIntegrityFromNewestHealth(t *testing.T) {
 		t.Fatalf("new device integrity = %v, want nil until reported", d.Integrity)
 	}
 	d.Apply(health)
-	if d.Integrity["settings_managed"] != false || d.Integrity["code_signature"] != true || len(d.Integrity) != 6 {
+	if d.Integrity["settings_managed"] != false || d.Integrity["code_signature"] != true || len(d.Integrity) != 9 {
 		t.Fatalf("integrity = %v", d.Integrity)
 	}
 	older := health

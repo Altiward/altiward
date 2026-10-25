@@ -79,6 +79,14 @@ export const checkTips: Record<string, string> = {
   privileges_timer: "Privileges’ timer, which removes admin rights when they expire, is running while someone holds them.",
   agent_version: "The agent hasn’t been replaced with an older release.",
   grant_confirmation: "Privileges’ own log can confirm each grant, so a grant claimed by hand is refused.",
+  privileges_expiry_cap:
+    "Privileges’ profile caps how long a grant lasts (ExpirationIntervalMax or ExpirationInterval), so nobody can choose to keep admin rights with no expiry.",
+  privileges_renewal:
+    "Privileges’ profile turns renewals off (AllowPrivilegeRenewal), which Altiward doesn’t see, so expiry enforcement doesn’t remove renewed rights early.",
+  privileges_give_back_hook:
+    "Privileges’ profile sets PostChangeActionOnGrantOnly to false, so Privileges runs Altiward’s hook when rights are given back, not only when they are granted.",
+  privileges_revoke_exclusions:
+    "Where Privileges removes admin rights at sign-in or after a clock change, its exclusion lists name every permanent admin, so they keep their rights.",
 };
 
 export const persistenceCheckTip =

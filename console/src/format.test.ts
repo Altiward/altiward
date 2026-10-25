@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  agentOutdated, endReasonLabel, flagLabel, formatDuration, gauge, integrityCheckLabel, permanentUseMethodLabel, persistenceLines, relativeTime, shortFingerprint, tamperStateLabel,
+  agentOutdated, endReasonLabel, expiresAfter, flagLabel, formatDuration, gauge, integrityCheckLabel, permanentUseMethodLabel, persistenceLines, relativeTime, shortFingerprint, tamperStateLabel,
 } from "./format";
 
 describe("formatDuration", () => {
@@ -90,6 +90,10 @@ describe("integrity labels", () => {
     ["privileges_blocked", "Privileges blocked tampering"],
     ["grant_confirmation", "Grant confirmation"],
     ["grant_claim", "Grant claim not confirmed"],
+    ["privileges_expiry_cap", "Privileges expiry cap"],
+    ["privileges_renewal", "Privileges renewals off"],
+    ["privileges_give_back_hook", "Privileges reports give-backs"],
+    ["privileges_revoke_exclusions", "Privileges spares permanent admins"],
     ["something_new", "Something new"],
   ])("%s is %s", (check, want) => expect(integrityCheckLabel(check)).toBe(want));
 
@@ -162,4 +166,17 @@ describe("permanentUseMethodLabel", () => {
     ["su", "Switched user with su"],
     ["endpoint_security_exec", "endpoint_security_exec"],
   ])("%s is %s", (method, want) => expect(permanentUseMethodLabel(method)).toBe(want));
+});
+
+describe("expiresAfter", () => {
+  it.each([
+    [{ expiration_interval_minutes: 20, expiry_capped: true }, "20 min"],
+    [{ expiration_interval_max_minutes: 60, expiry_capped: true }, "Up to 60 min"],
+    [{ expiration_interval_minutes: 0, expiration_interval_max_minutes: 60, expiry_capped: false }, "Never, not set by MDM"],
+    [{ expiration_interval_max_minutes: 60, expiry_capped: false }, "Up to 60 min, not set by MDM"],
+    [{ expiry_capped: false }, "No cap"],
+    // An older agent doesn't say whether MDM set it.
+    [{ expiration_interval_max_minutes: 60 }, "Up to 60 min"],
+    [{}, "—"],
+  ])("%j is %s", (p, want) => expect(expiresAfter(p)).toBe(want));
 });

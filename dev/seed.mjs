@@ -32,13 +32,17 @@ const grant = (mac, user, at, minutes, reason, session) =>
   event(mac, "elevation.granted", ago(at), { user, session, elevation: privileges(reason, ago(at - minutes)),
     detail: { trigger: "hook", claimed_state: "admin", observed_admin: true, verified: true, renewed: false } });
 const passing = { code_signature: true, launch_daemon: true, privileges_hook: true,
-  privileges_tamper_protection: true, settings_managed: true };
+  privileges_tamper_protection: true, settings_managed: true, privileges_expiry_cap: true,
+  privileges_give_back_hook: true, privileges_revoke_exclusions: true };
 const health = (mac, at, admins, integrity = passing) =>
   event(mac, "agent.health", ago(at), { detail: {
     integrity,
     admin_members: admins, permanent_admins: ["itadmin"], open_sessions: [], queue_depth: 0,
     privileges: { installed: true, post_change_hook_configured: true, pass_reason_to_executable: true,
-      expiration_interval_minutes: 20, expiration_interval_max_minutes: null, enforce_privileges: null, system_extension_enabled: true },
+      expiration_interval_minutes: 20, expiration_interval_max_minutes: null, enforce_privileges: null, system_extension_enabled: true,
+      expiry_capped: true, allow_privilege_renewal: false, auto_renewal_configured: false, post_change_action_on_grant_only: false,
+      revoke_at_login: true, revoke_at_login_excluded_users: ["itadmin"], revoke_after_time_change: true,
+      revoke_after_time_change_excluded_users: ["itadmin"] },
   } });
 const send = (mac, events) => request("POST", "/v1/agent/events", { mac, body: { events } });
 

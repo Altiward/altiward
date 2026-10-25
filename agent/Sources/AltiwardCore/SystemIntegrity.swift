@@ -17,6 +17,18 @@ public enum IntegrityCheck: String, Sendable, CaseIterable, Comparable {
     /// missing, or the system extension stopped recording grants. Checked by the heartbeat,
     /// which knows the enforcement settings and what grants have confirmed.
     case grantConfirmation = "grant_confirmation"
+    /// MDM doesn't cap how long a Privileges grant lasts, so a user can choose "Never" and
+    /// expiry enforcement has nothing to enforce.
+    case privilegesExpiryCap = "privileges_expiry_cap"
+    /// Privileges lets rights be renewed while `ExpiryEnforcement` is `enforce`. A renewal
+    /// doesn't reach Altiward, so enforcement removes renewed rights at the old expiry.
+    case privilegesRenewal = "privileges_renewal"
+    /// MDM doesn't force `PostChangeActionOnGrantOnly` off, so Privileges can skip the hook
+    /// when rights are given back.
+    case privilegesGiveBackHook = "privileges_give_back_hook"
+    /// Privileges revokes rights at sign-in or after a clock change, and its exclusion list
+    /// leaves out an account in `PermanentAdmins`, which then loses its rights.
+    case privilegesRevokeExclusions = "privileges_revoke_exclusions"
     /// Not a standing check: a downgrade is reported once, as `detected`.
     case agentVersion = "agent_version"
     /// Not a standing check: each attempt Privileges' system extension blocked is reported
@@ -59,6 +71,9 @@ public struct SystemIntegrity: Sendable {
     /// running (``PrivilegesExtensionProcess/problem()``). The setting alone isn't protection:
     /// an extension never approved, or killed, leaves it on.
     public var privilegesExtensionProblem: @Sendable () -> String?
+    /// From the agent's settings, for the checks that depend on them.
+    public var expiryEnforcement: ExpiryEnforcement = .alert
+    public var permanentAdmins: Set<String> = []
 
     public init(
         bundleURL: URL?, hasValue: @escaping @Sendable (String) -> Bool, isForced: @escaping @Sendable (String) -> Bool,
@@ -73,16 +88,19 @@ public struct SystemIntegrity: Sendable {
         self.privilegesExtensionProblem = privilegesExtensionProblem
     }
 
-    public static func live() -> SystemIntegrity {
+    public static func live(config: AgentConfiguration) -> SystemIntegrity {
         let domain = AgentConfiguration.domain
         let main = Bundle.main
-        return SystemIntegrity(
+        var system = SystemIntegrity(
             bundleURL: main.bundleIdentifier == "com.altiward.agent" ? main.bundleURL : nil,
             hasValue: { CFPreferencesCopyAppValue($0 as CFString, domain as CFString) != nil },
             isForced: { CFPreferencesAppValueIsForced($0 as CFString, domain as CFString) },
             privileges: { PrivilegesSettings.current() },
             privilegesInstalled: { DeviceIdentity.current().privilegesVersion != nil },
             privilegesExtensionProblem: { PrivilegesExtensionProcess.problem() })
+        system.expiryEnforcement = config.expiryEnforcement
+        system.permanentAdmins = config.permanentAdmins
+        return system
     }
 
     public func run() -> [IntegrityCheck: IntegrityResult] {
@@ -113,7 +131,65 @@ public struct SystemIntegrity: Sendable {
                     : .failed(
                         "PostChangeExecutablePath is \(settings.postChangeExecutablePath ?? "not set"), not Altiward's hook")
             }
+            let recommended = Self.settingsChecks(
+                settings, expiryEnforcement: expiryEnforcement, permanentAdmins: permanentAdmins)
+            results.merge(recommended) { $1 }
         }
+        return results
+    }
+
+    /// The Privileges settings Altiward relies on and recommends in `corp.sap.privileges.plist`
+    /// (#92). Privileges lets the user change any setting its profile doesn't force, so the
+    /// expiry cap, renewals and the give-back hook count only when MDM sets them.
+    /// `privileges_renewal` applies only while `ExpiryEnforcement` is `enforce`.
+    static func settingsChecks(
+        _ settings: PrivilegesSettings, expiryEnforcement: ExpiryEnforcement, permanentAdmins: Set<String>
+    ) -> [IntegrityCheck: IntegrityResult] {
+        var results: [IntegrityCheck: IntegrityResult] = [:]
+        results[.privilegesExpiryCap] =
+            settings.expiryCapped
+            ? .ok
+            : .failed(
+                "MDM doesn't cap how long a Privileges grant lasts (ExpirationIntervalMax or ExpirationInterval), "
+                    + "so a user can choose to keep admin rights with no expiry")
+        if expiryEnforcement == .enforce {
+            results[.privilegesRenewal] =
+                settings.autoRenewalConfigured
+                ? .failed(
+                    "AutoRenewalProcessPaths renews admin rights, and Altiward doesn't see a renewal, "
+                        + "so ExpiryEnforcement removes renewed rights at the original expiry")
+                : settings.allowPrivilegeRenewal == false
+                    ? .ok
+                    : .failed(
+                        "MDM doesn't set AllowPrivilegeRenewal to false, and Altiward doesn't see a renewal, "
+                            + "so ExpiryEnforcement removes renewed rights at the original expiry")
+        }
+        results[.privilegesGiveBackHook] =
+            switch settings.postChangeActionOnGrantOnly {
+            case false: .ok
+            case true:
+                .failed("PostChangeActionOnGrantOnly is true, so Privileges doesn't run Altiward's hook on a give-back")
+            case nil:
+                .failed(
+                    "MDM doesn't set PostChangeActionOnGrantOnly to false, so a user can stop Privileges "
+                        + "running Altiward's hook on a give-back")
+            }
+        let missing = [
+            ("RevokeAtLoginExcludedUsers", "at sign-in", settings.revokeAtLogin, settings.revokeAtLoginExcludedUsers),
+            (
+                "RevokeAfterTimeChangeExcludedUsers", "after a clock change", settings.revokeAfterTimeChange,
+                settings.revokeAfterTimeChangeExcludedUsers
+            ),
+        ]
+        .compactMap { key, when, on, excluded -> String? in
+            guard on == true else { return nil }
+            let left = permanentAdmins.subtracting(excluded ?? []).sorted()
+            guard !left.isEmpty else { return nil }
+            return "\(key) leaves out \(left.joined(separator: ", ")), so Privileges removes their admin rights \(when)"
+        }
+        results[.privilegesRevokeExclusions] =
+            missing.isEmpty
+            ? .ok : .failed("PermanentAdmins accounts aren't excluded: " + missing.joined(separator: "; "))
         return results
     }
 

@@ -536,6 +536,28 @@ func TestStoppedPrivilegesTimerIsAHighFinding(t *testing.T) {
 	}
 }
 
+// The Privileges settings Altiward recommends are standing findings, closed when fixed.
+func TestPrivilegesSettingsChecksAreStandingFindings(t *testing.T) {
+	for check, want := range map[string]struct{ title, severity string }{
+		"privileges_expiry_cap":        {"SAP Privileges grants have no expiry cap", "Medium"},
+		"privileges_renewal":           {"SAP Privileges allows renewals that Altiward doesn't see", "Medium"},
+		"privileges_give_back_hook":    {"SAP Privileges may not report give-backs to Altiward", "Medium"},
+		"privileges_revoke_exclusions": {"SAP Privileges removes admin rights from a permanent admin account", "Low"},
+	} {
+		e := stored(t, "agent-tamper")
+		e.Detail = map[string]any{"check": check, "state": "failed", "problem": "a problem"}
+		r := mapJSON(t, e)
+		if r["severity"] != want.severity || r["activity_name"] != "Create" || get(r, "finding_info.title") != want.title ||
+			get(r, "finding_info.analytic.name") != "altiward.tamper."+check {
+			t.Fatalf("%s: severity %v finding %v", check, r["severity"], r["finding_info"])
+		}
+		e.Detail["state"], e.Detail["problem"] = "restored", nil
+		if r := mapJSON(t, e); r["activity_name"] != "Close" || r["status"] != "Resolved" {
+			t.Fatalf("%s: activity %v status %v", check, r["activity_name"], r["status"])
+		}
+	}
+}
+
 // The console shows the severity a SIEM gets for each failing check.
 func TestTamperSeveritiesMatchTheFindings(t *testing.T) {
 	severities := ocsf.TamperSeverities()
