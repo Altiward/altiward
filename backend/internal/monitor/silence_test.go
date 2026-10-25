@@ -231,7 +231,7 @@ func TestSweepSkipsRetiredMacs(t *testing.T) {
 	res, err := st.Enroll(ctx, store.DeviceCredential{
 		DeviceID: "5f0c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f", TenantID: tenant, Serial: d.Serial,
 		HardwareUUID: d.HardwareUUID, PublicKey: []byte("key"), CreatedAt: seen,
-	})
+	}, store.EnrollLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}

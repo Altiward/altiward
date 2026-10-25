@@ -16,6 +16,11 @@ import (
 var (
 	ErrConflict     = errors.New("conflict")
 	ErrInvalidState = errors.New("invalid state for this operation")
+	// ErrRateLimited is an enrolment refused for a limit in EnrollLimits. The two errors
+	// below say which, and both match it with errors.Is.
+	ErrRateLimited       = errors.New("enrolment rate limited")
+	ErrNewMacsLimited    = fmt.Errorf("%w: too many new Macs in the last hour", ErrRateLimited)
+	ErrKeysPerMacLimited = fmt.Errorf("%w: too many keys for this Mac in the last 24 hours", ErrRateLimited)
 )
 
 type CredentialStatus string
@@ -79,6 +84,54 @@ type EnrollResult struct {
 	Previous *DeviceCredential
 }
 
+// EnrollLimits bound how fast one tenant's enrolment token can add Macs and keys, which
+// otherwise it can do without end. 0 turns a limit off.
+type EnrollLimits struct {
+	// NewMacsPerHour is how many serials new to the tenant may enrol in an hour. A serial is
+	// new when the tenant has no credential of any status for it, and counts for the hour
+	// after its first key.
+	NewMacsPerHour int
+	// KeysPerMacPerDay is how many keys one serial may enrol in 24 hours, in any status.
+	KeysPerMacPerDay int
+}
+
+// The limits a server applies unless its administrator changes them: well above what a
+// real fleet enrols in an hour, and a handful of reinstalls for one Mac in a day.
+const (
+	DefaultNewMacsPerHour   = 1000
+	DefaultKeysPerMacPerDay = 5
+)
+
+// DefaultEnrollLimits are the limits a server applies unless told otherwise.
+func DefaultEnrollLimits() EnrollLimits {
+	return EnrollLimits{NewMacsPerHour: DefaultNewMacsPerHour, KeysPerMacPerDay: DefaultKeysPerMacPerDay}
+}
+
+// The windows the limits count over, ending at the new key's CreatedAt.
+const (
+	newMacsWindow    = time.Hour
+	keysPerMacWindow = 24 * time.Hour
+)
+
+// refusesNewMac reports whether n new Macs in the last hour leave no room for another.
+func (l EnrollLimits) refusesNewMac(n int) bool { return l.NewMacsPerHour > 0 && n >= l.NewMacsPerHour }
+
+// refusesKey reports whether n keys for one Mac in the last 24 hours leave no room for another.
+func (l EnrollLimits) refusesKey(n int) bool {
+	return l.KeysPerMacPerDay > 0 && n >= l.KeysPerMacPerDay
+}
+
+// holdsForApproval reports whether a new key waits for an admin instead of becoming active.
+// It does when the tenant requires approval for a Mac that enrolled before, and whatever
+// the tenant chose when the Mac has an active key and the new one claims other hardware:
+// then it may be a different Mac under the same serial. active is nil when nothing is.
+func holdsForApproval(requireApproval, enrolledBefore bool, active *DeviceCredential, hardwareUUID string) bool {
+	if requireApproval && enrolledBefore {
+		return true
+	}
+	return active != nil && active.HardwareUUID != hardwareUUID
+}
+
 type CredentialFilter struct {
 	Status CredentialStatus // empty = any
 	Serial string
@@ -125,12 +178,17 @@ func (s TenantSettings) SilentAfter() time.Duration {
 type Credentials interface {
 	// Enroll records c (DeviceID, TenantID, Serial, HardwareUUID, PublicKey, KeyStorage,
 	// CreatedAt). The same key again returns its existing credential, KeyStorage
-	// unchanged, and no Previous; a key held by another tenant
-	// is ErrConflict. A serial's first credential is active. A later one replaces the
-	// active credential (revoking it) only when the tenant explicitly disables approval.
-	// Otherwise it is pending, even when the earlier credential was revoked. There is no limit on
-	// the number of active Macs.
-	Enroll(ctx context.Context, c DeviceCredential) (EnrollResult, error)
+	// unchanged, and no Previous, whatever limits say; a key held by another tenant
+	// is ErrConflict. A new key is then counted against limits, over the time before
+	// c.CreatedAt, and refused with ErrNewMacsLimited or ErrKeysPerMacLimited (both
+	// ErrRateLimited) when it would pass one; nothing is stored then.
+	// A serial's first credential is active. A later one replaces the active credential
+	// (revoking it) only when the tenant explicitly disables approval and the key comes
+	// from the same hardware as the active one. Otherwise it is pending: when approval is
+	// on, even if the earlier credential was revoked, and when the hardware UUID differs
+	// from the active credential's, even if approval is off. There is no limit on the number
+	// of active Macs.
+	Enroll(ctx context.Context, c DeviceCredential, limits EnrollLimits) (EnrollResult, error)
 	// Credential looks a credential up by device ID across tenants, for authentication.
 	Credential(ctx context.Context, deviceID string) (DeviceCredential, error)
 	// ApproveCredential activates a pending credential and revokes the serial's other active

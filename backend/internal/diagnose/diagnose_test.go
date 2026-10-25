@@ -87,6 +87,16 @@ func TestReportNeverContainsSecrets(t *testing.T) {
 	}
 }
 
+// The enrolment limits are numbers a support engineer needs to read, so they aren't hidden.
+func TestReportShowsEnrolmentLimits(t *testing.T) {
+	env := append(baseEnv(), "ALTIWARD_ENROLL_NEW_MACS_PER_HOUR=50", "ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY=0")
+	r := diagnose.Run(context.Background(), options(env, fakeDB{}, nil, nil))
+	s := r.Config.Settings
+	if !r.Config.Valid || s["ALTIWARD_ENROLL_NEW_MACS_PER_HOUR"] != "50" || s["ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY"] != "0" {
+		t.Fatalf("valid = %v, settings = %v", r.Config.Valid, s)
+	}
+}
+
 func TestHealthyReportHasNoProblems(t *testing.T) {
 	r := diagnose.Run(context.Background(), options(baseEnv(), fakeDB{stats: store.Stats{Devices: 12}}, nil, nil))
 	if !r.Config.Valid || !r.Database.Reachable || r.Database.Stats.Devices != 12 || len(r.Problems) != 0 {

@@ -435,8 +435,25 @@ In the console, under **Settings › General**:
   An admin can explicitly turn it off after the upgrade if automatic replacement is
   required. An omitted or null approval flag in a settings API update enables approval;
   only an explicit `false` disables it.
+
+  Whatever you choose, a new key whose hardware UUID differs from the Mac's active key waits
+  for approval. The hardware UUID is what the agent says about itself, so this catches a key
+  made on another Mac, not someone who sets it by hand.
 - **Alert when a Mac stops checking in.** Hours without a check-in before Altiward raises
   an alert. The default of 72 rides out a weekend with laptops closed.
+
+Two more settings go in `.env`; `0` turns one off:
+
+- **`ALTIWARD_ENROLL_NEW_MACS_PER_HOUR`** (default 1000). How many Macs the server hasn't
+  seen before may enrol in an hour. Raise it if you roll the agent out to more Macs than that
+  in an hour; the rest are refused and try again later.
+- **`ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY`** (default 5). How many keys one Mac may enrol in
+  24 hours, in any status. It stops the enrolment token piling keys onto one serial.
+
+A Mac over a limit is refused with HTTP 429 and its agent backs off and tries again; the
+server logs `enrolment rate limited` with the tenant, the serial and which limit. A
+Mac sending a key that is already enrolled is never refused. Run `docker compose up -d` to
+apply a change (on Azure, see [Changing settings](../deploy/azure/README.md#changing-settings)).
 
 To retire a Mac, revoke its enrollment in **Enrollments**. It then stops being able to
 report and never raises a "not checking in" alert.
@@ -833,8 +850,8 @@ persistence snapshot: (none yet)
   agent's own paths answer there. A connection or certificate error means the Mac can't
   reach the server.
 - A device ID but **queued events** that never go down: the Mac enrolled but can't deliver.
-  If **Approve Macs that enrol again** is on, look in **Enrollments** for a Mac waiting
-  for approval.
+  If **Approve Macs that enrol again** is on, or the Mac's key came from different hardware
+  than its earlier one, look in **Enrollments** for a Mac waiting for approval.
 - `device key: Secure Enclave` after the device ID: only the agent's daemon can use that
   key, so `altiward-agent flush`, `heartbeat` and `commands` run by hand say the daemon
   sends instead. It does, within a minute.

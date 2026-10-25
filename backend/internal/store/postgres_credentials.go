@@ -32,7 +32,48 @@ func lockSerial(ctx context.Context, tx pgx.Tx, tenantID, serial string) error {
 	return err
 }
 
-func (p *Postgres) Enroll(ctx context.Context, c DeviceCredential) (EnrollResult, error) {
+// lockTenantNewMacs serialises the enrolments of a tenant's new serials, whose count is
+// taken across serials, which the serial lock doesn't cover: without it two new serials could
+// each see room for one more. It is always taken after the serial lock, and nothing takes
+// the two the other way round, so they can't deadlock.
+func lockTenantNewMacs(ctx context.Context, tx pgx.Tx, tenantID string) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 7243100003))`, tenantID)
+	return err
+}
+
+// enforceEnrollLimits counts, in tx and under the serial's lock, what c would add to: the
+// tenant's serials whose first credential is under an hour old, if c is the first for its
+// serial, and the serial's credentials under 24 hours old.
+func enforceEnrollLimits(ctx context.Context, tx pgx.Tx, c DeviceCredential, enrolledBefore bool, limits EnrollLimits) error {
+	if !enrolledBefore && limits.NewMacsPerHour > 0 {
+		if err := lockTenantNewMacs(ctx, tx, c.TenantID); err != nil {
+			return err
+		}
+		var newMacs int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM (
+				SELECT serial FROM device_credentials WHERE tenant_id = $1 GROUP BY serial HAVING min(created_at) > $2
+			) AS new_macs`, c.TenantID, c.CreatedAt.Add(-newMacsWindow)).Scan(&newMacs); err != nil {
+			return err
+		}
+		if limits.refusesNewMac(newMacs) {
+			return ErrNewMacsLimited
+		}
+	}
+	if enrolledBefore && limits.KeysPerMacPerDay > 0 {
+		var keys int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM device_credentials WHERE tenant_id = $1 AND serial = $2 AND created_at > $3`,
+			c.TenantID, c.Serial, c.CreatedAt.Add(-keysPerMacWindow)).Scan(&keys); err != nil {
+			return err
+		}
+		if limits.refusesKey(keys) {
+			return ErrKeysPerMacLimited
+		}
+	}
+	return nil
+}
+
+func (p *Postgres) Enroll(ctx context.Context, c DeviceCredential, limits EnrollLimits) (EnrollResult, error) {
 	var res EnrollResult
 	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
 		res = EnrollResult{}
@@ -51,6 +92,15 @@ func (p *Postgres) Enroll(ctx context.Context, c DeviceCredential) (EnrollResult
 			return err
 		}
 
+		var enrolledBefore bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM device_credentials WHERE tenant_id = $1 AND serial = $2)`,
+			c.TenantID, c.Serial).Scan(&enrolledBefore); err != nil {
+			return err
+		}
+		if err := enforceEnrollLimits(ctx, tx, c, enrolledBefore, limits); err != nil {
+			return err
+		}
+
 		active, err := scanCredential(tx.QueryRow(ctx,
 			`SELECT `+credentialColumns+` FROM device_credentials WHERE tenant_id = $1 AND serial = $2 AND status = 'active'`,
 			c.TenantID, c.Serial))
@@ -65,12 +115,7 @@ func (p *Postgres) Enroll(ctx context.Context, c DeviceCredential) (EnrollResult
 		if err != nil {
 			return err
 		}
-		var enrolledBefore bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM device_credentials WHERE tenant_id = $1 AND serial = $2)`,
-			c.TenantID, c.Serial).Scan(&enrolledBefore); err != nil {
-			return err
-		}
-		if settings.ReenrollmentRequiresApproval && enrolledBefore {
+		if holdsForApproval(settings.ReenrollmentRequiresApproval, enrolledBefore, res.Previous, c.HardwareUUID) {
 			c.Status = CredentialPending
 		} else {
 			c.Status, c.ActivatedAt = CredentialActive, ptr(c.CreatedAt)

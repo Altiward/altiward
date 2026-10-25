@@ -285,7 +285,7 @@ func run(log *slog.Logger) error {
 	stopping := make(chan struct{})
 	opts := []api.Option{
 		api.WithVersion(version), api.WithSinks(cfg.SinkNames()), api.WithShutdown(stopping),
-		api.WithUpdateCheck(cfg.UpdateCheck),
+		api.WithUpdateCheck(cfg.UpdateCheck), api.WithEnrollLimits(cfg.EnrollLimits),
 	}
 	// Azure Container Apps names the app, which the console's upgrade notice needs.
 	if name := os.Getenv("CONTAINER_APP_NAME"); name != "" {

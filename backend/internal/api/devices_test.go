@@ -634,8 +634,8 @@ type cancelAfterEnroll struct {
 	cancel context.CancelFunc
 }
 
-func (c cancelAfterEnroll) Enroll(ctx context.Context, cred store.DeviceCredential) (store.EnrollResult, error) {
-	res, err := c.Store.Enroll(ctx, cred)
+func (c cancelAfterEnroll) Enroll(ctx context.Context, cred store.DeviceCredential, limits store.EnrollLimits) (store.EnrollResult, error) {
+	res, err := c.Store.Enroll(ctx, cred, limits)
 	c.cancel()
 	return res, err
 }
@@ -671,5 +671,129 @@ func TestEnrollEventIsRecordedWhenTheRequestIsCancelled(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), "enrollment event not recorded") {
 		t.Fatalf("log = %s", logs.String())
+	}
+}
+
+// newLimitedServer is a server with options, its store with one SIEM sink, and its log.
+func newLimitedServer(t *testing.T, opts ...api.Option) (http.Handler, *store.Memory, *strings.Builder) {
+	t.Helper()
+	st := store.NewMemory([]string{"splunk"})
+	tokens, err := auth.Parse("acme="+agentToken, "acme="+consoleToken+",other="+otherConsole)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs := &strings.Builder{}
+	now := serverNow(t)
+	return api.New(st, tokens, slog.New(slog.NewTextHandler(logs, nil)), func() time.Time { return now }, opts...), st, logs
+}
+
+// wantRateLimited fails the test unless rec refuses an enrolment as the agent expects to
+// read it: 429 with the code it backs off on and the seconds to wait.
+func wantRateLimited(t *testing.T, rec *httptest.ResponseRecorder, out map[string]any) {
+	t.Helper()
+	wantCode(t, rec, out, http.StatusTooManyRequests, "enrollment_rate_limited")
+	if got := rec.Header().Get("Retry-After"); got != "3600" {
+		t.Errorf("Retry-After = %q, want 3600", got)
+	}
+	if msg, _ := out["error"].(string); msg == "" {
+		t.Errorf("body = %s, want an error message", rec.Body)
+	}
+}
+
+func TestEnrollRateLimitedAnswers429(t *testing.T) {
+	t.Run("new Macs per hour", func(t *testing.T) {
+		h, st, logs := newLimitedServer(t, api.WithEnrollLimits(store.EnrollLimits{NewMacsPerHour: 1}))
+		first := enrollAgent(t, h, fixtureSerial)
+		refused := &agent{h: h, key: newKey(t)}
+		rec, out := refused.enroll(t, "C02SECOND")
+		wantRateLimited(t, rec, out)
+
+		if logged := logs.String(); !strings.Contains(logged, "level=WARN") || !strings.Contains(logged, `msg="enrolment rate limited"`) ||
+			!strings.Contains(logged, "tenant=acme") || !strings.Contains(logged, "serial=C02SECOND") ||
+			!strings.Contains(logged, "limit=new_macs_per_hour") || strings.Count(logged, "rate limited") != 1 {
+			t.Errorf("log = %s", logged)
+		}
+		// Nothing was stored or reported for the refused Mac, and the enrolled one carries on.
+		if got := queuedEnrollments(t, st); len(got) != 1 || got[0].Detail["device_id"] != first.deviceID {
+			t.Errorf("events = %+v, want only the first Mac's enrolment", got)
+		}
+		if rec, out := do(t, h, "GET", "/v1/enrollments?serial=C02SECOND", consoleToken, nil); rec.Code != http.StatusOK || len(out["enrollments"].([]any)) != 0 {
+			t.Errorf("enrollments for the refused Mac: %d %s", rec.Code, rec.Body)
+		}
+		if rec, _ := first.enroll(t, fixtureSerial); rec.Code != http.StatusOK {
+			t.Errorf("the first Mac's retry: %d %s", rec.Code, rec.Body)
+		}
+	})
+
+	t.Run("keys per Mac per day", func(t *testing.T) {
+		h, st, logs := newLimitedServer(t, api.WithEnrollLimits(store.EnrollLimits{KeysPerMacPerDay: 2}))
+		enrollAgent(t, h, fixtureSerial)
+		second := enrollAgent(t, h, fixtureSerial)
+		rec, out := (&agent{h: h, key: newKey(t)}).enroll(t, fixtureSerial)
+		wantRateLimited(t, rec, out)
+
+		if logged := logs.String(); !strings.Contains(logged, "level=WARN") || !strings.Contains(logged, "serial="+fixtureSerial) ||
+			!strings.Contains(logged, "limit=keys_per_mac_per_day") {
+			t.Errorf("log = %s", logged)
+		}
+		if got := queuedEnrollments(t, st); len(got) != 2 {
+			t.Errorf("%d agent.enrollment events, want the two that enrolled", len(got))
+		}
+		// Another Mac of the same tenant, and a retry of a key that is already in, are fine.
+		enrollAgent(t, h, "C02OTHER")
+		if rec, _ := second.enroll(t, fixtureSerial); rec.Code != http.StatusOK {
+			t.Errorf("a retry at the limit: %d %s", rec.Code, rec.Body)
+		}
+	})
+}
+
+// A server started without the option still limits, at the defaults: 1000 new Macs an hour
+// and 5 keys for one Mac a day.
+func TestEnrollLimitsApplyByDefault(t *testing.T) {
+	h := newServer(t)
+	var last *agent
+	for i := 0; i < 5; i++ {
+		last = enrollAgent(t, h, fixtureSerial)
+	}
+	rec, out := (&agent{h: h, key: newKey(t)}).enroll(t, fixtureSerial)
+	wantRateLimited(t, rec, out)
+	if rec, _ := last.enroll(t, fixtureSerial); rec.Code != http.StatusOK {
+		t.Fatalf("a retry at the limit: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestEnrollLimitsCanBeTurnedOff(t *testing.T) {
+	h, _, _ := newLimitedServer(t, api.WithEnrollLimits(store.EnrollLimits{}))
+	for i := 0; i < 8; i++ {
+		enrollAgent(t, h, fixtureSerial)
+	}
+}
+
+// A key from different hardware waits for approval even when the tenant has turned
+// approval off, and the event says the hardware differed.
+func TestNewHardwareUUIDWaitsEvenWithApprovalOff(t *testing.T) {
+	h, st, _ := newLimitedServer(t)
+	if rec, _ := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"reenrollment_requires_approval": false}); rec.Code != http.StatusOK {
+		t.Fatalf("opt-out: %d %s", rec.Code, rec.Body)
+	}
+	first := enrollAs(t, &agent{h: h, key: newKey(t), hardwareUUID: "HW-ORIGINAL"}, fixtureSerial)
+	other := enrollAs(t, &agent{h: h, key: newKey(t), hardwareUUID: "HW-SOMEONE-ELSE"}, fixtureSerial)
+	if other.status != "pending" {
+		t.Fatalf("status = %s, want pending", other.status)
+	}
+	rec, out := other.post(t, batch(t, "elevation-granted"))
+	wantCode(t, rec, out, http.StatusForbidden, "enrollment_pending")
+	rec, out = first.post(t, batch(t, "elevation-granted"))
+	wantCode(t, rec, out, http.StatusOK, "")
+
+	got := queuedEnrollments(t, st)
+	if len(got) != 2 || got[1].Detail["state"] != "pending" || got[1].Detail["hardware_uuid_matches"] != false {
+		t.Fatalf("events = %+v, want a pending enrolment that does not match the hardware", got)
+	}
+
+	// The same hardware replaces the key, as the tenant chose.
+	same := enrollAs(t, &agent{h: h, key: newKey(t), hardwareUUID: "HW-ORIGINAL"}, fixtureSerial)
+	if same.status != "active" {
+		t.Fatalf("same hardware status = %s, want active", same.status)
 	}
 }

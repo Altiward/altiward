@@ -168,6 +168,10 @@ The portal does the same under the app's **Containers** and **Secrets**. Setting
 name a file, such as `ALTIWARD_TRUSTED_CAS_FILE`, need the file mounted from an app secret
 as a volume. For Sentinel, the managed identity above needs no file.
 
+**The enrolment limits** are `ALTIWARD_ENROLL_NEW_MACS_PER_HOUR` (default 1000) and
+`ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY` (default 5) on the `altiward` container. `0` turns
+one off. Raise the first before you roll the agent out to more Macs than that in an hour.
+
 **The networks allowed to open the console** are `ALTIWARD_CONSOLE_ALLOW` on the `caddy`
 container, space separated:
 

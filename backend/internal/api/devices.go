@@ -18,12 +18,18 @@ import (
 )
 
 // Codes on agent-facing errors. The agent re-enrolls on credentialInvalid, waits on
-// enrollmentPending and corrects its clock from the Date header on clockSkew.
+// enrollmentPending and corrects its clock from the Date header on clockSkew. It treats
+// enrollmentRateLimited, like any other refusal to enrol, as a reason to try again later.
 const (
-	codeCredentialInvalid = "credential_invalid"
-	codeEnrollmentPending = "enrollment_pending"
-	codeClockSkew         = "clock_skew"
+	codeCredentialInvalid     = "credential_invalid"
+	codeEnrollmentPending     = "enrollment_pending"
+	codeClockSkew             = "clock_skew"
+	codeEnrollmentRateLimited = "enrollment_rate_limited"
 )
+
+// enrollRetryAfter is the seconds a refused enrolment is told to wait. The shortest limit
+// counts over an hour.
+const enrollRetryAfter = "3600"
 
 // requireDevice authenticates a request signed by an enrolled Mac and hands the
 // handler a principal carrying its tenant, device ID and serial.
@@ -112,9 +118,19 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal
 	res, err := s.store.Enroll(r.Context(), store.DeviceCredential{
 		DeviceID: id, TenantID: p.TenantID, Serial: req.Serial, HardwareUUID: req.HardwareUUID,
 		PublicKey: spki, KeyStorage: store.ParseKeyStorage(req.KeyStorage), CreatedAt: now,
-	})
+	}, s.enrollLimits)
 	if errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "this key is enrolled elsewhere; generate a new one")
+		return
+	}
+	if errors.Is(err, store.ErrRateLimited) {
+		limit, msg := "keys_per_mac_per_day", "too many keys have been enrolled for this Mac in the last 24 hours; try again later"
+		if errors.Is(err, store.ErrNewMacsLimited) {
+			limit, msg = "new_macs_per_hour", "too many new Macs have been enrolled in the last hour; try again later"
+		}
+		s.log.Warn("enrolment rate limited", "tenant", p.TenantID, "serial", req.Serial, "limit", limit)
+		w.Header().Set("Retry-After", enrollRetryAfter)
+		writeCodedError(w, http.StatusTooManyRequests, codeEnrollmentRateLimited, msg)
 		return
 	}
 	if err != nil {

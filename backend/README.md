@@ -49,7 +49,7 @@ token in `X-CSRF-Token`; requests with a token don't.
 
 | Method and path | Purpose |
 | --- | --- |
-| `POST /v1/agent/enroll` | Enrollment token. `{"serial", "hardware_uuid", "public_key"}` (base64 P-256 SubjectPublicKeyInfo). Responds `{"device_id", "status"}`: 201 for a new credential, 200 for the same key again. |
+| `POST /v1/agent/enroll` | Enrollment token. `{"serial", "hardware_uuid", "public_key"}` (base64 P-256 SubjectPublicKeyInfo). Responds `{"device_id", "status"}`: 201 for a new credential, 200 for the same key again. A new key is `pending` when the Mac enrolled before and approval is on, or when its `hardware_uuid` differs from the Mac's active key's, whatever the setting. Over a limit (`ALTIWARD_ENROLL_NEW_MACS_PER_HOUR` or `ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY`) it answers 429 with `Retry-After: 3600` and `code`: `enrollment_rate_limited`; the same key again is never limited. |
 | `POST /v1/agent/events` | Device signature. `{"events": [...]}`, up to 500. Responds `{"accepted": [], "duplicate": [], "rejected": [{"event_id", "error", "code"}]}`. Events whose serial is not the signing Mac's are rejected with `code`: `device_mismatch` (no other rejection has a `code`). Auth failures carry `code`: `credential_invalid`, `enrollment_pending` or `clock_skew`. |
 | `GET /v1/sessions` | Newest first. Query: `user`, `device`, `open=true`, `since`, `until` (RFC 3339, on start time), `limit` (≤ 500). Each session adds `open`, `allowed_seconds`, `actual_seconds` and `overran`. |
 | `GET /v1/sessions/{id}` | `{"session": ..., "events": [...]}`: the timeline, oldest first, with `received_at`. |
@@ -97,6 +97,8 @@ out-of-band session).
 | `ALTIWARD_CONSOLE_TOKENS` | None | Same format |
 | `ALTIWARD_EXPORT_INTERVAL` | `10s` | How often export workers poll |
 | `ALTIWARD_AUDIT_RETENTION_DAYS` | None | Remove audit entries older than this, daily; at least 365. Unset or `0` keeps them forever. Entries still waiting for export stay until sent, and the database refuses to delete any younger than 365 days. |
+| `ALTIWARD_ENROLL_NEW_MACS_PER_HOUR` | `1000` | How many serials new to a tenant may enrol in an hour. More are refused with 429 until the hour has passed. `0` turns the limit off. |
+| `ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY` | `5` | How many keys one serial may enrol in 24 hours, in any status. `0` turns the limit off. |
 | `ALTIWARD_UPDATE_CHECK` | `true` | `false` stops the console's browser asking `api.github.com` for newer releases, and drops it from the console's `connect-src`. The server never asks. |
 | `ALTIWARD_CONSOLE_DIR` | None | The built console (`console/dist`) to serve from the API's origin. Unset means API only. Start fails if it has no `index.html`. |
 | `ALTIWARD_OIDC_ISSUER` | None | The identity provider's issuer URL. Turns on console single sign-on; console tokens become break-glass logins. |
