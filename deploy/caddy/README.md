@@ -22,7 +22,9 @@ CADDY_IMAGE=altiward-caddy:build scripts/test-azure-proxy.sh altiward-api:ci
 The build supports amd64 and arm64 without running the target binaries under emulation.
 Pinned builder, Dockerfile frontend, compiler and certificate images, module checksums,
 a fixed source date, stripped build IDs and normalised layer timestamps make the final
-image reproducible. Each invocation creates a fresh builder and removes it afterwards.
+image reproducible. Both platforms take the CA bundle from the amd64 certificate image:
+the two platforms' bundles are identical but carry different timestamps, and BuildKit
+may reuse either copy for both, which would make the digest vary between builds. Each invocation creates a fresh builder and removes it afterwards.
 Attached
 build attestations are omitted from this image's index because their varying timestamps
 would change its digest. The server image retains its usual provenance and SBOM.
