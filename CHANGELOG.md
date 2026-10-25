@@ -64,6 +64,8 @@ None.
   to download a release and make the tokens, a nightly backup, and a new Enforcement
   section for `ExpiryEnforcement` and `OutOfBandEnforcement`, which step 2 now points to
   (#111).
+- The console's sidebar stays in view on long pages such as Overview, so who is signed
+  in, **Sign out** and the server version show on every page (#112).
 
 ## Agent 0.5.0 - 2026-10-25
 
