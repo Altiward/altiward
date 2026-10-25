@@ -191,6 +191,9 @@ public actor DeviceAuthenticator {
     private let log: @Sendable (String) -> Void
     /// Server time minus local time, learned from a `clock_skew` response.
     private var clockOffset: TimeInterval = 0
+    /// After the server's enrolment limits refused this Mac (429), when it may ask again.
+    /// In memory only: a restarted agent asks once more.
+    private var enrollNotBefore: Date?
 
     public init(
         store: AgentStore, serverURL: URL, enrollmentToken: String, device: @escaping @Sendable () -> DeviceInfo,
@@ -230,8 +233,10 @@ public actor DeviceAuthenticator {
     /// URL, optionally with a query), giving up after `timeout` seconds. Throws
     /// ``DeliveryError/credentialInvalid`` (the credential was discarded, unless another
     /// process had already replaced it; the next call enrolls again or uses the
-    /// replacement) or ``DeliveryError/enrollmentPending``; any other response is returned
-    /// for the caller to judge.
+    /// replacement), ``DeliveryError/enrollmentPending``, or
+    /// ``DeliveryError/enrollmentRateLimited(until:)`` without sending anything while the
+    /// server's enrolment limits make this Mac wait; any other response is returned for the
+    /// caller to judge.
     public func send(
         method: String, path: String, body: Data, timeout: TimeInterval = 30
     ) async throws -> (Data, HTTPURLResponse) {
@@ -282,6 +287,7 @@ public actor DeviceAuthenticator {
         var c = try boundToThisMac(info) ?? makeCredential(info)
         if role == .command, c.storage == .secureEnclave { throw DeviceKeyError.heldByDaemon }
         if c.credential.deviceID != nil { return c }
+        if let until = enrollNotBefore, now() < until { throw DeliveryError.enrollmentRateLimited(until: until) }
 
         let publicKey = try withKey(c) { try keys.publicKey($0, c.storage) }
         var request = URLRequest(url: serverURL.appendingPathComponent("v1/agent/enroll"), timeoutInterval: 30)
@@ -294,9 +300,17 @@ public actor DeviceAuthenticator {
             "public_key": publicKey.base64EncodedString(), "key_storage": c.storage.rawValue,
         ])
         let (data, response) = try await transport.send(request)
+        if response.statusCode == 429 {
+            let until = now().addingTimeInterval(retryDelay(response.value(forHTTPHeaderField: "Retry-After")))
+            enrollNotBefore = until
+            log("the server's enrolment limits refused this Mac (\(String(decoding: data, as: UTF8.self).prefix(200))); "
+                + "trying again after \(until.formatted(.iso8601))")
+            throw DeliveryError.enrollmentRateLimited(until: until)
+        }
         guard response.statusCode == 200 || response.statusCode == 201 else {
             throw DeliveryError.http(status: response.statusCode, body: String(decoding: data, as: UTF8.self))
         }
+        enrollNotBefore = nil
         struct Enrolled: Decodable {
             let device_id: String
             let status: String
@@ -313,6 +327,19 @@ public actor DeviceAuthenticator {
             if try record(c.storage)?.privateKey == c.credential.privateKey { try save(c) }
         }
         return c
+    }
+
+    /// How long a refused enrolment waits: `Retry-After` in seconds or as a date by the
+    /// server's clock, an hour when it's missing or unreadable, and at most a day.
+    private func retryDelay(_ retryAfter: String?) -> TimeInterval {
+        let value = retryAfter?.trimmingCharacters(in: .whitespaces) ?? ""
+        var delay: TimeInterval = 3600
+        if !value.isEmpty, value.allSatisfy({ ("0"..."9").contains($0) }), let seconds = TimeInterval(value) {
+            delay = seconds
+        } else if let date = Self.parseHTTPDate(value) {
+            delay = date.timeIntervalSince(now().addingTimeInterval(clockOffset))
+        }
+        return min(max(delay, 0), 86400)
     }
 
     /// Makes a key for the configured server and stores it, unless another process

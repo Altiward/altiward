@@ -52,6 +52,8 @@ public enum DeliveryError: Error, Equatable, CustomStringConvertible {
     case credentialInvalid
     /// This Mac's re-enrollment is waiting for approval in the console.
     case enrollmentPending
+    /// The server's enrolment limits refused this Mac; it doesn't ask again before `until`.
+    case enrollmentRateLimited(until: Date)
 
     public var description: String {
         switch self {
@@ -59,6 +61,8 @@ public enum DeliveryError: Error, Equatable, CustomStringConvertible {
         case .http(let status, let body): "HTTP \(status): \(body.prefix(200))"
         case .credentialInvalid: "device credential rejected; will enroll again"
         case .enrollmentPending: "re-enrollment awaiting approval in the console"
+        case .enrollmentRateLimited(let until):
+            "the server's enrolment limits refused this Mac; trying again after \(until.formatted(.iso8601))"
         }
     }
 }

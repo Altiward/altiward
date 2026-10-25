@@ -48,6 +48,10 @@ None.
 - An empty file the persistence check reads, such as an empty `~/.ssh/authorized_keys`,
   no longer counts as unreadable, so it doesn't mark the Mac **Partly checked** in Fleet
   (#115).
+- When the server's enrolment limits refuse the Mac (HTTP 429), the agent doesn't ask again
+  until the time `Retry-After` gives, or for an hour when it gives none, and never waits
+  more than a day. Earlier agents asked about once a minute. The wait is kept in memory,
+  so an agent that restarts asks once more.
 
 ## Server 0.8.0 - unreleased
 
@@ -83,8 +87,9 @@ None.
   when a key was active before, that key and whether the hardware UUID matched.
 - The enrolment token can no longer add Macs or keys without end. Each organisation may
   add 1000 Macs it hasn't enrolled before in an hour, and one Mac may enrol 5 keys in 24
-  hours; the server answers 429 with `Retry-After` and logs `enrolment rate limited`, and
-  the agent backs off. A Mac sending a key that is already enrolled is never refused. Set
+  hours; the server answers 429 with `Retry-After` and logs `enrolment rate limited`. Agent
+  0.8.0 waits that long before it asks again; earlier agents ask about once a minute. A Mac
+  sending a key that is already enrolled is never refused. Set
   `ALTIWARD_ENROLL_NEW_MACS_PER_HOUR` and `ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY` in `.env`
   (`0` turns one off), or on the Azure container app; raise the first before enrolling more
   than 1000 Macs in an hour.

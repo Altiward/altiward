@@ -474,10 +474,12 @@ Two more settings go in `.env`; `0` turns one off:
 - **`ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY`** (default 5). How many keys one Mac may enrol in
   24 hours, in any status. It stops the enrolment token piling keys onto one serial.
 
-A Mac over a limit is refused with HTTP 429 and its agent backs off and tries again; the
-server logs `enrolment rate limited` with the tenant, the serial and which limit. A
-Mac sending a key that is already enrolled is never refused. Run `docker compose up -d` to
-apply a change (on Azure, see [Changing settings](../deploy/azure/README.md#changing-settings)).
+A Mac over a limit is refused with HTTP 429 and `Retry-After: 3600`, and the server logs
+`enrolment rate limited` with the tenant, the serial and which limit. Agent 0.8.0 and later
+wait that hour before asking again (an agent that restarts asks once more straight away);
+earlier agents ask about once a minute. A Mac sending a key that is already enrolled is
+never refused. Run `docker compose up -d` to apply a change (on Azure, see
+[Changing settings](../deploy/azure/README.md#changing-settings)).
 
 To retire a Mac, revoke its enrollment in **Enrollments**. It then stops being able to
 report and never raises a "not checking in" alert.

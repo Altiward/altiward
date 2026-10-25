@@ -21,6 +21,7 @@ final class FakeServer: HTTPTransport, Sendable {
         var requests: [Request] = []
         var keys: [String: P256.Signing.PublicKey] = [:]  // device ID → key
         var enrollStatus = "active"
+        var enrollRefusal: (status: Int, headers: [String: String])?
         var dropNextEnrollResponse = false
         var revoked: Set<String> = []
         var pending: Set<String> = []
@@ -42,6 +43,11 @@ final class FakeServer: HTTPTransport, Sendable {
     var requests: [Request] { state.withLock { $0.requests } }
     var enrollments: [Request] { requests.filter { $0.path == "/v1/agent/enroll" } }
     func setEnrollStatus(_ s: String) { state.withLock { $0.enrollStatus = s } }
+    /// Answers every enrolment with `status` and `headers` until ``acceptEnrollments()``.
+    func refuseEnrollments(status: Int, headers: [String: String] = [:]) {
+        state.withLock { $0.enrollRefusal = (status, headers) }
+    }
+    func acceptEnrollments() { state.withLock { $0.enrollRefusal = nil } }
     func dropNextEnrollResponse() { state.withLock { $0.dropNextEnrollResponse = true } }
     func revoke(_ id: String) { state.withLock { _ = $0.revoked.insert(id) } }
     func approve(_ id: String) { state.withLock { _ = $0.pending.remove(id) } }
@@ -73,6 +79,9 @@ final class FakeServer: HTTPTransport, Sendable {
         let serverNow = clock.now.addingTimeInterval(serverOffset)
         if r.path == "/v1/agent/enroll" {
             guard r.headers["Authorization"] == "Bearer enroll-token-0001" else { return (401, [:], Data()) }
+            if let (status, headers) = s.enrollRefusal {
+                return (status, headers, Data(#"{"error":"try again later","code":"enrollment_rate_limited"}"#.utf8))
+            }
             let body = try JSONSerialization.jsonObject(with: r.body) as! [String: String]
             let key = try P256.Signing.PublicKey(derRepresentation: Data(base64Encoded: body["public_key"]!)!)
             let id =
@@ -376,6 +385,76 @@ struct DeviceAuthenticatorTests {
         await #expect(throws: DeliveryError.enrollmentPending) { try await postEvents(auth) }
         await #expect(throws: DeliveryError.enrollmentPending) { try await postEvents(auth) }
         #expect(server.enrollments.count == 1)
+    }
+
+    /// A Mac the server's enrolment limits refuse waits as long as the server says before
+    /// it asks again, rather than on every poll and heartbeat.
+    @Test func aRefusedEnrolmentWaitsForRetryAfter() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        server.refuseEnrollments(status: 429, headers: ["Retry-After": "3600"])
+        let auth = authenticator(store, server)
+        let until = clock.now.addingTimeInterval(3600)
+        await #expect(throws: DeliveryError.enrollmentRateLimited(until: until)) { try await postEvents(auth) }
+        #expect(server.enrollments.count == 1)
+
+        server.acceptEnrollments()
+        await #expect(throws: DeliveryError.enrollmentRateLimited(until: until)) { try await postEvents(auth) }
+        clock.advance(3599)
+        await #expect(throws: DeliveryError.enrollmentRateLimited(until: until)) { try await postEvents(auth) }
+        #expect(server.requests.count == 1)
+
+        clock.advance(2)
+        #expect(try await postEvents(auth) == 200)
+        #expect(server.enrollments.count == 2)
+        #expect(try enrolledKey(server.enrollments[0]) == enrolledKey(server.enrollments[1]))
+    }
+
+    @Test(arguments: [nil, "soon", "-60"] as [String?])
+    func aRefusedEnrolmentWithoutRetryAfterWaitsAnHour(_ retryAfter: String?) async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        server.refuseEnrollments(status: 429, headers: retryAfter.map { ["Retry-After": $0] } ?? [:])
+        let auth = authenticator(store, server)
+        let until = clock.now.addingTimeInterval(3600)
+        await #expect(throws: DeliveryError.enrollmentRateLimited(until: until)) { try await postEvents(auth) }
+
+        server.acceptEnrollments()
+        clock.advance(3599)
+        await #expect(throws: DeliveryError.enrollmentRateLimited(until: until)) { try await postEvents(auth) }
+        #expect(server.enrollments.count == 1)
+        clock.advance(2)
+        #expect(try await postEvents(auth) == 200)
+    }
+
+    /// Retry-After can be a date, by the server's clock, and the agent waits at most a day.
+    @Test func aRefusedEnrolmentReadsADateAndWaitsAtMostADay() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        server.refuseEnrollments(status: 429, headers: ["Retry-After": httpDate(clock.now.addingTimeInterval(7200))])
+        let auth = authenticator(store, server)
+        await #expect(throws: DeliveryError.enrollmentRateLimited(until: clock.now.addingTimeInterval(7200))) {
+            try await postEvents(auth)
+        }
+
+        clock.advance(7201)
+        server.refuseEnrollments(status: 429, headers: ["Retry-After": "604800"])
+        await #expect(throws: DeliveryError.enrollmentRateLimited(until: clock.now.addingTimeInterval(86400))) {
+            try await postEvents(auth)
+        }
+        #expect(server.enrollments.count == 2)
+    }
+
+    /// Only a 429 means "wait": another refusal is tried again on the next send, as before.
+    @Test func anotherEnrolmentRefusalDoesNotWait() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        server.refuseEnrollments(status: 503, headers: ["Retry-After": "3600"])
+        let auth = authenticator(store, server)
+        await #expect(throws: (any Error).self) { try await postEvents(auth) }
+        server.acceptEnrollments()
+        #expect(try await postEvents(auth) == 200)
+        #expect(server.enrollments.count == 2)
     }
 
     @Test func correctsClockFromServerDate() async throws {

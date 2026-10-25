@@ -144,7 +144,9 @@ other Macs, and on Macs that enrolled before agent 0.2.0, the key is in the agen
 under the root-only data directory. `altiward-agent status` shows the device ID and where
 the key is kept. Only the daemon can use a Secure Enclave key, so on such a Mac
 `altiward-agent heartbeat`, `flush`, `commands` and `simulate-hook` do their local part
-and leave the sending to the daemon.
+and leave the sending to the daemon. When the server's enrolment limits refuse the Mac
+(HTTP 429), the agent doesn't try to enrol again until `Retry-After` says, an hour if it
+doesn't say, and at most a day; it remembers that until it restarts.
 
 Remote commands are fetched by a long poll the server holds for up to 50 seconds, so a
 revoke lands within about a second; also after each heartbeat and when the network
