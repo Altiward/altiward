@@ -73,6 +73,23 @@ final class Daemon: Sendable {
                     Self.checkPersistence(tracker)
                     await delivery.flush()
                 }
+            },
+            onHeld: { [tracker, delivery] in
+                // At once rather than at the next check: a claim held only so Privileges'
+                // timer is read after the hook's answer is recorded now, and the log may
+                // already back a grant.
+                Task {
+                    do {
+                        let events = try tracker.resolvePendingClaims()
+                        Self.logTampers(events)
+                        if !events.isEmpty {
+                            Self.checkPersistence(tracker)
+                            await delivery.flush()
+                        }
+                    } catch {
+                        log.error("resolving a held claim failed: \(String(describing: error), privacy: .public)")
+                    }
+                }
             })
         listener.delegate = delegate
         listener.resume()
@@ -271,11 +288,16 @@ final class ListenerDelegate: NSObject, NSXPCListenerDelegate, Sendable {
     let tracker: ElevationTracker
     let requirement: String?
     let onRecorded: @Sendable () -> Void
+    let onHeld: @Sendable () -> Void
 
-    init(tracker: ElevationTracker, requirement: String?, onRecorded: @escaping @Sendable () -> Void) {
+    init(
+        tracker: ElevationTracker, requirement: String?, onRecorded: @escaping @Sendable () -> Void,
+        onHeld: @escaping @Sendable () -> Void
+    ) {
         self.tracker = tracker
         self.requirement = requirement
         self.onRecorded = onRecorded
+        self.onHeld = onHeld
     }
 
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection connection: NSXPCConnection) -> Bool {
@@ -285,7 +307,8 @@ final class ListenerDelegate: NSObject, NSXPCListenerDelegate, Sendable {
         }
         connection.exportedInterface = NSXPCInterface(with: AltiwardAgentXPC.self)
         connection.exportedObject = HookHandler(
-            tracker: tracker, callerUID: UInt32(connection.effectiveUserIdentifier), onRecorded: onRecorded)
+            tracker: tracker, callerUID: UInt32(connection.effectiveUserIdentifier), onRecorded: onRecorded,
+            onHeld: onHeld)
         connection.resume()
         return true
     }
@@ -295,11 +318,16 @@ final class HookHandler: NSObject, AltiwardAgentXPC, Sendable {
     let tracker: ElevationTracker
     let callerUID: UInt32
     let onRecorded: @Sendable () -> Void
+    let onHeld: @Sendable () -> Void
 
-    init(tracker: ElevationTracker, callerUID: UInt32, onRecorded: @escaping @Sendable () -> Void) {
+    init(
+        tracker: ElevationTracker, callerUID: UInt32, onRecorded: @escaping @Sendable () -> Void,
+        onHeld: @escaping @Sendable () -> Void
+    ) {
         self.tracker = tracker
         self.callerUID = callerUID
         self.onRecorded = onRecorded
+        self.onHeld = onHeld
     }
 
     func recordPrivilegeChange(_ payload: Data, withReply reply: @escaping @Sendable (Bool, String?) -> Void) {
@@ -315,12 +343,13 @@ final class HookHandler: NSObject, AltiwardAgentXPC, Sendable {
                 reply(true, nil)
                 onRecorded()
             case .pending:
-                // Nothing is queued yet: the check loop confirms or refuses the claim once
-                // Privileges' log has been read, and sends what it records.
+                // Nothing is queued yet: it is resolved after the answer, and by the check loop
+                // until Privileges' log confirms or refuses it.
                 log.info(
-                    "grant claim for \(invocation.user, privacy: .public) held for Privileges' log"
+                    "grant claim for \(invocation.user, privacy: .public) held"
                 )
                 reply(true, nil)
+                onHeld()
             }
         } catch {
             log.error("rejected hook payload: \(String(describing: error), privacy: .public)")

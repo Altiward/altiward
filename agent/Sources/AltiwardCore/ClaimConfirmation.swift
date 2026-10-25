@@ -32,8 +32,11 @@ extension ElevationTracker {
     ///    ``maxGiveBacksPerMinute``: past it, a give-back that ends an open session is still
     ///    recorded, so a real give-back always is, and any other is ignored and logged
     ///    (`tooManyGiveBacks`), not recorded or reported.
-    /// 2. Without the log, or for a permanent admin, the claim goes to
-    ///    ``record(_:callerUID:)``. A grant claim recorded because the log isn't available
+    /// 2. Without the log, or for a permanent admin, a grant claim whose expiry comes from
+    ///    Privileges' timer (no fixed `ExpirationInterval`) is held: reading the timer can
+    ///    take seconds, and the hook waits 5 s for its answer. ``resolvePendingClaims()``
+    ///    then records it as below, refusals included, without waiting for the log.
+    ///    Otherwise the claim goes to ``record(_:callerUID:)``. A grant claim recorded because the log isn't available
     ///    says so (`privileges_log: "unavailable"`), and on a Mac where the agent has read the
     ///    log before it is also reported (`grant_claim`, `accepted_unconfirmed`).
     /// 3. With the log, a caller who is neither root nor the claimed user is refused
@@ -58,6 +61,11 @@ extension ElevationTracker {
         let availability = env.privilegesLogAvailability()
         try notePrivilegesLog(availability)
         let permanent = env.config.permanentAdmins.contains(invocation.user)
+        if invocation.state == .admin, availability != .available || permanent,
+            env.privileges().expirationIntervalMinutes == nil
+        {
+            return try hold(invocation, callerUID: callerUID)
+        }
         guard availability == .available, !permanent else {
             guard invocation.state == .admin, !permanent else {
                 return .recorded(try reportingRefusal(invocation, callerUID: callerUID, now: now) {
@@ -89,6 +97,10 @@ extension ElevationTracker {
                 try record(invocation, callerUID: callerUID, grantDetail: [:], endingOnly: endingOnly) { _ in nil }
             })
         }
+        return try hold(invocation, callerUID: callerUID)
+    }
+
+    private func hold(_ invocation: HookInvocation, callerUID: UInt32?) throws -> ClaimOutcome {
         let claimID = newID()
         try store.addPendingClaim(PendingClaim(claimID: claimID, invocation: invocation, callerUID: callerUID))
         return .pending(claimID: claimID)
@@ -253,7 +265,9 @@ extension ElevationTracker {
         if env.privileges().expirationIntervalMinutes == nil {
             var consumed = Set(try consumedEvidence().keys)
             for claim in held {
-                if let found = evidence(for: claim, consumed: consumed) {
+                if env.config.permanentAdmins.contains(claim.invocation.user) {
+                    timers[claim.claimID] = env.privilegesTimer(claim.invocation.user, claim.invocation.invokedAt)
+                } else if let found = evidence(for: claim, consumed: consumed) {
                     guard !awaitingExtension(found) else { continue }
                     consumed.formUnion(found.keys)
                     timers[claim.claimID] = env.privilegesTimer(claim.invocation.user, found.date)
@@ -266,6 +280,7 @@ extension ElevationTracker {
         let ids = Set(held.map(\.claimID))
         return try store.transaction {
             try notePrivilegesLog(availability)
+            let seen = try store.value(forKey: Self.privilegesLogSeenKey) != nil
             var consumed = try consumedEvidence()
             var events: [AltiwardEvent] = []
             func queue(_ event: AltiwardEvent) throws {
@@ -276,6 +291,27 @@ extension ElevationTracker {
             // Read again inside the transaction: another check may have resolved some already.
             for claim in try store.pendingClaims() where ids.contains(claim.claimID) {
                 let invocation = claim.invocation
+                // Held only so Privileges' timer was read after the hook's call, by a permanent
+                // admin or on a Mac that has never had the log: recorded as that call would have.
+                let permanent = env.config.permanentAdmins.contains(invocation.user)
+                if permanent || (logLost && !seen) {
+                    try store.removePendingClaim(id: claim.claimID)
+                    do {
+                        let granted = try applyGrant(
+                            invocation, callerUID: claim.callerUID, grantedAt: invocation.invokedAt,
+                            timer: timers[claim.claimID],
+                            extraDetail: permanent ? [:] : ["privileges_log": "unavailable"],
+                            skipLateCheck: false, device: device)
+                        if let replaced = granted.replaced { try queue(replaced) }
+                        try queue(granted.event)
+                    } catch let refusal as ClaimRefused {
+                        try queue(
+                            claimRefusedEvent(
+                                refusal, kind: "grant", outcome: "refused", callerUID: claim.callerUID, evidence: nil,
+                                now: now, device: device))
+                    }
+                    continue
+                }
                 if let found = evidence(for: claim, consumed: Set(consumed.keys)) {
                     // Held, its evidence unspent: the next check confirms it, with or without
                     // the extension's record.

@@ -227,7 +227,10 @@ Create these in your MDM and scope them to a pilot group first.
 
    Without the log (Privileges older than 2.6, its extension off or stopped, or macOS 13),
    enforcement keeps removing rights nobody granted, and the agent accepts a grant claim as
-   it did before: marked `privileges_log: "unavailable"`, and with the checks below.
+   it did before: marked `privileges_log: "unavailable"`, and with the checks below. Without
+   a fixed `ExpirationInterval`, the agent answers the hook first and records the claim a
+   moment later, once it has read Privileges' timer, so the hook logs "Sent admin for" even
+   for a claim the agent then refuses; the refusal is still sent as `grant_claim`.
    The Mac's details then show an integrity check failing, naming what's missing, whenever
    `OutOfBandEnforcement` or `ExpiryEnforcement` is `enforce` and Privileges is installed.
    Where the agent has read the log on a Mac before and can't now, each claim it accepts is
