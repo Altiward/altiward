@@ -202,6 +202,8 @@ public final class ElevationTracker: Sendable {
             case notConfirmed(renewal: Bool)
             /// A claim for a user sent by a process of another user, who isn't root.
             case callerMismatch(callerUID: UInt32)
+            /// The untrusted claim has no authenticated caller UID.
+            case unknownCaller
             /// More grant claims from one caller in a minute than ``ElevationTracker/maxClaimsPerMinute``.
             case tooManyClaims
             /// A give-back that wouldn't end a session, from a caller that has sent more than
@@ -227,6 +229,8 @@ public final class ElevationTracker: Sendable {
                 "a Privileges \(renewal ? "renewal" : "grant") claimed for \(user), which Privileges' own log does not confirm"
             case .callerMismatch(let callerUID):
                 "a claim for \(user) sent by a process of user ID \(callerUID), who is neither \(user) nor root"
+            case .unknownCaller:
+                "a claim for \(user) with no authenticated caller user ID"
             case .tooManyClaims:
                 "more than \(ElevationTracker.maxClaimsPerMinute) grant claims in a minute from one caller; this one for \(user) was ignored"
             case .tooManyGiveBacks:

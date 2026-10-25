@@ -32,15 +32,16 @@ extension ElevationTracker {
     ///    ``maxGiveBacksPerMinute``: past it, a give-back that ends an open session is still
     ///    recorded, so a real give-back always is, and any other is ignored and logged
     ///    (`tooManyGiveBacks`), not recorded or reported.
-    /// 2. Without the log, or for a permanent admin, a grant claim whose expiry comes from
+    /// 2. Every caller must be root or the known owner of the claimed account, before
+    ///    fallback processing or holding a claim. Unknown callers and owners are refused
+    ///    and reported.
+    /// 3. Without the log, or for a permanent admin, a grant claim whose expiry comes from
     ///    Privileges' timer (no fixed `ExpirationInterval`) is held: reading the timer can
     ///    take seconds, and the hook waits 5 s for its answer. ``resolvePendingClaims()``
     ///    then records it as below, refusals included, without waiting for the log.
     ///    Otherwise the claim goes to ``record(_:callerUID:)``. A grant claim recorded because the log isn't available
     ///    says so (`privileges_log: "unavailable"`), and on a Mac where the agent has read the
     ///    log before it is also reported (`grant_claim`, `accepted_unconfirmed`).
-    /// 3. With the log, a caller who is neither root nor the claimed user is refused
-    ///    (`callerMismatch`) and reported as an `agent.tamper`.
     /// 4. A give-back claim is recorded as before.
     /// 5. A grant claim is stored as pending, with the daemon-set `invokedAt`.
     ///
@@ -71,6 +72,21 @@ extension ElevationTracker {
             invocation.state == .user
             && overTheLimit(recentGiveBacks, Self.maxGiveBacksPerMinute, from: callerUID ?? 0, at: now)
 
+        if let refusal = steps.time("user lookup", { callerRefusal(invocation, callerUID: callerUID) })
+        {
+            // Another user's give-back can't end this user's session, so past the allowance
+            // it isn't reported either.
+            if endingOnly {
+                log.notice("ignoring a give-back for \(invocation.user, privacy: .public): too many give-back claims from this caller")
+                throw ClaimRefused(user: invocation.user, reason: .tooManyGiveBacks)
+            }
+            let event = claimRefusedEvent(
+                refusal, kind: invocation.state == .admin ? "grant" : "give_back", outcome: "refused",
+                callerUID: callerUID, evidence: nil, now: now, device: env.device())
+            try store.transaction { try store.enqueue(event, now: now) }
+            throw refusal
+        }
+
         let availability = steps.time("Privileges' log check") { env.privilegesLogAvailability() }
         try notePrivilegesLog(availability)
         let permanent = env.config.permanentAdmins.contains(invocation.user)
@@ -90,29 +106,22 @@ extension ElevationTracker {
             })
         }
 
-        if let callerUID, callerUID != 0, let owner = steps.time("user lookup", { env.userID(invocation.user) }),
-            owner != callerUID
-        {
-            // Another user's give-back can't end this user's session, so past the allowance
-            // it isn't reported either.
-            if endingOnly {
-                log.notice("ignoring a give-back for \(invocation.user, privacy: .public): too many give-back claims from this caller")
-                throw ClaimRefused(user: invocation.user, reason: .tooManyGiveBacks)
-            }
-            let refusal = ClaimRefused(user: invocation.user, reason: .callerMismatch(callerUID: callerUID))
-            let event = claimRefusedEvent(
-                refusal, kind: invocation.state == .admin ? "grant" : "give_back", outcome: "refused",
-                callerUID: callerUID, evidence: nil, now: now, device: env.device())
-            try store.transaction { try store.enqueue(event, now: now) }
-            throw refusal
-        }
-
         guard invocation.state == .admin else {
             return .recorded(try reportingRefusal(invocation, callerUID: callerUID, now: now) {
                 try record(invocation, callerUID: callerUID, grantDetail: [:], endingOnly: endingOnly) { _ in nil }
             })
         }
         return try hold(invocation, callerUID: callerUID)
+    }
+
+    /// Root may report another account. Every other XPC caller must own a known account.
+    /// Nil is reserved for internal record calls and cannot authorise an untrusted claim.
+    private func callerRefusal(_ invocation: HookInvocation, callerUID: UInt32?) -> ClaimRefused? {
+        guard let callerUID else { return ClaimRefused(user: invocation.user, reason: .unknownCaller) }
+        guard callerUID == 0 || env.userID(invocation.user) == callerUID else {
+            return ClaimRefused(user: invocation.user, reason: .callerMismatch(callerUID: callerUID))
+        }
+        return nil
     }
 
     /// Holds a grant claim for ``resolvePendingClaims()``.
@@ -281,6 +290,7 @@ extension ElevationTracker {
         if env.privileges().expirationIntervalMinutes == nil {
             var consumed = Set(try consumedEvidence().keys)
             for claim in held {
+                guard callerRefusal(claim.invocation, callerUID: claim.callerUID) == nil else { continue }
                 if env.config.permanentAdmins.contains(claim.invocation.user) {
                     timers[claim.claimID] = env.privilegesTimer(claim.invocation.user, claim.invocation.invokedAt)
                 } else if let found = evidence(for: claim, consumed: consumed) {
@@ -307,6 +317,15 @@ extension ElevationTracker {
             // Read again inside the transaction: another check may have resolved some already.
             for claim in try store.pendingClaims() where ids.contains(claim.claimID) {
                 let invocation = claim.invocation
+                // Recheck persisted claims before any fallback, evidence consumption or ledger write:
+                // the account may have disappeared or changed owner since the hook called.
+                if let refusal = callerRefusal(invocation, callerUID: claim.callerUID) {
+                    try store.removePendingClaim(id: claim.claimID)
+                    try queue(claimRefusedEvent(
+                        refusal, kind: "grant", outcome: "refused", callerUID: claim.callerUID,
+                        evidence: nil, now: now, device: device))
+                    continue
+                }
                 // Held only so Privileges' timer was read after the hook's call, by a permanent
                 // admin or on a Mac that has never had the log: recorded as that call would have.
                 let permanent = env.config.permanentAdmins.contains(invocation.user)

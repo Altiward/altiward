@@ -24,6 +24,10 @@ None.
 
 ### Security
 
+- Hook claims are bound to the authenticated caller before log fallbacks, permanent-admin
+  handling or queuing. Unknown accounts and callers are refused, and held claims are
+  checked again before they can change a session. Root remains an explicit authorised
+  caller for administrative operations.
 - A give-back claim cannot close an open session while the account is still an admin.
   The agent retains the original expiry and retries membership confirmation on its next
   heartbeat, so a contradictory claim cannot bypass timed enforcement.

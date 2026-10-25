@@ -137,7 +137,7 @@ func makeEnvironment(
     privilegesDaemonLines: @escaping @Sendable (_ since: Date) -> [PrivilegesDaemonLine] = { _ in [] },
     processIdentity: @escaping @Sendable (_ pid: Int32) -> ProcessIdentity? = { _ in nil },
     privilegesExtensionPID: @escaping @Sendable () -> Int32? = { nil },
-    userID: @escaping @Sendable (_ shortName: String) -> UInt32? = { _ in nil },
+    userID: @escaping @Sendable (_ shortName: String) -> UInt32? = { ["jdoe": 501, "mallory": 502, "itadmin": 503][$0] },
     privilegesRenewals: @escaping @Sendable (_ since: Date) -> [PrivilegesRenewalLine] = { _ in [] },
     privilegesAgentImageUUIDs: @escaping @Sendable () -> Set<String> = { [] }
 ) -> AgentEnvironment {
