@@ -8,7 +8,7 @@ import { StateBadge } from "../components/StateBadge";
 import { Table } from "../components/Table";
 import { useApi, useCan } from "../context";
 import { explanations } from "../explanations";
-import { dateTime, lastCheckIn, relativeTimeInWords } from "../format";
+import { dateTime, lastCheckIn, relativeTime } from "../format";
 import { useLoad } from "../useLoad";
 
 type Filter = CredentialStatus | "all";
@@ -181,8 +181,8 @@ function EnrollmentInspector({ enrollment: e, active, devices, onClose, onDone }
       {e.status === "pending" && devices && (
         <p className="secondary" style={{ marginTop: 12 }}>
           {device
-            ? `This Mac last checked in ${relativeTimeInWords(lastCheckIn(device))} with its current key.`
-            : "This Mac hasn't checked in yet."}
+            ? `This Mac last checked in ${relativeTime(lastCheckIn(device)).toLowerCase()}${newMac ? "" : " with its current key"}.`
+            : "This Mac hasn’t checked in yet."}
         </p>
       )}
       {e.status === "pending" && active && e.hardware_uuid !== active.hardware_uuid && (

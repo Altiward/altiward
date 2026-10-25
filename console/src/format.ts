@@ -13,27 +13,12 @@ export function formatDuration(seconds: number): string {
   return h % 24 ? `${d} d ${h % 24} h` : `${d} d`;
 }
 
-/** How long ago, in whole minutes, hours or days; null inside the first minute. */
-function age(iso: string, now: Date): { count: number; unit: "minute" | "hour" | "day" } | null {
-  const seconds = (now.getTime() - new Date(iso).getTime()) / 1000;
-  if (seconds < 60) return null;
-  if (seconds < 3600) return { count: Math.floor(seconds / 60), unit: "minute" };
-  if (seconds < 86400) return { count: Math.floor(seconds / 3600), unit: "hour" };
-  return { count: Math.floor(seconds / 86400), unit: "day" };
-}
-
-const shortUnits = { minute: "min", hour: "h", day: "d" };
-
-/** For tables and short lines: "3 min ago". */
 export function relativeTime(iso: string, now: Date = new Date()): string {
-  const a = age(iso, now);
-  return a ? `${a.count} ${shortUnits[a.unit]} ago` : "Just now";
-}
-
-/** For a sentence: "3 minutes ago", "just now". */
-export function relativeTimeInWords(iso: string, now: Date = new Date()): string {
-  const a = age(iso, now);
-  return a ? `${a.count} ${a.unit}${a.count === 1 ? "" : "s"} ago` : "just now";
+  const seconds = (now.getTime() - new Date(iso).getTime()) / 1000;
+  if (seconds < 60) return "Just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ago`;
+  return `${Math.floor(seconds / 86400)} d ago`;
 }
 
 /** When a Mac last checked in. By the server's clock when known, so a Mac whose clock is

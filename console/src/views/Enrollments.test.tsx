@@ -125,7 +125,7 @@ describe("Enrollments, the evidence for a pending key", () => {
       devices: vi.fn(async () => [mac({ last_received_at: minutesAgo(4) })]),
     }), <EnrollmentsView />);
     const inspector = await openPending();
-    expect(await within(inspector).findByText("This Mac last checked in 4 minutes ago with its current key.")).toBeInTheDocument();
+    expect(await within(inspector).findByText("This Mac last checked in 4 min ago with its current key.")).toBeInTheDocument();
   });
 
   it("uses the check-in time the Fleet view shows, by the server's clock first", async () => {
@@ -134,13 +134,24 @@ describe("Enrollments, the evidence for a pending key", () => {
       devices: vi.fn(async () => [mac({ last_seen_at: minutesAgo(90), last_health_at: minutesAgo(30), last_received_at: minutesAgo(2) })]),
     }), <EnrollmentsView />);
     const inspector = await openPending();
-    expect(await within(inspector).findByText("This Mac last checked in 2 minutes ago with its current key.")).toBeInTheDocument();
+    expect(await within(inspector).findByText("This Mac last checked in 2 min ago with its current key.")).toBeInTheDocument();
   });
 
-  it("says so when the Mac hasn't checked in yet", async () => {
+  it("doesn't claim a current key when every earlier key was revoked", async () => {
+    const revoked: Enrollment = { ...pending, device_id: "d-old", status: "revoked", revoked_at: "2026-10-10T00:00:00Z" };
+    renderView(fakeApi({
+      enrollments: vi.fn(async () => [pending, revoked]),
+      devices: vi.fn(async () => [mac({ last_received_at: minutesAgo(4) })]),
+    }), <EnrollmentsView />);
+    const inspector = await openPending();
+    expect(await within(inspector).findByText("This Mac last checked in 4 min ago.")).toBeInTheDocument();
+    expect(inspector).not.toHaveTextContent("current key");
+  });
+
+  it("says so when the Mac hasn’t checked in yet", async () => {
     renderView(fakeApi({ enrollments: vi.fn(async () => [pending]), devices: vi.fn(async () => []) }), <EnrollmentsView />);
     const inspector = await openPending();
-    expect(await within(inspector).findByText("This Mac hasn't checked in yet.")).toBeInTheDocument();
+    expect(await within(inspector).findByText("This Mac hasn’t checked in yet.")).toBeInTheDocument();
     expect(inspector).not.toHaveTextContent("last checked in");
   });
 
@@ -153,7 +164,7 @@ describe("Enrollments, the evidence for a pending key", () => {
     renderView(api, <EnrollmentsView />);
     const inspector = await openPending();
     await waitFor(() => expect(api.devices).toHaveBeenCalled());
-    expect(inspector).not.toHaveTextContent(/last checked in|hasn't checked in/);
+    expect(inspector).not.toHaveTextContent(/last checked in|hasn’t checked in/);
     expect(screen.queryByText("devices are down")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
     await userEvent.click(within(inspector).getByRole("button", { name: "Approve" }));
@@ -167,7 +178,7 @@ describe("Enrollments, the evidence for a pending key", () => {
     }), <EnrollmentsView />);
     const pendingInspector = await openPending();
     // The devices have loaded once the pending key shows its line.
-    expect(await within(pendingInspector).findByText(/last checked in 4 minutes ago/)).toBeInTheDocument();
+    expect(await within(pendingInspector).findByText(/last checked in 4 min ago/)).toBeInTheDocument();
     await userEvent.click(within(pendingInspector).getByRole("button", { name: "Close details" }));
 
     const rows = screen.getAllByText("C02XK0AAJGH5");
