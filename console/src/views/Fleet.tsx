@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import type { Command, Device, PermanentUse } from "../api";
-import { Banner, Details, Empty, Explain, RoleNote, SearchField, Toolbar } from "../components/Chrome";
+import { Banner, Details, Empty, Explain, Missing, RoleNote, SearchField, Toolbar } from "../components/Chrome";
 import { ClaimedGlyph, CloseIcon, ElevatedGlyph, EndedGlyph, NotGrantedGlyph, VerifiedGlyph } from "../components/Icons";
 import { ConfirmSheet } from "../components/Sheet";
 import { StateBadge } from "../components/StateBadge";
@@ -126,7 +126,9 @@ export function FleetView() {
                 { key: "privileges", title: "Privileges", sort: (d) => d.privileges_version ?? "",
                   render: (d) => d.privileges_version ?? <span className="secondary">Not installed</span> },
                 { key: "queue", title: "Queued", align: "right", sort: (d) => d.queue_depth ?? 0,
-                  render: (d) => <span className="data">{d.queue_depth == null ? "—" : String(d.queue_depth)}</span> },
+                  render: (d) => d.queue_depth == null
+                    ? <Missing>Not reported</Missing>
+                    : <span className="data">{String(d.queue_depth)}</span> },
               ]} />
           )}
         </div>
@@ -149,7 +151,7 @@ function AdminNames({ device: d }: { device: Device }) {
   );
 }
 
-const yesNo = (v: unknown) => (v === true ? "Yes" : v === false ? "No" : "—");
+const yesNo = (v: unknown) => (v === true ? "Yes" : v === false ? "No" : <Missing>Not reported</Missing>);
 
 /** The severity a failing check is exported with. The server exports a check it doesn't
  *  know as High, so one missing from `severities` is High too. */
@@ -340,7 +342,7 @@ function DeviceInspector({ device: d, severities, onClose }: {
           ["Hardware UUID", <span key="hw" className="data">{d.hardware_uuid}</span>],
           ["First seen", dateTime(d.first_seen_at)],
           ["Last check-in", dateTime(lastCheckIn(d))],
-          ["Events queued", d.queue_depth == null ? "—" : String(d.queue_depth)],
+          ["Events queued", d.queue_depth == null ? <Missing key="queued">Not reported</Missing> : String(d.queue_depth)],
         ]} />
       </div>
 
@@ -350,9 +352,10 @@ function DeviceInspector({ device: d, severities, onClose }: {
           ["Version", d.privileges_version ?? "Not installed"],
           ["Reports to Altiward", yesNo(p.post_change_hook_configured)],
           ["Passes the reason", yesNo(p.pass_reason_to_executable)],
-          ["Expires after", expiresAfter(p)],
+          ["Expires after", expiresAfter(p) ?? <Missing key="expires">Not set</Missing>],
           ["Tamper protection", yesNo(p.system_extension_enabled)],
-          ["Daily admin budget", p.admin_budget_minutes != null ? `${p.admin_budget_minutes} min` : "—"],
+          ["Daily admin budget", p.admin_budget_minutes != null
+            ? `${p.admin_budget_minutes} min` : <Missing key="budget">Not set</Missing>],
         ]} />
       </div>
 

@@ -1,6 +1,6 @@
 import { type JSX, useMemo, useState } from "react";
 import type { CredentialStatus, Enrollment, KeyStorage } from "../api";
-import { Banner, Details, Empty, Explain, RoleNote, SearchField, Segmented, Toolbar } from "../components/Chrome";
+import { Banner, Details, Empty, Explain, Missing, RoleNote, SearchField, Segmented, Toolbar } from "../components/Chrome";
 import { Fingerprint } from "../components/Fingerprint";
 import { ChipGlyph, CloseIcon, EndedGlyph, FileGlyph } from "../components/Icons";
 import { ConfirmSheet } from "../components/Sheet";
@@ -145,8 +145,8 @@ function EnrollmentInspector({ enrollment: e, newMac, replacesEnclaveKey, onClos
           ["Key kept in", <Explain key="kept" tip={explanations.keyStorage} bare><KeyKeptIn storage={e.key_storage} /></Explain>],
           ["Hardware UUID", <span key="hw" className="data">{e.hardware_uuid}</span>],
           ["Enrolled", dateTime(e.created_at)],
-          ["Activated", dateTime(e.activated_at)],
-          ["Revoked", dateTime(e.revoked_at)],
+          ["Activated", e.activated_at ? dateTime(e.activated_at) : <Missing key="activated">Not yet</Missing>],
+          ["Revoked", e.revoked_at ? dateTime(e.revoked_at) : <Missing key="revoked">Not revoked</Missing>],
         ]} />
       </div>
       {e.status === "pending" && !newMac && (

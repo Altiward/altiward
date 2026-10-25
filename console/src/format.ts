@@ -21,8 +21,9 @@ export function relativeTime(iso: string, now: Date = new Date()): string {
   return `${Math.floor(seconds / 86400)} d ago`;
 }
 
-export function dateTime(iso: string | null | undefined): string {
-  if (!iso) return "—";
+/** `empty` is what to show when there's no date: a caller that knows why says so. */
+export function dateTime(iso: string | null | undefined, empty = "Unknown"): string {
+  if (!iso) return empty;
   return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
@@ -200,14 +201,14 @@ const skipReasons: Record<string, string> = {
 /** What a Mac did with a command, for the Commands table and follow-up notices. */
 export function commandOutcome(c: Command): string {
   const r = c.result;
-  if (!r) return c.status === "expired" ? "The Mac didn’t check in within 24 hours." : c.delivered_at ? "Sent to the Mac" : "—";
+  if (!r) return c.status === "expired" ? "The Mac didn’t check in within 24 hours." : c.delivered_at ? "Sent to the Mac" : "Waiting to be sent";
   if (r.error) return r.error;
   const parts = [
     r.revoked.length ? `Removed ${r.revoked.join(", ")}` : "",
     ...r.failed.map((f) => `${f.user}: ${f.error}`),
     ...r.skipped.map((s) => `Kept ${s.user} (${skipReasons[s.reason] ?? s.reason})`),
   ].filter(Boolean);
-  return parts.join(". ") || "—";
+  return parts.join(". ") || "Nothing to do";
 }
 
 /** The notice for a revoke once its Mac has reported back. `who` names the one person it was for. */
@@ -227,10 +228,10 @@ export function revokeNotice(c: Command, who?: string): { kind: "error" | "info"
 /** How long a Privileges grant lasts: a fixed interval, or the cap on what the user picks.
  *  Agents from 0.5.0 report `expiration_interval_minutes` only when MDM sets it, so it is
  *  fixed, and 0 is MDM's choice of no expiry. `expiry_capped` is false when MDM doesn't cap
- *  grants, so a maximum shown then is one the user can change. */
-export function expiresAfter(p: Record<string, unknown>): string {
+ *  grants, so a maximum shown then is one the user can change. Null when the agent doesn't say. */
+export function expiresAfter(p: Record<string, unknown>): string | null {
   const fixed = p.expiration_interval_minutes, max = p.expiration_interval_max_minutes;
   if (typeof fixed === "number") return fixed > 0 ? `${fixed} min` : "Never";
   if (typeof max === "number" && max > 0) return p.expiry_capped === false ? `Up to ${max} min, not set by MDM` : `Up to ${max} min`;
-  return p.expiry_capped === false ? "No cap" : "—";
+  return p.expiry_capped === false ? "No cap" : null;
 }
