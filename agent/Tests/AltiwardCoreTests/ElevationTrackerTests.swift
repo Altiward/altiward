@@ -53,17 +53,24 @@ struct ElevationTrackerTests {
         #expect(try store.openSession(user: "jdoe")?.startedAt == start)
     }
 
-    @Test func revokeClaimStillEndsPrivilegesSession() throws {
-        // The claim contradicts the admin group, so it is recorded unverified, but it still
-        // ends the session: Privileges owns that grant, not Altiward.
+    @Test func contradictoryGiveBackKeepsSessionUntilMembershipLoss() throws {
         let store = try makeStore()
+        let admins = FakeAdmins(["jdoe"])
         let tracker = ElevationTracker(
-            store: store, environment: makeEnvironment(admins: FakeAdmins(["jdoe"]), clock: clock))
+            store: store, environment: makeEnvironment(admins: admins, clock: clock))
         let granted = try tracker.record(grant())
+        let original = try #require(try store.openSession(user: "jdoe"))
 
-        let revoked = try tracker.record(revoke())
+        #expect(throws: ElevationTracker.ClaimRefused.self) { try tracker.record(revoke()) }
+        #expect(try store.openSession(user: "jdoe") == original)
+        #expect(try store.pending(limit: 10).map(\.event.type) == [.elevationGranted])
+
+        // A directory reading that lags the genuine give-back is retried by the heartbeat.
+        admins.set([])
+        clock.advance(30)
+        let revoked = try #require(try tracker.heartbeat().first { $0.type == .elevationRevoked })
         #expect(revoked.sessionID == granted.sessionID)
-        #expect(revoked.detail["verified"] == false)
+        #expect(revoked.detail["verified"] == true)
         #expect(try store.openSession(user: "jdoe") == nil)
     }
 
@@ -321,8 +328,8 @@ struct ElevationTrackerTests {
         #expect(try tracker.checkUntrackedAdmins().isEmpty)
 
         // Rights gone and back again start the wait over.
-        try tracker.record(revoke())
         admins.set([])
+        try tracker.record(revoke())
         clock.advance(15)
         #expect(try tracker.checkUntrackedAdmins().isEmpty)
         admins.set(["jdoe"])

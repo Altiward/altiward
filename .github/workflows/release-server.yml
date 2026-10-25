@@ -60,13 +60,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The Deploy to Azure template pulls Caddy from here, where the anonymous pulls of
-      # container apps' shared addresses aren't limited as they are on Docker Hub.
-      - name: Copy the Azure template's Caddy image to ghcr.io
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Build and scan the exact pinned archive before publishing any proxy content.
+      - name: Build, verify, scan and publish the patched Caddy image
         run: |
-          target=$(sed -n "s/^var caddyImage = '\(ghcr\.io\/[^']*\)'$/\1/p" deploy/azure/main.bicep)
-          [ -n "$target" ] || { echo "deploy/azure/main.bicep: caddyImage isn't on ghcr.io"; exit 1; }
-          docker buildx imagetools create --tag "$target" "docker.io/library/caddy:${target##*:}"
+          scripts/build-caddy.sh "$RUNNER_TEMP/caddy"
+          for arch in amd64 arm64; do
+            go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -mode=binary "$RUNNER_TEMP/caddy/caddy-$arch"
+          done
+          ref=$(cat deploy/caddy/image.txt)
+          target=${ref%@*}
+          digest=${ref##*@}
+          go run oras.land/oras/cmd/oras@v1.3.4 cp --from-oci-layout "$RUNNER_TEMP/caddy/caddy.oci.tar@$digest" "$target"
+          got=$(go run oras.land/oras/cmd/oras@v1.3.4 resolve "$target")
+          [ "$got" = "$digest" ] || { echo "Published Caddy digest differs from the reviewed image"; exit 1; }
 
       # Users pin a version; there is deliberately no "latest" tag.
       - id: build

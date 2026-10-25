@@ -244,11 +244,20 @@ Privileges.
 **You should see**, on a pilot Mac, the Altiward profiles under **System Settings ›
 General › Device Management**. The Mac then appears in the console ([step 3](#3-check-it-works)).
 
-Each Mac enrolls on first contact: it registers its own key with your server and signs
-everything after that, so the enrollment token is used once per Mac. The token is
-readable on every Mac, so anyone with it can enroll a key for a serial number: a new key
-for a Mac that is already enrolled replaces the old one, unless **Approve Macs that enroll
-again** is on ([step 6](#6-settings-worth-reviewing)).
+Each Mac enrols on first contact: it registers its own key with your server and signs
+subsequent requests with it. The enrolment token is used for enrolment, including when a
+Mac needs a new key. The token is
+readable on every Mac, so anyone with it can enrol a key for a serial number. By default,
+a new key for a serial that enrolled before waits for approval, including after its earlier
+key was revoked. The current key keeps reporting until you approve the replacement.
+**Approve Macs that enrol again** should stay on ([step 6](#6-settings-worth-reviewing)).
+Turning it off lets anyone with the token replace an enrolled Mac's identity by naming
+its serial. Secure Enclave key protection does not prevent that replacement.
+
+Approval protects existing serials; the shared token does not verify that a serial enrolling
+for the first time belongs to the caller. Check new enrolments against your device inventory.
+Stronger first-enrolment assurance needs per-device bootstrap credentials or independently
+verified inventory.
 
 On a Mac with a Secure Enclave (Apple silicon, or an Intel Mac with a T2 chip) the key is
 made in the Secure Enclave, so it can't be copied to another Mac. Other Macs keep it in a
@@ -415,9 +424,17 @@ SIEM as `break-glass:` and the token's fingerprint, so alert on it. To turn it o
 
 In the console, under **Settings › General**:
 
-- **Approve Macs that enroll again.** On means a Mac that comes back with a new key, for
-  example after a reinstall, waits in **Enrollments** for your approval. Its earlier key
-  keeps working until you approve the new one.
+- **Approve Macs that enrol again.** On by default and recommended. A Mac that comes
+  back with a new key, for example after a reinstall or after its key was revoked, waits
+  in **Enrollments** for your approval. Its earlier active key keeps working until you
+  approve the new one. Turning this off allows anyone with the enrolment token to
+  replace an enrolled Mac's identity by naming its serial.
+
+  Upgrading to server 0.8.0 enables approval once for every existing tenant, including
+  tenants where it was off. Existing credentials and the other settings stay as they are.
+  An admin can explicitly turn it off after the upgrade if automatic replacement is
+  required. An omitted or null approval flag in a settings API update enables approval;
+  only an explicit `false` disables it.
 - **Alert when a Mac stops checking in.** Hours without a check-in before Altiward raises
   an alert. The default of 72 rides out a weekend with laptops closed.
 
@@ -816,7 +833,7 @@ persistence snapshot: (none yet)
   agent's own paths answer there. A connection or certificate error means the Mac can't
   reach the server.
 - A device ID but **queued events** that never go down: the Mac enrolled but can't deliver.
-  If **Approve Macs that enroll again** is on, look in **Enrollments** for a Mac waiting
+  If **Approve Macs that enrol again** is on, look in **Enrollments** for a Mac waiting
   for approval.
 - `device key: Secure Enclave` after the device ID: only the agent's daemon can use that
   key, so `altiward-agent flush`, `heartbeat` and `commands` run by hand say the daemon

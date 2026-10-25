@@ -14,7 +14,7 @@ struct ClaimConfirmationTests {
 
     func tracker(
         availability: PrivilegesLogAvailability = .available, permanent: Set<String> = ["itadmin"],
-        userID: @escaping @Sendable (String) -> UInt32? = { _ in nil }
+        userID: @escaping @Sendable (String) -> UInt32? = { ["jdoe": 501, "mallory": 502, "itadmin": 503][$0] }
     ) throws -> (ElevationTracker, AgentStore) {
         let store = try makeStore()
         let env = makeEnvironment(
@@ -63,7 +63,7 @@ struct ClaimConfirmationTests {
     @Test func permanentAdminAndGiveBackClaimsAreNotHeld() throws {
         let (tracker, store) = try tracker()
         admins.set(["itadmin"])
-        guard case .recorded = try tracker.submit(claim("itadmin"), callerUID: 501) else {
+        guard case .recorded = try tracker.submit(claim("itadmin"), callerUID: 503) else {
             Issue.record("a permanent admin's claim should be recorded")
             return
         }
@@ -100,6 +100,67 @@ struct ClaimConfirmationTests {
         #expect(try queued(store).first?.detail["kind"] == .string("give_back"))
     }
 
+    @Test(arguments: [false, true])
+    func fallbackAndHeldPathsRejectAnotherCaller(permanent: Bool) throws {
+        for available in [PrivilegesLogAvailability.available, .unavailable("x")] {
+            for state in [HookInvocation.State.admin, .user] {
+                let (tracker, store) = try tracker(
+                    availability: available, permanent: permanent ? ["jdoe"] : [], userID: { _ in 501 })
+                admins.set(["jdoe"])
+                #expect(throws: ElevationTracker.ClaimRefused.self) {
+                    try tracker.submit(claim("jdoe", state), callerUID: 502)
+                }
+                #expect(try store.pendingClaims().isEmpty)
+                #expect(try store.openSession(user: "jdoe") == nil)
+                #expect(try queued(store).map(\.type) == [.agentTamper])
+            }
+        }
+    }
+
+    @Test func unavailableLogTimerHoldStillChecksTheOwner() throws {
+        let store = try makeStore()
+        let tracker = ElevationTracker(store: store, environment: makeEnvironment(
+            admins: admins, clock: clock, privileges: PrivilegesSettings(), userID: { _ in 501 }))
+        #expect(throws: ElevationTracker.ClaimRefused.self) { try tracker.submit(claim(), callerUID: 502) }
+        #expect(try store.pendingClaims().isEmpty)
+    }
+
+    @Test func unknownAccountAndMissingCallerFailClosed() throws {
+        let (tracker, store) = try tracker(availability: .unavailable("x"), userID: { _ in nil })
+        #expect(throws: ElevationTracker.ClaimRefused.self) { try tracker.submit(claim(), callerUID: 501) }
+        #expect(throws: ElevationTracker.ClaimRefused.self) { try tracker.submit(claim(), callerUID: nil) }
+        #expect(try store.pendingClaims().isEmpty)
+        #expect(try queued(store).map(\.type) == [.agentTamper, .agentTamper])
+    }
+
+    @Test(arguments: [UInt32(502), nil])
+    func heldClaimRechecksChangedOrUnknownOwner(owner: UInt32?) throws {
+        let store = try makeStore()
+        let identity = OSAllocatedUnfairLock<UInt32?>(initialState: 501)
+        let tracker = ElevationTracker(store: store, environment: makeEnvironment(
+            admins: admins, clock: clock, privileges: PrivilegesSettings(),
+            config: AgentConfiguration(permanentAdmins: ["jdoe"]), userID: { _ in identity.withLock { $0 } }))
+        admins.set(["jdoe"])
+        guard case .pending = try tracker.submit(claim(), callerUID: 501) else {
+            Issue.record("expected held timer read")
+            return
+        }
+        identity.withLock { $0 = owner }
+        let events = try tracker.resolvePendingClaims()
+        #expect(events.map(\.type) == [.agentTamper])
+        #expect(try store.pendingClaims().isEmpty)
+        #expect(try store.openSession(user: "jdoe") == nil)
+        #expect(try store.value(forKey: ElevationTracker.consumedEvidenceKey) == nil)
+    }
+
+    @Test func legacyHeldClaimWithoutCallerCannotReachFallback() throws {
+        let (tracker, store) = try tracker(availability: .unavailable("x"))
+        try store.addPendingClaim(PendingClaim(claimID: newID(), invocation: claim(), callerUID: nil))
+        #expect(try tracker.resolvePendingClaims().map(\.type) == [.agentTamper])
+        #expect(try store.pendingClaims().isEmpty)
+        #expect(try store.openSession(user: "jdoe") == nil)
+    }
+
     @Test func rootMayClaimForAnyone() throws {
         let (tracker, _) = try tracker(userID: { $0 == "jdoe" ? 501 : nil })
         guard case .pending = try tracker.submit(claim(), callerUID: 0) else {
@@ -123,7 +184,7 @@ struct ClaimConfirmationTests {
         }
         #expect(try queued(store).isEmpty)
         // Another caller has a count of its own.
-        guard case .pending = try tracker.submit(claim(), callerUID: 502) else {
+        guard case .pending = try tracker.submit(claim("mallory"), callerUID: 502) else {
             Issue.record("expected .pending")
             return
         }
@@ -171,7 +232,9 @@ struct ClaimConfirmationTests {
         admins.set(["jdoe"])
         _ = try tracker.submit(claim(), callerUID: 501)
         for _ in 0..<ElevationTracker.maxGiveBacksPerMinute {
-            _ = try tracker.submit(claim("mallory", .user), callerUID: 501)
+            #expect(throws: ElevationTracker.ClaimRefused.self) {
+                try tracker.submit(claim("mallory", .user), callerUID: 501)
+            }
         }
         let before = try queued(store).count
         #expect {
@@ -195,7 +258,7 @@ struct ClaimConfirmationTests {
             return
         }
         clock.advance(61)
-        guard case .recorded = try tracker.submit(claim("mallory", .user), callerUID: 501) else {
+        guard case .recorded = try tracker.submit(claim("jdoe", .user), callerUID: 501) else {
             Issue.record("expected .recorded")
             return
         }
@@ -272,7 +335,8 @@ extension ClaimConfirmationTests {
     func resolving(
         _ mode: OutOfBandEnforcement = .enforce,
         privileges: PrivilegesSettings = PrivilegesSettings(expirationIntervalMinutes: 20),
-        store existing: AgentStore? = nil
+        store existing: AgentStore? = nil,
+        userID: @escaping @Sendable (String) -> UInt32? = { ["jdoe": 501, "itadmin": 503][$0] }
     ) throws -> (ElevationTracker, AgentStore) {
         let store = try existing ?? makeStore()
         let log = privilegesLog
@@ -291,7 +355,7 @@ extension ClaimConfirmationTests {
             privilegesAudit: { since in log.records.filter { $0.date >= since } },
             privilegesLogAvailability: { availability.withLock { $0 } },
             privilegesDaemonLines: { since in log.lines.filter { $0.date >= since } },
-            processIdentity: { identities[$0] })
+            processIdentity: { identities[$0] }, userID: userID)
         return (ElevationTracker(store: store, environment: env), store)
     }
 
@@ -308,6 +372,22 @@ extension ClaimConfirmationTests {
 
     func tampers(_ events: [AltiwardEvent]) -> [AltiwardEvent] {
         events.filter { $0.type == .agentTamper && $0.detail["check"] == .string("grant_claim") }
+    }
+
+    @Test(arguments: [UInt32(502), nil])
+    func confirmedEvidenceCannotAuthoriseAClaimWhoseOwnerChanged(owner: UInt32?) throws {
+        let identity = OSAllocatedUnfairLock<UInt32?>(initialState: 501)
+        let (tracker, store) = try resolving(userID: { _ in identity.withLock { $0 } })
+        admins.set(["jdoe"])
+        privilegesLog.grant(at: clock.now.addingTimeInterval(-0.3))
+        try hold(tracker)
+        identity.withLock { $0 = owner }
+        let events = try tracker.resolvePendingClaims()
+        #expect(events.map(\.type) == [.agentTamper])
+        #expect(events.first?.detail["outcome"] == "refused")
+        #expect(try store.pendingClaims().isEmpty)
+        #expect(try store.openSession(user: "jdoe") == nil)
+        #expect(try store.value(forKey: ElevationTracker.consumedEvidenceKey) == nil)
     }
 
     @Test func aConfirmedClaimOpensAPrivilegesSession() throws {
@@ -920,7 +1000,7 @@ extension ClaimConfirmationTests {
         let expires = clock.now.addingTimeInterval(1800)
         let (tracker, store) = try timed(availability: .available, reads: reads, expires: expires)
         admins.set(["itadmin"])
-        guard case .pending = try tracker.submit(claim("itadmin"), callerUID: 501) else {
+        guard case .pending = try tracker.submit(claim("itadmin"), callerUID: 503) else {
             Issue.record("expected .pending")
             return
         }

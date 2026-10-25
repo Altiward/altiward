@@ -15,6 +15,9 @@ import (
 
 var ErrNotFound = errors.New("not found")
 
+// ErrSessionOwnerConflict rejects the entire ingestion batch without acknowledging it.
+var ErrSessionOwnerConflict = session.ErrOwnerConflict
+
 // IngestResult lists event IDs by outcome. Duplicates are events already stored,
 // typically an agent retrying after a lost response; they are not re-applied.
 type IngestResult struct {
@@ -54,7 +57,8 @@ type Store interface {
 	ConsoleSessions
 
 	// Ingest stores events in order, folding each new one into its session and device
-	// and queueing it for every configured export sink.
+	// and queueing it for every configured export sink. A session ownership conflict
+	// rejects the entire batch atomically, including its events and export obligations.
 	Ingest(ctx context.Context, tenantID string, events []event.Event, receivedAt time.Time) (IngestResult, error)
 
 	ListSessions(ctx context.Context, tenantID string, f SessionFilter) ([]session.Session, error)

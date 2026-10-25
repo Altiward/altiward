@@ -248,6 +248,7 @@ func TestOutOfBandRemovedWinsTieWithRevoke(t *testing.T) {
 	removed := testfixture.Event(t, "admin-out-of-band-removed")
 	revoked := testfixture.Event(t, "elevation-revoked")
 	revoked.SessionID = removed.SessionID
+	revoked.User = removed.User
 	revoked.Timestamp = removed.Timestamp
 	revoked.Detail = map[string]any{"inferred": true}
 	for _, events := range [][]event.Event{{removed, revoked}, {revoked, removed}} {

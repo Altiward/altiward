@@ -9,7 +9,7 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
-## Agent 0.6.0 - unreleased
+## Agent 0.8.0 - unreleased
 
 ### Upgrade order
 
@@ -24,7 +24,13 @@ None.
 
 ### Security
 
-None.
+- Hook claims are bound to the authenticated caller before log fallbacks, permanent-admin
+  handling or queuing. Unknown accounts and callers are refused, and held claims are
+  checked again before they can change a session. Root remains an explicit authorised
+  caller for administrative operations.
+- A give-back claim cannot close an open session while the account is still an admin.
+  The agent retains the original expiry and retries membership confirmation on its next
+  heartbeat, so a contradictory claim cannot bypass timed enforcement.
 
 ### Changes
 
@@ -32,11 +38,17 @@ None.
   no longer counts as unreadable, so it doesn't mark the Mac **Partly checked** in Fleet
   (#115).
 
-## Server 0.7.0 - unreleased
+## Server 0.8.0 - unreleased
 
 ### Upgrade order
 
-None needed beyond the usual: upgrade the server before the agents.
+Upgrade the server before the agents.
+
+On the first start after this upgrade, **Approve Macs that enrol again** is enabled for
+all existing tenants, including those where it was off. Current credentials and other
+settings stay as they are. A replacement key waits for approval, including after the old
+key was revoked. An admin who needs automatic replacement must explicitly turn the
+setting off after upgrading.
 
 ### Breaking changes
 
@@ -44,7 +56,16 @@ None.
 
 ### Security
 
-None.
+- Re-enrolment requires approval by default. Missing or null approval flags in stored
+  settings and API updates keep approval on; only an explicit `false` opts out. First
+  enrolments still trust the shared token and need checking against independent inventory.
+- Events cannot alter a session owned by another Mac or local account. A conflicting
+  batch is refused without changing events, session or device state, or pending exports.
+- Splunk exports complete only after a valid explicit accepted HEC acknowledgement.
+  Redirects and ambiguous, invalid or incomplete responses keep the batch queued for retry.
+- Compose and Azure use the same digest-pinned Caddy 2.11.7 proxy rebuilt with patched
+  Go and HTTP/2 dependencies. Each server release verifies and scans both platform
+  binaries before publishing the exact reviewed image.
 
 ### Changes
 

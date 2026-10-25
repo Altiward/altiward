@@ -1,0 +1,6 @@
+*
+!Dockerfile
+!go.mod
+!go.sum
+!main.go
+!THIRD_PARTY_NOTICES.md

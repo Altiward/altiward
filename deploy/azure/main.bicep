@@ -45,10 +45,9 @@ param consoleToken string = replace(newGuid(), '-', '')
 // workflow refuses a tag it doesn't match.
 var version = '0.6.0'
 var image = 'ghcr.io/altiward/altiward-api:${version}'
-// The Docker Official Image, copied next to Altiward's by each server release
-// (release-server.yml): Docker Hub and other public mirrors limit anonymous pulls by
-// address, and container apps share their outbound addresses.
-var caddyImage = 'ghcr.io/altiward/caddy:2.8-alpine'
+// Rebuilt with patched dependencies, scanned and published by each server release.
+// Compose uses the same reviewed digest (deploy/caddy/README.md).
+var caddyImage = 'ghcr.io/altiward/caddy:2.11.7-altiward.1@sha256:76624d6dc80027a6e59d9e4bece0654048c49565fff9b4acf40a56b1d3829c19'
 
 var suffix = uniqueString(resourceGroup().id, namePrefix)
 var names = {

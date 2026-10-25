@@ -74,6 +74,33 @@ struct ExpiryEnforcementTests {
         #expect(events[1].detail["admin_members"] == .strings([]))
     }
 
+    @Test(arguments: [OutOfBandEnforcement.alert, .enforce])
+    func contradictoryGiveBackCannotDiscardOriginalExpiry(outOfBand: OutOfBandEnforcement) throws {
+        let store = try makeStore()
+        let config = AgentConfiguration(
+            expiryEnforcement: .enforce, expiryGracePeriod: 300, outOfBandEnforcement: outOfBand)
+        let tracker = ElevationTracker(store: store, environment: makeEnvironment(
+            admins: admins, clock: clock, config: config, privilegesLogAvailability: { .available }))
+        let granted = try grant(tracker)
+        clock.advance(600)
+
+        #expect(throws: ElevationTracker.ClaimRefused.self) {
+            try tracker.submit(HookInvocation(user: "jdoe", state: .user, reason: nil, invokedAt: clock.now), callerUID: 501)
+        }
+        #expect(try store.openSession(user: "jdoe")?.expiresAt == granted.elevation?.expires)
+        let beforeExpiry = try store.pending(limit: 100).map(\.event)
+        #expect(!beforeExpiry.contains { $0.type == .elevationRevoked })
+        #expect(beforeExpiry.last?.type == .agentTamper)
+        #expect(beforeExpiry.last?.detail["kind"] == "give_back")
+
+        clock.advance(15 * 60)
+        let enforced = try #require(try tracker.heartbeat().first { $0.type == .elevationExpiredEnforced })
+        #expect(enforced.sessionID == granted.sessionID)
+        #expect(enforced.elevation?.expires == granted.elevation?.expires)
+        #expect(!admins.isAdmin(user: "jdoe"))
+        #expect(try store.openSession(user: "jdoe") == nil)
+    }
+
     @Test func failedRemovalIsReportedOnceAndRetried() throws {
         let (tracker, store) = try tracker(.enforce)
         let granted = try grant(tracker)

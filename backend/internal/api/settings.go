@@ -21,7 +21,7 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request, p auth.Prin
 }
 
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, p auth.Principal) {
-	var settings store.TenantSettings
+	settings := store.DefaultTenantSettings()
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&settings); err != nil {

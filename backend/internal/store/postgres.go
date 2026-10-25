@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -114,6 +116,12 @@ func (p *Postgres) Ingest(ctx context.Context, tenantID string, events []event.E
 	res := IngestResult{Accepted: []string{}, Duplicate: []string{}}
 	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
 		res = IngestResult{Accepted: []string{}, Duplicate: []string{}}
+		// Absent session rows cannot be protected by SELECT FOR UPDATE. Serialise
+		// ingestion within a tenant before any writes, covering first writers and
+		// opposite event orders with one bounded advisory lock per transaction.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, ingestLockID(tenantID)); err != nil {
+			return fmt.Errorf("lock ingestion: %w", err)
+		}
 		for _, e := range events {
 			body, err := json.Marshal(e)
 			if err != nil {
@@ -150,7 +158,17 @@ func (p *Postgres) Ingest(ctx context.Context, tenantID string, events []event.E
 		}
 		return nil
 	})
+	if err != nil {
+		return IngestResult{Accepted: []string{}, Duplicate: []string{}}, err
+	}
 	return res, err
+}
+
+func ingestLockID(tenantID string) int64 {
+	// The namespace keeps this separate from other advisory-lock uses. Hash
+	// collisions only serialise unrelated tenants; ownership is checked separately.
+	digest := sha256.Sum256([]byte("altiward.ingest.tenant:" + tenantID))
+	return int64(binary.BigEndian.Uint64(digest[:8]))
 }
 
 func (p *Postgres) applySession(ctx context.Context, tx pgx.Tx, tenantID, sessionID string, e event.Event, now time.Time) error {
@@ -167,7 +185,9 @@ func (p *Postgres) applySession(ctx context.Context, tx pgx.Tx, tenantID, sessio
 			return fmt.Errorf("decode session: %w", err)
 		}
 	}
-	s.Apply(e)
+	if err := s.Apply(e); err != nil {
+		return fmt.Errorf("event %s: %w", e.EventID, err)
+	}
 	state, err = json.Marshal(s)
 	if err != nil {
 		return err

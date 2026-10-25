@@ -11,6 +11,12 @@ actions arrive the same way with `host=altiward`.
 2. Set `ALTIWARD_SPLUNK_HEC_URL` (e.g. `https://splunk.example.com:8088`) and
    `ALTIWARD_SPLUNK_HEC_TOKEN` on the API.
 
+The URL must reach the HEC service directly. Redirects, including redirects to a sign-in
+page, fail delivery and leave the batch queued. A delivery completes only after HTTP 200
+with one complete JSON acknowledgement containing an explicit integer `code`: `0`, or
+Splunk's accepted capacity warnings `24` and `25`. Missing, null, malformed, oversized or
+interrupted acknowledgements are retried. See [Splunk's response code reference](https://help.splunk.com/en/splunk-enterprise/get-started/get-data-in/10.2/get-data-with-http-event-collector/troubleshoot-http-event-collector).
+
 ## Dashboard
 
 The **Altiward overview** dashboard, `altiward_overview.xml` in the server release bundle,

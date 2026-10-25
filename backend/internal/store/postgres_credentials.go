@@ -202,11 +202,14 @@ func tenantSettings(ctx context.Context, q querier, tenantID string) (TenantSett
 	var body []byte
 	err := q.QueryRow(ctx, `SELECT settings FROM tenant_settings WHERE tenant_id = $1`, tenantID).Scan(&body)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return TenantSettings{}, nil
+		return DefaultTenantSettings(), nil
 	}
 	if err != nil {
 		return TenantSettings{}, err
 	}
-	var s TenantSettings
-	return s, json.Unmarshal(body, &s)
+	s := DefaultTenantSettings()
+	if err := json.Unmarshal(body, &s); err != nil {
+		return TenantSettings{}, err
+	}
+	return s, nil
 }

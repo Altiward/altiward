@@ -78,9 +78,13 @@ Privileges runs the hook as the logged-in user, who can call it with anything, s
 untrusted: the agent, running as root, verifies everything it says against the `admin`
 group and takes its own timestamps. Each Mac enrolls with its own key and signs what it
 sends, so nothing can send as an enrolled Mac without its key. A new key for a Mac that is
-already enrolled replaces the old one, or waits for your approval when **Approve Macs that
-enroll again** is on ([settings](docs/install.md#6-settings-worth-reviewing)). The agent's
-[design notes](agent/README.md#design-notes) have the detail.
+already enrolled waits for your approval by default, while its current key keeps reporting.
+**Approve Macs that enrol again** is also enabled once when upgrading from earlier server
+releases. Turning it off lets anyone with the enrolment token replace an enrolled Mac's identity
+by naming its serial. The shared token cannot establish that a serial enrolling for the
+first time belongs to the caller: check new enrolments against your device inventory.
+See [settings](docs/install.md#6-settings-worth-reviewing) and the agent's
+[design notes](agent/README.md#design-notes).
 
 ### Status
 

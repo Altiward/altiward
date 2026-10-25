@@ -218,8 +218,11 @@ func TestEventsMustComeFromTheirOwnDevice(t *testing.T) {
 	}
 }
 
-func TestReenrollmentReplacesByDefault(t *testing.T) {
+func TestReenrollmentReplacesOnlyAfterExplicitOptOut(t *testing.T) {
 	h := newServer(t)
+	if rec, _ := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"reenrollment_requires_approval": false}); rec.Code != http.StatusOK {
+		t.Fatalf("opt-out: %d %s", rec.Code, rec.Body)
+	}
 	old := enrollAgent(t, h, fixtureSerial)
 	reinstalled := enrollAgent(t, h, fixtureSerial)
 	if reinstalled.status != "active" {
@@ -234,18 +237,16 @@ func TestReenrollmentReplacesByDefault(t *testing.T) {
 func TestReenrollmentApprovalFlow(t *testing.T) {
 	h := newServer(t)
 	rec, out := do(t, h, "GET", "/v1/settings", consoleToken, nil)
-	if rec.Code != 200 || out["reenrollment_requires_approval"] != false {
+	if rec.Code != 200 || out["reenrollment_requires_approval"] != true {
 		t.Fatalf("default settings: %d %s", rec.Code, rec.Body)
 	}
-	rec, _ = do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"reenrollment_requires_approval": true})
-	if rec.Code != 200 {
-		t.Fatalf("put settings: %d %s", rec.Code, rec.Body)
-	}
-
 	old := enrollAgent(t, h, fixtureSerial)
 	pending := enrollAgent(t, h, fixtureSerial)
 	if pending.status != "pending" {
 		t.Fatalf("status = %s", pending.status)
+	}
+	if rec, out := pending.enroll(t, fixtureSerial); rec.Code != http.StatusOK || out["device_id"] != pending.deviceID || out["status"] != "pending" {
+		t.Fatalf("pending retry: %d %s", rec.Code, rec.Body)
 	}
 	rec, out = pending.post(t, batch(t, "elevation-granted"))
 	wantCode(t, rec, out, http.StatusForbidden, "enrollment_pending")

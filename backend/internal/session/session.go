@@ -5,11 +5,14 @@
 package session
 
 import (
+	"errors"
 	"slices"
 	"time"
 
 	"github.com/Altiward/altiward/backend/internal/event"
 )
+
+var ErrOwnerConflict = errors.New("session owner conflicts with the event")
 
 // Flags raised on a session; the console and detection rules key off them.
 const (
@@ -90,20 +93,39 @@ func (s Session) ActualDuration(now time.Time) *time.Duration {
 	return &d
 }
 
-// Apply folds one event into the session.
-func (s *Session) Apply(e event.Event) {
+// BindOwner rejects conflicting identity before changing anything. Empty fields from
+// older state, or an accountless first event, remain unknown until an event supplies them.
+// Only ownership fields change, so stores can preflight value copies without altering
+// the session's flags or other reducer state.
+func (s *Session) BindOwner(e event.Event) error {
+	if e.SessionID == nil || *e.SessionID != s.SessionID ||
+		s.DeviceSerial != "" && s.DeviceSerial != e.Device.Serial ||
+		s.HardwareUUID != "" && s.HardwareUUID != e.Device.HardwareUUID ||
+		e.User != nil && s.LocalUser != "" && s.LocalUser != e.User.LocalName {
+		return ErrOwnerConflict
+	}
+	if s.DeviceSerial == "" {
+		s.DeviceSerial = e.Device.Serial
+	}
+	if s.HardwareUUID == "" {
+		s.HardwareUUID = e.Device.HardwareUUID
+	}
+	if e.User != nil && s.LocalUser == "" {
+		s.LocalUser = e.User.LocalName
+	}
+	return nil
+}
+
+// Apply folds an event into its owning session. A conflicting event changes no state.
+func (s *Session) Apply(e event.Event) error {
+	if err := s.BindOwner(e); err != nil {
+		return err
+	}
 	s.EventCount++
 	if e.Timestamp.After(s.LastEventAt) {
 		s.LastEventAt = e.Timestamp
 	}
-	if s.DeviceSerial == "" {
-		s.DeviceSerial = e.Device.Serial
-		s.HardwareUUID = e.Device.HardwareUUID
-	}
 	if e.User != nil {
-		if s.LocalUser == "" {
-			s.LocalUser = e.User.LocalName
-		}
 		if e.User.UPN != nil {
 			s.UPN = e.User.UPN
 		}
@@ -166,6 +188,7 @@ func (s *Session) Apply(e event.Event) {
 	case event.PersistenceDetected:
 		s.flag(FlagPersistenceDetected)
 	}
+	return nil
 }
 
 func (s *Session) start(t time.Time) {

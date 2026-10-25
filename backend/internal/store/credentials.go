@@ -76,8 +76,8 @@ type CredentialFilter struct {
 
 // TenantSettings are per-tenant switches set from the console.
 type TenantSettings struct {
-	// A new key for a serial that already has an active credential waits for console
-	// approval instead of replacing it.
+	// A new key for a serial that enrolled before waits for console approval, even
+	// when the previous credential was revoked. Enabled by default.
 	ReenrollmentRequiresApproval bool `json:"reenrollment_requires_approval"`
 	// SilentAfterHours is how long a Mac may go without checking in before the backend
 	// raises agent.silent; 0 means DefaultSilentAfterHours.
@@ -86,6 +86,13 @@ type TenantSettings struct {
 	// quiet Macs in its SIEM. A Mac already reported silent still sends "resumed" when it
 	// checks in, so its alert closes. False, the zero value, keeps them on.
 	SilentAlertsOff bool `json:"silent_alerts_off"`
+}
+
+// DefaultTenantSettings requires approval before a new key can replace an enrolled Mac.
+// Initialise JSON decoding with these defaults so missing or null flags stay secure.
+// An explicit false remains an administrator's supported opt-out.
+func DefaultTenantSettings() TenantSettings {
+	return TenantSettings{ReenrollmentRequiresApproval: true}
 }
 
 // Bounds for TenantSettings.SilentAfterHours. The default rides out a laptop closed over
@@ -110,8 +117,8 @@ type Credentials interface {
 	// CreatedAt). The same key again returns its existing credential, KeyStorage
 	// unchanged; a key held by another tenant
 	// is ErrConflict. A serial's first credential is active. A later one replaces the
-	// active credential (revoking it) unless the tenant requires approval, in which case
-	// it is pending, even when the earlier credential was revoked. There is no limit on
+	// active credential (revoking it) only when the tenant explicitly disables approval.
+	// Otherwise it is pending, even when the earlier credential was revoked. There is no limit on
 	// the number of active Macs.
 	Enroll(ctx context.Context, c DeviceCredential) (EnrollResult, error)
 	// Credential looks a credential up by device ID across tenants, for authentication.

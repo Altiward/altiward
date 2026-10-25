@@ -51,6 +51,22 @@ describe("Settings tabs", () => {
 });
 
 describe("Settings", () => {
+  it("explains the secure approval default and preserves an explicit opt-out", async () => {
+    const api = fakeApi({
+      settings: vi.fn(async () => ({ reenrollment_requires_approval: true, silent_after_hours: 48, silent_alerts_off: false })),
+      putSettings: vi.fn(async (s) => s),
+    });
+    renderView(api);
+    const approval = await screen.findByRole("switch", { name: /Approve Macs that enrol again/ });
+    await waitFor(() => expect(approval).toBeEnabled());
+    expect(approval).toBeChecked();
+    expect(screen.getByText(/Turning this off lets anyone with the enrolment token/)).toBeInTheDocument();
+    await userEvent.click(approval);
+    expect(api.putSettings).toHaveBeenCalledWith({
+      reenrollment_requires_approval: false, silent_after_hours: 48, silent_alerts_off: false,
+    });
+  });
+
   it("shows the default silence limit and saves a new one without touching the rest", async () => {
     const api = fakeApi({
       settings: vi.fn(async () => ({ reenrollment_requires_approval: true, silent_after_hours: 0, silent_alerts_off: false })),
@@ -112,7 +128,7 @@ describe("Settings", () => {
       putSettings: vi.fn(async (s) => s),
     });
     renderView(api);
-    await userEvent.click(await screen.findByRole("switch", { name: /Approve Macs that enroll again/ }));
+    await userEvent.click(await screen.findByRole("switch", { name: /Approve Macs that enrol again/ }));
     expect(api.putSettings).toHaveBeenCalledWith({
       reenrollment_requires_approval: true, silent_after_hours: 48, silent_alerts_off: false,
     });
