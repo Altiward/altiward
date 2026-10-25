@@ -61,7 +61,7 @@ The agent connects only to the server address in your MDM profile (`ServerURL`),
 HTTPS. It contains no third-party code, and makes no connections to Apple, SAP, Altiward
 or anyone else. It:
 
-- enrolls once with the enrollment token from your profile, registering a key it makes
+- enrolls once with the enrolment token from your profile, registering a key it makes
   on the Mac and saying whether that key is in the Mac's Secure Enclave;
 - sends events as they happen, and a health event every 5 minutes;
 - keeps a request open for commands (such as a revoke), which your server holds for up to
@@ -162,11 +162,18 @@ security records ([Backups](install.md#backups)).
   users but not from someone with admin rights on the Mac. Revoking a Mac's key in
   **Enrollments** makes it enroll again with a new one. The key isn't in the Keychain, so
   removing the agent with `--purge` leaves nothing behind.
-- **The enrollment token** lets a Mac enroll, and does nothing else. It is in the MDM
-  profile, so anyone on a Mac can read it. A new enrollment shows in **Enrollments**, where
-  an admin can revoke it, and with **Approve Macs that enroll again** on, a Mac that
-  returns with a new key waits for approval. Changing the token doesn't affect Macs
-  already enrolled.
+- **The enrolment token** lets a Mac enrol, and does nothing else. It is in the MDM
+  profile, so anyone on a Mac can read it. A new enrolment shows in **Enrollments**, where
+  an admin can revoke it. **Approve Macs that enrol again** is on by default: a new
+  key for a serial that enrolled before waits for approval, even after its earlier key
+  was revoked. An earlier active key stays valid until approval. Server 0.7.0 also enables
+  approval once for existing tenants; admins can explicitly turn it off afterwards.
+  With approval off, anyone with the shared token can replace an enrolled Mac's identity
+  by naming its serial, even when the earlier key is protected by the Secure Enclave.
+  The shared token cannot verify ownership of a serial enrolling for the first time.
+  Check new enrolments against independently verified inventory; per-device bootstrap
+  credentials are needed for stronger first-enrolment assurance. Changing the token
+  doesn't affect Macs already enrolled.
 - **Console and agent tokens** are kept in the server's `.env` file (keep it `chmod 600`).
   The server holds only their SHA-256 digests in memory and records each by a fingerprint,
   never the token.

@@ -91,14 +91,16 @@ function GeneralSettings() {
         <div className="box">
           <label className="row">
             <span>
-              <span>Approve Macs that enroll again</span>
+              <span>Approve Macs that enrol again</span>
               <p className="hint">
-                When a Mac that already enrolled shows up with a new key, for example after a reinstall, its
-                reports wait until you approve it in Enrollments. Off: the new key replaces the old one at once.
+                On by default and recommended. A new key for a Mac that enrolled before waits for approval
+                in Enrollments; its current key keeps reporting. Turning this off lets anyone with the
+                enrolment token replace an enrolled Mac's identity by naming its serial. First enrolments
+                still use the shared token: check them against your device inventory.
               </p>
             </span>
             <input type="checkbox" role="switch" disabled={!data || saving || !canChange}
-              checked={data?.reenrollment_requires_approval ?? false}
+              checked={data?.reenrollment_requires_approval ?? true}
               onChange={(e) => save({ reenrollment_requires_approval: e.target.checked })} />
           </label>
         </div>

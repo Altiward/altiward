@@ -20,7 +20,7 @@ func (m *Memory) Enroll(_ context.Context, c DeviceCredential) (EnrollResult, er
 	}
 	var res EnrollResult
 	active, hasActive := m.activeFor(c.TenantID, c.Serial)
-	if m.settings[c.TenantID].ReenrollmentRequiresApproval && m.enrolledBefore(c.TenantID, c.Serial) {
+	if m.tenantSettings(c.TenantID).ReenrollmentRequiresApproval && m.enrolledBefore(c.TenantID, c.Serial) {
 		c.Status = CredentialPending
 	} else {
 		c.Status = CredentialActive
@@ -99,7 +99,7 @@ func (m *Memory) ListCredentials(_ context.Context, tenantID string, f Credentia
 func (m *Memory) TenantSettings(_ context.Context, tenantID string) (TenantSettings, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.settings[tenantID], nil
+	return m.tenantSettings(tenantID), nil
 }
 
 func (m *Memory) PutTenantSettings(_ context.Context, tenantID string, s TenantSettings, a AuditEntry) error {
@@ -135,3 +135,11 @@ func (m *Memory) revoke(c DeviceCredential, now time.Time) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// tenantSettings expects m.mu held and distinguishes absent settings from an explicit opt-out.
+func (m *Memory) tenantSettings(tenantID string) TenantSettings {
+	if settings, ok := m.settings[tenantID]; ok {
+		return settings
+	}
+	return DefaultTenantSettings()
+}

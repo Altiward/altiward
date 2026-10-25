@@ -106,8 +106,11 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 	})
 
-	t.Run("re-enrollment replaces by default", func(t *testing.T) {
+	t.Run("re-enrollment replaces only after an explicit opt-out", func(t *testing.T) {
 		s, tenant, serial := setup(t)
+		if err := s.PutTenantSettings(ctx, tenant, TenantSettings{ReenrollmentRequiresApproval: false}, auditFor(t, tenant, AuditChangeSettings)); err != nil {
+			t.Fatal(err)
+		}
 		old := enroll(t, s, tenant, serial, newKey(t), t0)
 		res := enroll(t, s, tenant, serial, newKey(t), t0.Add(time.Hour))
 		if res.Credential.Status != CredentialActive || res.Replaced != old.Credential.DeviceID {
@@ -119,16 +122,18 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 	})
 
-	t.Run("re-enrollment waits for approval when the tenant requires it", func(t *testing.T) {
+	t.Run("re-enrollment waits for approval by default", func(t *testing.T) {
 		s, tenant, serial := setup(t)
-		if err := s.PutTenantSettings(ctx, tenant, TenantSettings{ReenrollmentRequiresApproval: true}, auditFor(t, tenant, AuditChangeSettings)); err != nil {
-			t.Fatal(err)
-		}
 		old := enroll(t, s, tenant, serial, newKey(t), t0)
 		if old.Credential.Status != CredentialActive {
 			t.Fatalf("first enrollment = %s, want active even with approval on", old.Credential.Status)
 		}
-		res := enroll(t, s, tenant, serial, newKey(t), t0.Add(time.Hour))
+		key := newKey(t)
+		res := enroll(t, s, tenant, serial, key, t0.Add(time.Hour))
+		again := enroll(t, s, tenant, serial, key, t0.Add(90*time.Minute))
+		if again.Credential.DeviceID != res.Credential.DeviceID || again.Credential.Status != CredentialPending || again.Replaced != "" {
+			t.Fatalf("pending retry = %+v", again)
+		}
 		if res.Credential.Status != CredentialPending || res.Replaced != "" {
 			t.Fatalf("re-enrollment = %+v", res)
 		}
@@ -151,14 +156,15 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 	})
 
-	t.Run("with approval on, a revoked Mac cannot re-enroll by itself", func(t *testing.T) {
+	t.Run("a revoked Mac cannot re-enroll by default", func(t *testing.T) {
 		s, tenant, serial := setup(t)
-		if err := s.PutTenantSettings(ctx, tenant, TenantSettings{ReenrollmentRequiresApproval: true}, auditFor(t, tenant, AuditChangeSettings)); err != nil {
-			t.Fatal(err)
-		}
-		old := enroll(t, s, tenant, serial, newKey(t), t0)
+		oldKey := newKey(t)
+		old := enroll(t, s, tenant, serial, oldKey, t0)
 		if _, err := s.RevokeCredential(ctx, tenant, old.Credential.DeviceID, t0.Add(time.Minute), auditFor(t, tenant, AuditRevokeEnrollment)); err != nil {
 			t.Fatal(err)
+		}
+		if again := enroll(t, s, tenant, serial, oldKey, t0.Add(30*time.Minute)); again.Credential.Status != CredentialRevoked || again.Credential.DeviceID != old.Credential.DeviceID {
+			t.Fatalf("revoked key retry = %+v", again)
 		}
 		res := enroll(t, s, tenant, serial, newKey(t), t0.Add(time.Hour))
 		if res.Credential.Status != CredentialPending {
@@ -188,6 +194,9 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 
 	t.Run("list filters by status and serial, newest first", func(t *testing.T) {
 		s, tenant, serial := setup(t)
+		if err := s.PutTenantSettings(ctx, tenant, TenantSettings{ReenrollmentRequiresApproval: false}, auditFor(t, tenant, AuditChangeSettings)); err != nil {
+			t.Fatal(err)
+		}
 		a := enroll(t, s, tenant, serial, newKey(t), t0)
 		b := enroll(t, s, tenant, serial, newKey(t), t0.Add(time.Hour)) // revokes a
 		other := enroll(t, s, tenant, serial+"X", newKey(t), t0.Add(2*time.Hour))
@@ -228,14 +237,14 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 	t.Run("tenant settings default and round-trip", func(t *testing.T) {
 		s, tenant, _ := setup(t)
 		got, err := s.TenantSettings(ctx, tenant)
-		if err != nil || got.ReenrollmentRequiresApproval {
+		if err != nil || !got.ReenrollmentRequiresApproval {
 			t.Fatalf("default = %+v, %v", got, err)
 		}
-		if err := s.PutTenantSettings(ctx, tenant, TenantSettings{ReenrollmentRequiresApproval: true}, auditFor(t, tenant, AuditChangeSettings)); err != nil {
+		if err := s.PutTenantSettings(ctx, tenant, TenantSettings{ReenrollmentRequiresApproval: false}, auditFor(t, tenant, AuditChangeSettings)); err != nil {
 			t.Fatal(err)
 		}
-		if got, _ := s.TenantSettings(ctx, tenant); !got.ReenrollmentRequiresApproval {
-			t.Fatal("setting not stored")
+		if got, _ := s.TenantSettings(ctx, tenant); got.ReenrollmentRequiresApproval {
+			t.Fatal("explicit opt-out not stored")
 		}
 	})
 

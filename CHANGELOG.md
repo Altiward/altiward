@@ -42,14 +42,24 @@ None.
 
 ### Upgrade order
 
-None needed beyond the usual: upgrade the server before the agents.
+Upgrade the server before the agents.
+
+On the first start after this upgrade, **Approve Macs that enrol again** is enabled for
+all existing tenants, including those where it was off. Current credentials and other
+settings stay as they are. A replacement key waits for approval, including after the old
+key was revoked. An admin who needs automatic replacement must explicitly turn the
+setting off after upgrading.
 
 ### Breaking changes
 
-None.
+Re-enrolment now waits for approval by default. This upgrade enables approval once for
+existing tenants; an admin must explicitly opt out afterwards to allow automatic replacement.
 
 ### Security
 
+- Re-enrolment requires approval by default. Missing or null approval flags in stored
+  settings and API updates keep approval on; only an explicit `false` opts out. First
+  enrolments still trust the shared token and need checking against independent inventory.
 - Events cannot alter a session owned by another Mac or local account. A conflicting
   batch is refused without changing events, session or device state, or pending exports.
 - Splunk exports complete only after a valid explicit accepted HEC acknowledgement.
