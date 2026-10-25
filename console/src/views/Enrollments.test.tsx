@@ -1,9 +1,9 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { JSX } from "react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
-import type { Enrollment } from "../api";
+import type { Device, Enrollment } from "../api";
 import { ApiContext } from "../context";
 import { fakeApi, session } from "../test/fixtures";
 import { AdminsNowView } from "./AdminsNow";
@@ -102,6 +102,109 @@ describe("Enrollments, where each key is kept", () => {
     await userEvent.click(rows.find((r) => r.closest("tr")?.textContent?.includes("Waiting"))!);
     expect(screen.getByRole("complementary", { name: "Enrollment details" }))
       .toHaveTextContent("The key this Mac uses now is in the Secure Enclave, but this new one isn’t.");
+  });
+});
+
+describe("Enrollments, the evidence for a pending key", () => {
+  const active: Enrollment = { ...pending, device_id: "d-active", status: "active", activated_at: "2026-10-01T00:00:00Z" };
+  const mac = (over: Partial<Device> = {}): Device => ({
+    serial: "C02XK0AAJGH5", hardware_uuid: "HW-1", os_version: "26.1.0", agent_version: "0.5.0", privileges_version: "2.6.0",
+    first_seen_at: "2026-10-01T00:00:00Z", last_seen_at: "2026-10-01T00:00:00Z", last_health_at: null,
+    admin_members: [], queue_depth: 0, privileges: {}, ...over,
+  });
+  const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
+  const openPending = async () => {
+    const rows = await screen.findAllByText("C02XK0AAJGH5");
+    await userEvent.click(rows.find((r) => r.closest("tr")?.textContent?.includes("Waiting"))!);
+    return screen.getByRole("complementary", { name: "Enrollment details" });
+  };
+
+  it("says when the Mac last checked in with its current key", async () => {
+    renderView(fakeApi({
+      enrollments: vi.fn(async () => [pending, active]),
+      devices: vi.fn(async () => [mac({ last_received_at: minutesAgo(4) })]),
+    }), <EnrollmentsView />);
+    const inspector = await openPending();
+    expect(await within(inspector).findByText("This Mac last checked in 4 minutes ago with its current key.")).toBeInTheDocument();
+  });
+
+  it("uses the check-in time the Fleet view shows, by the server's clock first", async () => {
+    renderView(fakeApi({
+      enrollments: vi.fn(async () => [pending, active]),
+      devices: vi.fn(async () => [mac({ last_seen_at: minutesAgo(90), last_health_at: minutesAgo(30), last_received_at: minutesAgo(2) })]),
+    }), <EnrollmentsView />);
+    const inspector = await openPending();
+    expect(await within(inspector).findByText("This Mac last checked in 2 minutes ago with its current key.")).toBeInTheDocument();
+  });
+
+  it("says so when the Mac hasn't checked in yet", async () => {
+    renderView(fakeApi({ enrollments: vi.fn(async () => [pending]), devices: vi.fn(async () => []) }), <EnrollmentsView />);
+    const inspector = await openPending();
+    expect(await within(inspector).findByText("This Mac hasn't checked in yet.")).toBeInTheDocument();
+    expect(inspector).not.toHaveTextContent("last checked in");
+  });
+
+  it("leaves the check-in line out when the devices don't load, and still lets you approve", async () => {
+    const api = fakeApi({
+      enrollments: vi.fn(async () => [pending, active]),
+      devices: vi.fn(async () => { throw new Error("devices are down"); }),
+      approveEnrollment: vi.fn(async () => ({ ...pending, status: "active" as const })),
+    });
+    renderView(api, <EnrollmentsView />);
+    const inspector = await openPending();
+    await waitFor(() => expect(api.devices).toHaveBeenCalled());
+    expect(inspector).not.toHaveTextContent(/last checked in|hasn't checked in/);
+    expect(screen.queryByText("devices are down")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    await userEvent.click(within(inspector).getByRole("button", { name: "Approve" }));
+    expect(api.approveEnrollment).toHaveBeenCalledWith("d-pending");
+  });
+
+  it("only shows the check-in line for a key waiting for approval", async () => {
+    renderView(fakeApi({
+      enrollments: vi.fn(async () => [pending, active]),
+      devices: vi.fn(async () => [mac({ last_received_at: minutesAgo(4) })]),
+    }), <EnrollmentsView />);
+    const pendingInspector = await openPending();
+    // The devices have loaded once the pending key shows its line.
+    expect(await within(pendingInspector).findByText(/last checked in 4 minutes ago/)).toBeInTheDocument();
+    await userEvent.click(within(pendingInspector).getByRole("button", { name: "Close details" }));
+
+    const rows = screen.getAllByText("C02XK0AAJGH5");
+    await userEvent.click(rows.find((r) => r.closest("tr")?.textContent?.includes("Active"))!);
+    const activeInspector = screen.getByRole("complementary", { name: "Enrollment details" });
+    expect(within(activeInspector).getByText("Key kept in")).toBeInTheDocument();
+    expect(activeInspector).not.toHaveTextContent("checked in");
+  });
+
+  it("warns, with a word and a glyph, when the new key reports different hardware", async () => {
+    const changed: Enrollment = { ...pending, hardware_uuid: "HW-NEW" };
+    renderView(fakeApi({
+      enrollments: vi.fn(async () => [changed, { ...active, hardware_uuid: "HW-OLD" }]),
+    }), <EnrollmentsView />);
+    const inspector = await openPending();
+    const warning = within(inspector).getByText(
+      "The new key reports a different hardware UUID (HW-NEW, was HW-OLD). Expect this only after a logic board replacement.",
+    );
+    const tag = warning.closest("p")!.querySelector(".tag")!;
+    expect(tag).toHaveTextContent("Warning");
+    expect(tag.querySelector("svg")).not.toBeNull();
+  });
+
+  it("doesn't warn when the hardware is the same", async () => {
+    renderView(fakeApi({ enrollments: vi.fn(async () => [pending, active]) }), <EnrollmentsView />);
+    expect(await openPending()).not.toHaveTextContent("different hardware UUID");
+  });
+
+  it("doesn't warn when there is no active key to compare with", async () => {
+    renderView(fakeApi({ enrollments: vi.fn(async () => [{ ...pending, hardware_uuid: "HW-NEW" }]) }), <EnrollmentsView />);
+    expect(await openPending()).not.toHaveTextContent("different hardware UUID");
+  });
+
+  it("compares with this Mac's active key, not another Mac's", async () => {
+    const other: Enrollment = { ...active, device_id: "d-other", serial: "SERIAL-OTHER", hardware_uuid: "HW-OTHER" };
+    renderView(fakeApi({ enrollments: vi.fn(async () => [pending, active, other]) }), <EnrollmentsView />);
+    expect(await openPending()).not.toHaveTextContent("different hardware UUID");
   });
 });
 

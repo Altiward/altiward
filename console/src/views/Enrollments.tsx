@@ -1,14 +1,14 @@
 import { type JSX, useMemo, useState } from "react";
-import type { CredentialStatus, Enrollment, KeyStorage } from "../api";
+import type { CredentialStatus, Device, Enrollment, KeyStorage } from "../api";
 import { Banner, Details, Empty, Explain, Missing, RoleNote, SearchField, Segmented, Toolbar } from "../components/Chrome";
 import { Fingerprint } from "../components/Fingerprint";
-import { ChipGlyph, CloseIcon, EndedGlyph, FileGlyph } from "../components/Icons";
+import { AttentionGlyph, ChipGlyph, CloseIcon, EndedGlyph, FileGlyph } from "../components/Icons";
 import { ConfirmSheet } from "../components/Sheet";
 import { StateBadge } from "../components/StateBadge";
 import { Table } from "../components/Table";
 import { useApi, useCan } from "../context";
 import { explanations } from "../explanations";
-import { dateTime } from "../format";
+import { dateTime, lastCheckIn, relativeTimeInWords } from "../format";
 import { useLoad } from "../useLoad";
 
 type Filter = CredentialStatus | "all";
@@ -29,6 +29,9 @@ function KeyKeptIn({ storage }: { storage: KeyStorage }) {
 export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
   const api = useApi();
   const { data, error, reload } = useLoad(() => api.enrollments(), [], 30_000);
+  // Evidence for the inspector only: if the devices don't load, it leaves that out and
+  // the rest of the view works as before.
+  const devices = useLoad(() => api.devices(), [], 30_000);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
@@ -44,7 +47,7 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
 
   return (
     <>
-      <Toolbar title="Enrollments" subtitle={pending ? `${pending} waiting for approval` : undefined} onRefresh={reload}>
+      <Toolbar title="Enrollments" subtitle={pending ? `${pending} waiting for approval` : undefined} onRefresh={() => { void reload(); void devices.reload(); }}>
         <Segmented label="Show" value={filter} onChange={setFilter} options={[
           { value: "all", title: "All" }, { value: "pending", title: "Waiting" },
           { value: "active", title: "Active" }, { value: "revoked", title: "Revoked" },
@@ -79,10 +82,8 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
           )}
         </div>
         {current && (
-          <EnrollmentInspector enrollment={current} onClose={() => setSelected(null)}
-            newMac={!(data ?? []).some((e) => e.serial === current.serial && e.device_id !== current.device_id && e.status === "active")}
-            replacesEnclaveKey={(data ?? []).some((e) => e.serial === current.serial && e.device_id !== current.device_id &&
-              e.status === "active" && e.key_storage === "secure_enclave")}
+          <EnrollmentInspector enrollment={current} onClose={() => setSelected(null)} devices={devices.data}
+            active={(data ?? []).find((e) => e.serial === current.serial && e.device_id !== current.device_id && e.status === "active")}
             onDone={(text) => { setDone(text); void reload(); onChanged?.(); }} />
         )}
       </div>
@@ -91,12 +92,16 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
 }
 
 /** A Mac's credentials: a pending one for a Mac with no active one is a new Mac; a
- *  re-enrollment replaces the Mac's active key when approved. */
-function EnrollmentInspector({ enrollment: e, newMac, replacesEnclaveKey, onClose, onDone }: {
-  enrollment: Enrollment; newMac: boolean; replacesEnclaveKey: boolean; onClose: () => void;
+ *  re-enrollment replaces the Mac's `active` key when approved. `devices` is null until
+ *  the Fleet's list has loaded, or if it can't. */
+function EnrollmentInspector({ enrollment: e, active, devices, onClose, onDone }: {
+  enrollment: Enrollment; active: Enrollment | undefined; devices: Device[] | null; onClose: () => void;
   onDone: (message: string) => void;
 }) {
   const api = useApi();
+  const newMac = !active;
+  const replacesEnclaveKey = active?.key_storage === "secure_enclave";
+  const device = devices?.find((d) => d.serial === e.serial);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -171,6 +176,19 @@ function EnrollmentInspector({ enrollment: e, newMac, replacesEnclaveKey, onClos
       {e.status === "pending" && newMac && (
         <p className="secondary" style={{ marginTop: 12 }}>
           This Mac is waiting for approval. Approve it to start recording it.
+        </p>
+      )}
+      {e.status === "pending" && devices && (
+        <p className="secondary" style={{ marginTop: 12 }}>
+          {device
+            ? `This Mac last checked in ${relativeTimeInWords(lastCheckIn(device))} with its current key.`
+            : "This Mac hasn't checked in yet."}
+        </p>
+      )}
+      {e.status === "pending" && active && e.hardware_uuid !== active.hardware_uuid && (
+        <p className="secondary" style={{ marginTop: 12 }}>
+          <span className="tag attention"><AttentionGlyph /> Warning</span>{" "}
+          {`The new key reports a different hardware UUID (${e.hardware_uuid}, was ${active.hardware_uuid}). Expect this only after a logic board replacement.`}
         </p>
       )}
       {confirming && (

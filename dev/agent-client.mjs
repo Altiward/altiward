@@ -3,6 +3,13 @@
 // scripts/agent-smoke.mjs use it. Node's built-in modules only.
 import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto";
 
+/** A fake Mac's hardware UUID: the same for a serial every time, so enrolling it again with
+ *  a new key looks like a reinstall on the same hardware, not a different Mac. */
+export function hardwareUUID(serial) {
+  const h = createHash("sha256").update(`altiward-dev-hardware:${serial}`).digest("hex").toUpperCase();
+  return [h.slice(0, 8), h.slice(8, 12), h.slice(12, 16), h.slice(16, 20), h.slice(20, 32)].join("-");
+}
+
 /** A client for one server. enrollToken is an agent token, without the organisation. */
 export function agentClient(server, enrollToken) {
   /** One request: with bearer, a console or agent token; with mac, signed as that Mac. */
@@ -30,7 +37,7 @@ export function agentClient(server, enrollToken) {
   async function enroll(serial, { keyStorage = "secure_enclave" } = {}) {
     const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
     const spki = publicKey.export({ type: "spki", format: "der" }).toString("base64");
-    const body = { serial, hardware_uuid: randomUUID().toUpperCase(), public_key: spki };
+    const body = { serial, hardware_uuid: hardwareUUID(serial), public_key: spki };
     if (keyStorage) body.key_storage = keyStorage;
     const r = await request("POST", "/v1/agent/enroll", { bearer: enrollToken, body });
     return { serial, deviceID: r.device_id, status: r.status, privateKey };

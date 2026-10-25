@@ -9,15 +9,13 @@ import { Table } from "../components/Table";
 import { useApi, useCan } from "../context";
 import { checkTips, persistenceCheckTip } from "../explanations";
 import {
-  agentOutdated, dateTime, expiresAfter, integrityCheckLabel, permanentUseMethodLabel, relativeTime, revokeNotice, tamperStateLabel,
+  agentOutdated, dateTime, expiresAfter, integrityCheckLabel, lastCheckIn, permanentUseMethodLabel, relativeTime, revokeNotice, tamperStateLabel,
 } from "../format";
 import { useCommandResult } from "../useCommandResult";
 import { useLoad } from "../useLoad";
 
 /** The agent checks in every 5 minutes; three missed check-ins is worth a look. */
 const STALE_MS = 15 * 60 * 1000;
-/** By the server's clock when known, so a Mac whose clock is wrong doesn't look late. */
-const lastCheckIn = (d: Device) => d.last_received_at ?? d.last_health_at ?? d.last_seen_at;
 const isStale = (d: Device, now = Date.now()) => now - new Date(lastCheckIn(d)).getTime() > STALE_MS;
 /** The server raised agent.silent and the Mac hasn't checked in since. */
 const silent = (d: Device) => d.silence?.state === "silent";
