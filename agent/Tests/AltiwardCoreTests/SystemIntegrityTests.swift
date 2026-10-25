@@ -292,4 +292,21 @@ struct SystemIntegrityTests {
         #expect(unset["allow_privilege_renewal"] == .null)
         #expect(unset["revoke_at_login_excluded_users"] == .null)
     }
+
+    @Test func aFixedExpirationIntervalCountsOnlyWhenMDMForcesIt() {
+        let granted = Date(timeIntervalSince1970: 1_800_000_000)
+        let values: [String: Any] = ["ExpirationInterval": 0, "ExpirationIntervalMax": 60]
+        // Not forced, it is only a default the user's own Privileges settings override, so the
+        // expiry comes from Privileges' timer, within the maximum.
+        let local = PrivilegesSettings.settings(from: Preferences(values: values, forced: ["ExpirationIntervalMax"]))
+        #expect(local.expirationIntervalMinutes == nil)
+        let timer = granted.addingTimeInterval(20 * 60)
+        #expect(local.expiry(grantedAt: granted, timer: timer)?.basis == "PrivilegesTimer")
+        #expect(local.expiry(grantedAt: granted)?.date == granted.addingTimeInterval(60 * 60))
+        // Forced, it is fixed: 0 means no expiry.
+        let forced = PrivilegesSettings.settings(
+            from: Preferences(values: values, forced: ["ExpirationInterval", "ExpirationIntervalMax"]))
+        #expect(forced.expirationIntervalMinutes == 0)
+        #expect(forced.expiry(grantedAt: granted, timer: timer) == nil)
+    }
 }

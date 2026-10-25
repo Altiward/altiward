@@ -29,8 +29,8 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
 - **Records each change Privileges reports.** The hook's claim is checked against the
   real `admin` group, and the event says whether they agree (`verified`). With Privileges'
   own log available, a grant claim is held until the log confirms it (see the trust model). A grant's
-  expiry is the one Privileges set: `ExpirationInterval`, or the duration the person
-  picked, read from Privileges' own timer and capped by `ExpirationIntervalMax`. Reading the
+  expiry is the one Privileges set: `ExpirationInterval` when MDM sets it, or the duration the
+  person picked, read from Privileges' own timer and capped by `ExpirationIntervalMax`. Reading the
   timer can take seconds and the hook waits only 5 s for its answer, so a grant claim that
   needs it is also held, without the log or for a permanent admin, and recorded straight
   after the hook has its answer (#91).
