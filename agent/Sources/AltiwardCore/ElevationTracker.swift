@@ -186,11 +186,10 @@ public final class ElevationTracker: Sendable {
     /// running the hook by hand to keep rights nobody granted.
     static let grantReplacementWindow: TimeInterval = 60
 
-    /// Why ``record(_:callerUID:)`` refused a hook claim in `OutOfBandEnforcement` `enforce`
-    /// mode: no grant claim counts on a Mac without SAP Privileges, a grant claim can't turn
-    /// rights nobody granted into a Privileges grant once it is later than
-    /// ``grantReplacementWindow``, and a give-back claim can't end them while the user is
-    /// still an admin.
+    /// Why a hook claim was refused. In `OutOfBandEnforcement` `enforce` mode no grant
+    /// claim counts without SAP Privileges, or after ``grantReplacementWindow`` for rights
+    /// nobody granted. In every mode a give-back cannot end an open session while the
+    /// user is still an admin.
     public struct ClaimRefused: Error, CustomStringConvertible {
         public enum Reason: Sendable, Equatable {
             /// A grant claim, this many seconds after Altiward raised the rights.
@@ -223,7 +222,7 @@ public final class ElevationTracker: Sendable {
             case .privilegesNotInstalled:
                 "a Privileges grant claimed for \(user) on a Mac without SAP Privileges; OutOfBandEnforcement accepts no grant claim without it"
             case .stillAdmin:
-                "a give-back claimed for \(user), who is still an admin; OutOfBandEnforcement keeps the rights out of band"
+                "a give-back claimed for \(user), who is still an admin; the session stays open until membership loss is confirmed"
             case .notConfirmed(let renewal):
                 "a Privileges \(renewal ? "renewal" : "grant") claimed for \(user), which Privileges' own log does not confirm"
             case .callerMismatch(let callerUID):
@@ -244,8 +243,9 @@ public final class ElevationTracker: Sendable {
     /// daemon observed in the `admin` group and whether the two agree (`detail.verified`).
     /// In `OutOfBandEnforcement` `enforce` mode a claim throws ``ClaimRefused`` and records
     /// nothing when it is a grant on a Mac without SAP Privileges, a grant that would replace
-    /// an out-of-band session too late, or a give-back that would end an out-of-band session
-    /// while the user is still an admin; rights nobody granted are then still removed.
+    /// an out-of-band session too late. In every mode a give-back that would end an open
+    /// session while the user is still an admin is refused, preserving its expiry until
+    /// a later claim or heartbeat confirms membership loss.
     ///
     /// Membership is read inside the transaction, so a grant can't commit between the read
     /// and the decision.
@@ -283,10 +283,9 @@ public final class ElevationTracker: Sendable {
                 let observedAdmin = env.admins.isAdmin(user: invocation.user)
                 var detail = hookDetail(invocation, observedAdmin: observedAdmin, callerUID: callerUID)
                 let existing = try store.openSession(user: invocation.user)
-                // A give-back while still admin would close the session, and a grant claimed
-                // next would find none to replace. Checked before any write.
-                let stillAdmin =
-                    existing?.source == .outOfBand && observedAdmin && env.config.outOfBandEnforcement == .enforce
+                // A claim cannot discard an open session or its expiry while real membership
+                // contradicts it. The next heartbeat retries membership confirmation.
+                let stillAdmin = existing != nil && observedAdmin
                 if endingOnly, existing == nil || stillAdmin {
                     throw ClaimRefused(user: invocation.user, reason: .tooManyGiveBacks)
                 }
