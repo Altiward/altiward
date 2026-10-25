@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "event_id": "c3f1a8e4-6b2d-4d7f-9a05-1e8b7c6d5f42",
+  "type": "agent.tamper",
+  "session_id": null,
+  "timestamp": "2026-10-16T10:12:08Z",
+  "device": {
+    "serial": "C02XK0AAJGH5",
+    "hardware_uuid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+    "os_version": "27.0.1",
+    "agent_version": "0.4.0",
+    "privileges_version": "2.6.0"
+  },
+  "user": null,
+  "elevation": null,
+  "delayed": false,
+  "detail": {
+    "check": "grant_claim",
+    "state": "detected",
+    "problem": "a Privileges grant claimed for jdoe, which Privileges' own log does not confirm",
+    "user": "jdoe",
+    "claimed_state": "admin",
+    "kind": "grant",
+    "outcome": "refused",
+    "reason": "a Privileges grant claimed for jdoe, which Privileges' own log does not confirm",
+    "caller_uid": 501
+  }
+}
