@@ -4,6 +4,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -125,9 +126,11 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal
 	status := http.StatusOK // the same key again: a retry, which raises nothing
 	if c.DeviceID == id {
 		status = http.StatusCreated
-		// The credential is stored either way; a Mac that can't be reported still enrols.
+		// The credential is stored either way; a Mac that can't be reported still enrols. The
+		// agent's retry gets the stored credential and raises nothing, so a client that gives
+		// up now must not stop the event being stored.
 		e := enrollmentEvent(p.TenantID, res, r.UserAgent(), p.Actor, now)
-		if _, err := s.store.Ingest(r.Context(), p.TenantID, []event.Event{e}, now); err != nil {
+		if _, err := s.store.Ingest(context.WithoutCancel(r.Context()), p.TenantID, []event.Event{e}, now); err != nil {
 			s.log.Error("enrollment event not recorded", "tenant", p.TenantID, "serial", c.Serial, "device_id", c.DeviceID, "err", err)
 		}
 		s.log.Info("device enrolled", "tenant", p.TenantID, "serial", c.Serial, "device_id", c.DeviceID,

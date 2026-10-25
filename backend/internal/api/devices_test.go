@@ -43,6 +43,8 @@ type agent struct {
 	// What the Mac says when it enrols. Left empty, the hardware UUID is "HW-" and the
 	// serial, and the key storage and User-Agent are left out.
 	hardwareUUID, keyStorage, userAgent string
+	// ctx, when set, is the context of the enrol request.
+	ctx context.Context
 }
 
 func enrollAgent(t *testing.T, h http.Handler, serial string) *agent {
@@ -85,6 +87,9 @@ func (a *agent) enroll(t *testing.T, serial string) (*httptest.ResponseRecorder,
 	req.Header.Set("Authorization", "Bearer "+agentToken)
 	if a.userAgent != "" {
 		req.Header.Set("User-Agent", a.userAgent)
+	}
+	if a.ctx != nil {
+		req = req.WithContext(a.ctx)
 	}
 	rec := httptest.NewRecorder()
 	a.h.ServeHTTP(rec, req)
@@ -382,7 +387,11 @@ func queuedEnrollments(t *testing.T, st store.Store) []event.Event {
 	out := []event.Event{}
 	for _, item := range queued {
 		if item.Event.Type == event.AgentEnrollment {
-			out = append(out, item.Event.Event)
+			e := item.Event.Event
+			if err := e.Validate(serverNow(t)); err != nil {
+				t.Fatalf("invalid agent.enrollment event %s: %v", e.EventID, err)
+			}
+			out = append(out, e)
 		}
 	}
 	return out
@@ -416,9 +425,6 @@ func TestEnrollRaisesEnrolledEvent(t *testing.T) {
 		t.Fatalf("%d agent.enrollment events queued, want 1", len(got))
 	}
 	e := got[0]
-	if err := e.Validate(serverNow(t)); err != nil {
-		t.Fatalf("invalid event: %v", err)
-	}
 	if want := event.RaisedID("acme/enrollment/" + a.deviceID); e.EventID != want {
 		t.Errorf("event_id = %s, want %s", e.EventID, want)
 	}
@@ -457,9 +463,6 @@ func TestReenrollRaisesPendingWithPrevious(t *testing.T) {
 		t.Errorf("first event = %v", got[0].Detail)
 	}
 	e := got[1]
-	if err := e.Validate(serverNow(t)); err != nil {
-		t.Fatalf("invalid event: %v", err)
-	}
 	if e.Device.HardwareUUID != "HW-OTHER" || e.Device.AgentVersion != "" {
 		t.Errorf("device = %+v, want the new key's hardware UUID and no agent version", e.Device)
 	}
@@ -620,5 +623,53 @@ func TestEnrollSucceedsWhenTheEventCannotBeRecorded(t *testing.T) {
 		!strings.Contains(out, "tenant=acme") || !strings.Contains(out, "serial="+fixtureSerial) ||
 		!strings.Contains(out, "device_id="+a.deviceID) || !strings.Contains(out, "disk full") {
 		t.Fatalf("log = %s", out)
+	}
+}
+
+// cancelAfterEnroll cancels the request once the credential is stored, as a client that
+// gives up at that moment would, and fails an Ingest whose context is cancelled, as a real
+// store does.
+type cancelAfterEnroll struct {
+	store.Store
+	cancel context.CancelFunc
+}
+
+func (c cancelAfterEnroll) Enroll(ctx context.Context, cred store.DeviceCredential) (store.EnrollResult, error) {
+	res, err := c.Store.Enroll(ctx, cred)
+	c.cancel()
+	return res, err
+}
+
+func (c cancelAfterEnroll) Ingest(ctx context.Context, tenantID string, events []event.Event, receivedAt time.Time) (store.IngestResult, error) {
+	if err := ctx.Err(); err != nil {
+		return store.IngestResult{}, err
+	}
+	return c.Store.Ingest(ctx, tenantID, events, receivedAt)
+}
+
+// The agent's retry of a stored key raises nothing, so an enrolment whose request is
+// cancelled after the credential is stored must still be reported.
+func TestEnrollEventIsRecordedWhenTheRequestIsCancelled(t *testing.T) {
+	st := store.NewMemory([]string{"splunk"})
+	tokens, err := auth.Parse("acme="+agentToken, "acme="+consoleToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs strings.Builder
+	now := serverNow(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h := api.New(cancelAfterEnroll{st, cancel}, tokens, slog.New(slog.NewTextHandler(&logs, nil)), func() time.Time { return now })
+
+	a := enrollAs(t, &agent{h: h, key: newKey(t), ctx: ctx}, fixtureSerial)
+	if ctx.Err() == nil {
+		t.Fatal("the request was not cancelled, so the test proves nothing")
+	}
+	got := queuedEnrollments(t, st)
+	if len(got) != 1 || got[0].Detail["device_id"] != a.deviceID || got[0].Detail["state"] != "enrolled" {
+		t.Fatalf("events = %+v, want the enrolment of %s", got, a.deviceID)
+	}
+	if strings.Contains(logs.String(), "enrollment event not recorded") {
+		t.Fatalf("log = %s", logs.String())
 	}
 }

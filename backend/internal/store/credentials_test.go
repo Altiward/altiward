@@ -195,7 +195,8 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 		replaced := enrollStored(newKey(t), "HW-FIRST", KeyStorageSoftware, t0.Add(2*time.Hour))
 		if replaced.Replaced != first.Credential.DeviceID || replaced.Previous == nil ||
-			replaced.Previous.DeviceID != first.Credential.DeviceID || replaced.Previous.KeyStorage != KeyStorageSecureEnclave {
+			replaced.Previous.DeviceID != first.Credential.DeviceID || replaced.Previous.KeyStorage != KeyStorageSecureEnclave ||
+			replaced.Previous.Status != CredentialActive {
 			t.Fatalf("replaced = %+v previous = %+v", replaced, replaced.Previous)
 		}
 
