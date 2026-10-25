@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -68,6 +69,31 @@ func (m *Memory) Ingest(_ context.Context, tenantID string, events []event.Event
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	res := IngestResult{Accepted: []string{}, Duplicate: []string{}}
+	// Validate the whole batch before committing any event, device or export state.
+	// BindOwner changes only value ownership fields on these session copies.
+	owners := map[key]session.Session{}
+	seen := map[string]bool{}
+	for _, e := range events {
+		if _, duplicate := m.events[key{tenantID, e.EventID}]; duplicate || seen[e.EventID] {
+			continue
+		}
+		seen[e.EventID] = true
+		if e.SessionID == nil {
+			continue
+		}
+		sk := key{tenantID, *e.SessionID}
+		s, ok := owners[sk]
+		if !ok {
+			s, ok = m.sessions[sk]
+			if !ok {
+				s = session.New(tenantID, *e.SessionID)
+			}
+		}
+		if err := s.BindOwner(e); err != nil {
+			return res, fmt.Errorf("event %s: %w", e.EventID, err)
+		}
+		owners[sk] = s
+	}
 	for _, e := range events {
 		k := key{tenantID, e.EventID}
 		if _, dup := m.events[k]; dup {
@@ -84,7 +110,8 @@ func (m *Memory) Ingest(_ context.Context, tenantID string, events []event.Event
 			if !ok {
 				s = session.New(tenantID, *e.SessionID)
 			}
-			s.Apply(e)
+			// The preflight and reduction share this mutex, so ownership cannot change.
+			_ = s.Apply(e)
 			m.sessions[sk] = s
 		}
 		dk := key{tenantID, e.Device.Serial}

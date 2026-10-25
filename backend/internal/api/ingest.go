@@ -8,6 +8,7 @@ import (
 
 	"github.com/Altiward/altiward/backend/internal/auth"
 	"github.com/Altiward/altiward/backend/internal/event"
+	"github.com/Altiward/altiward/backend/internal/store"
 )
 
 // IngestResponse mirrors IngestResponse in the Swift agent. Every event in the request
@@ -66,6 +67,11 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request, p auth.Principal
 	res, err := s.store.Ingest(r.Context(), p.TenantID, valid, now)
 	if err != nil {
 		// Nothing was stored; the agent keeps the batch and retries.
+		if errors.Is(err, store.ErrSessionOwnerConflict) {
+			s.log.Warn("session ownership conflict", "tenant", p.TenantID, "device", p.Serial, "err", err)
+			writeError(w, http.StatusConflict, "session ownership conflicts with this device or account; no events were stored")
+			return
+		}
 		s.log.Error("ingest failed", "tenant", p.TenantID, "events", len(valid), "err", err)
 		writeError(w, http.StatusServiceUnavailable, "could not store events; retry later")
 		return

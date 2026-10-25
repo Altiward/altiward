@@ -8,6 +8,26 @@ Changing the schema means changing, together: the JSON Schema, the fixtures,
 `agent/Sources/AltiwardCore/Event.swift` and `backend/internal/event/event.go`. The Go
 decoder rejects unknown fields, so drift fails loudly.
 
+## Session ownership
+
+Every session is bound to the sending Mac's serial, hardware UUID and local account name.
+The API checks the serial against the authenticated device credential. The first event
+binds the session even if a revoke arrives before its grant. An accountless activity event
+binds the Mac first; a later event can fill its previously unknown account, which then
+stays fixed. UPN is mapping data and can change while the local account stays the same.
+
+An event that conflicts with an existing owner causes HTTP `409` for the whole batch.
+No events, derived device/session state or SIEM obligations from that batch are stored,
+and no event IDs are acknowledged. The agent keeps the batch for retry. The server logs
+the conflict so an administrator can investigate an inconsistent device queue. Exact
+resends of already stored event IDs remain duplicates and are not reapplied.
+
+Postgres serialises ingestion transactions within each tenant. One transaction-level
+advisory lock protects sessions whose first event has not yet created a row, and avoids
+deadlocks when concurrent batches mention the same events in different orders. Other
+tenants and console reads remain independent. This favours bounded lock use and atomic
+ownership checks over concurrent ingestion writes within one tenant.
+
 ## `detail` by event type
 
 | Type | Field | Meaning |

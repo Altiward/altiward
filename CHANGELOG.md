@@ -50,6 +50,8 @@ None.
 
 ### Security
 
+- Events cannot alter a session owned by another Mac or local account. A conflicting
+  batch is refused without changing events, session or device state, or pending exports.
 - Splunk exports complete only after a valid explicit accepted HEC acknowledgement.
   Redirects and ambiguous, invalid or incomplete responses keep the batch queued for retry.
 - Compose and Azure use the same digest-pinned Caddy 2.11.7 proxy rebuilt with patched
