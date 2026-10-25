@@ -48,7 +48,20 @@ extension ElevationTracker {
     /// `privilegesNotInstalled`) is reported as an `agent.tamper` (`grant_claim`, `refused`)
     /// before the refusal is thrown on. Every refusal is reported except `tooManyClaims` and
     /// `tooManyGiveBacks`.
+    ///
+    /// The hook waits only 5 s for the answer. An answer slower than
+    /// ``ClaimSteps/slowAnswer`` is logged with what it waited for (#91).
     public func submit(_ invocation: HookInvocation, callerUID: UInt32?) throws -> ClaimOutcome {
+        let steps = ClaimSteps()
+        defer {
+            if let slow = steps.slowSummary() {
+                log.notice("answered a claim for \(invocation.user, privacy: .public) in \(slow, privacy: .public)")
+            }
+        }
+        return try submit(invocation, callerUID: callerUID, steps: steps)
+    }
+
+    private func submit(_ invocation: HookInvocation, callerUID: UInt32?, steps: ClaimSteps) throws -> ClaimOutcome {
         let now = env.now()
         if invocation.state == .admin, overTheLimit(recentClaims, Self.maxClaimsPerMinute, from: callerUID ?? 0, at: now) {
             log.notice("ignoring a claim for \(invocation.user, privacy: .public): too many grant claims from this caller")
@@ -58,11 +71,11 @@ extension ElevationTracker {
             invocation.state == .user
             && overTheLimit(recentGiveBacks, Self.maxGiveBacksPerMinute, from: callerUID ?? 0, at: now)
 
-        let availability = env.privilegesLogAvailability()
+        let availability = steps.time("Privileges' log check") { env.privilegesLogAvailability() }
         try notePrivilegesLog(availability)
         let permanent = env.config.permanentAdmins.contains(invocation.user)
         if invocation.state == .admin, availability != .available || permanent,
-            env.privileges().expirationIntervalMinutes == nil
+            steps.time("settings") { env.privileges().expirationIntervalMinutes == nil }
         {
             return try hold(invocation, callerUID: callerUID)
         }
@@ -77,7 +90,9 @@ extension ElevationTracker {
             })
         }
 
-        if let callerUID, callerUID != 0, let owner = env.userID(invocation.user), owner != callerUID {
+        if let callerUID, callerUID != 0, let owner = steps.time("user lookup", { env.userID(invocation.user) }),
+            owner != callerUID
+        {
             // Another user's give-back can't end this user's session, so past the allowance
             // it isn't reported either.
             if endingOnly {
@@ -100,6 +115,7 @@ extension ElevationTracker {
         return try hold(invocation, callerUID: callerUID)
     }
 
+    /// Holds a grant claim for ``resolvePendingClaims()``.
     private func hold(_ invocation: HookInvocation, callerUID: UInt32?) throws -> ClaimOutcome {
         let claimID = newID()
         try store.addPendingClaim(PendingClaim(claimID: claimID, invocation: invocation, callerUID: callerUID))
@@ -462,4 +478,38 @@ extension ElevationTracker {
         let data = try encoder.encode(kept.mapValues(AltiwardJSON.format))
         try store.setValue(String(decoding: data, as: UTF8.self), forKey: Self.consumedEvidenceKey)
     }
+}
+
+/// How long answering one hook claim took, and its steps that can wait: what the agent logs
+/// when the answer is slow. The rest is recording the claim, waiting for the store included.
+final class ClaimSteps {
+    /// Well inside the hook's 5 s, so a slow Mac shows up before the hook times out.
+    static let slowAnswer: TimeInterval = 1
+
+    private let started: TimeInterval
+    private let uptime: () -> TimeInterval
+    private var steps: [(name: String, seconds: TimeInterval)] = []
+
+    init(uptime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.uptime = uptime
+        started = uptime()
+    }
+
+    func time<T>(_ name: String, _ body: () throws -> T) rethrows -> T {
+        let start = uptime()
+        defer { steps.append((name, uptime() - start)) }
+        return try body()
+    }
+
+    /// "3.2 s (Privileges' log check 0.1 s, settings 0.0 s, recording 3.1 s)", or nil
+    /// when the answer took less than ``slowAnswer``.
+    func slowSummary() -> String? {
+        let total = uptime() - started
+        guard total >= Self.slowAnswer else { return nil }
+        let rest = total - steps.reduce(0) { $0 + $1.seconds }
+        let parts = (steps + [("recording", max(rest, 0))]).map { "\($0.name) \(Self.seconds($0.seconds))" }
+        return "\(Self.seconds(total)) (\(parts.joined(separator: ", ")))"
+    }
+
+    private static func seconds(_ t: TimeInterval) -> String { String(format: "%.1f s", t) }
 }

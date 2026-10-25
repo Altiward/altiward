@@ -965,3 +965,21 @@ extension ClaimConfirmationTests {
         #expect(!heldDuringRead.withLock { $0 })
     }
 }
+
+struct ClaimStepsTests {
+    @Test func aSlowAnswerSaysWhatItWaitedFor() {
+        let now = OSAllocatedUnfairLock(initialState: 100.0)
+        let steps = ClaimSteps(uptime: { now.withLock { $0 } })
+        steps.time("Privileges' log check") { now.withLock { $0 += 0.3 } }
+        steps.time("settings") { now.withLock { $0 += 0.1 } }
+        now.withLock { $0 += 3 }
+        #expect(steps.slowSummary() == "3.4 s (Privileges' log check 0.3 s, settings 0.1 s, recording 3.0 s)")
+    }
+
+    @Test func aQuickAnswerIsNotLogged() {
+        let now = OSAllocatedUnfairLock(initialState: 100.0)
+        let steps = ClaimSteps(uptime: { now.withLock { $0 } })
+        steps.time("settings") { now.withLock { $0 += 0.5 } }
+        #expect(steps.slowSummary() == nil)
+    }
+}
