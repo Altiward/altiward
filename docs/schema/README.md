@@ -12,13 +12,14 @@ decoder rejects unknown fields, so drift fails loudly.
 
 | Type | Field | Meaning |
 | --- | --- | --- |
-| `elevation.granted` | `trigger` | `hook` (Privileges) |
+| `elevation.granted` | `trigger` | `hook` (Privileges), or `privileges_renewal`: a renewal in Privileges, which sends no hook claim, read from the line `PrivilegesAgent` logs and counted only when SAP's agent logged it (agent 0.5.0 and later). A renewal carries `renewed`, `observed_admin`, `verified`, `expires_basis` and `renewed_minutes`, and no `claimed_state` |
 | | `claimed_state` | What the hook said (`admin`) |
 | | `observed_admin` | Real `admin` group membership when the daemon recorded it |
 | | `verified` | `claimed_state` agrees with `observed_admin` |
 | | `renewed` | A grant while this user's Privileges session was already open |
 | | `replaced_out_of_band` | `true` when the grant replaced this user's out-of-band session, which an `elevation.revoked` with trigger `privileges_grant` ends just before it. Absent otherwise |
-| | `expires_basis` | Where `elevation.expires` came from: `ExpirationInterval` or `ExpirationIntervalMax`; `PrivilegesTimer`, the duration the user picked in Privileges, read from Privileges' own timer and never later than `ExpirationIntervalMax` |
+| | `expires_basis` | Where `elevation.expires` came from: `ExpirationInterval` or `ExpirationIntervalMax`; `PrivilegesTimer`, the duration the user picked in Privileges, read from Privileges' own timer and never later than `ExpirationIntervalMax`; `PrivilegesRenewal`, the renewal's time plus `renewed_minutes` |
+| | `renewed_minutes` | How long the renewal that `PrivilegesAgent` logged lasts (`trigger` `privileges_renewal` only) |
 | | `caller_uid` | UID of the process that called the daemon over XPC |
 | | `privileges_log` | Whether SAP Privileges' own log backed the claim: `confirmed`, `not_confirmed` (only `OutOfBandEnforcement` `alert`: the grant was accepted, and an `agent.tamper` `grant_claim` follows) or `unavailable` (the log can't be read on this Mac, so the claim was accepted as before). Absent from Agent 0.3.0 and earlier, on a give-back, and on a grant to an account in `PermanentAdmins` |
 | | `confirmed_at` | When the agent confirmed the claim against the log (`confirmed` only). The event's `timestamp` is still when the claim arrived |

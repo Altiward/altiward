@@ -75,7 +75,7 @@ extension ElevationTracker {
         try notePrivilegesLog(availability)
         let permanent = env.config.permanentAdmins.contains(invocation.user)
         if invocation.state == .admin, availability != .available || permanent,
-            steps.time("settings") { env.privileges().expirationIntervalMinutes == nil }
+            steps.time("settings", { env.privileges().expirationIntervalMinutes == nil })
         {
             return try hold(invocation, callerUID: callerUID)
         }

@@ -42,6 +42,17 @@ None.
   `ExpirationIntervalMax`. Before, an `ExpirationInterval` of 0 there meant the agent
   recorded no expiry and `ExpiryEnforcement` never acted, while Privileges ended the rights
   at the maximum. `agent.health` reports `expiration_interval_minutes` only when MDM sets it.
+- A renewal in SAP Privileges now moves the session's expiry (closes #90). Privileges sends
+  no hook claim for one and records it only as a line from `PrivilegesAgent`, so with
+  `ExpiryEnforcement` on `enforce` the agent removed renewed rights at the original expiry.
+  At each heartbeat, before expiry is enforced, the agent reads those lines and sends an
+  `elevation.granted` (`renewed`, `trigger` `privileges_renewal`) with the new expiry: the
+  renewal's time plus its minutes, capped by `ExpirationIntervalMax`. `PrivilegesAgent` runs
+  as the user, so a line counts only when the log recorded SAP's agent executable for it
+  and the process is SAP's signed agent, running as that user and started before the line.
+  A line whose process has gone can't be checked and is ignored. While MDM sets
+  `AllowPrivilegeRenewal` to `false`, the lines aren't read, which stays the recommendation.
+  `docs/data-handling.md` lists what is read.
 - The agent answers a hook claim at once (#91). Without SAP Privileges' log, or for
   a permanent admin, a grant claim waited inside the hook's call while the agent read
   Privileges' timer, up to 18 s, and sometimes for the store while the agent read the
@@ -61,8 +72,8 @@ None.
     expiry.
   - `privileges_renewal`, while `ExpiryEnforcement` is `enforce`: MDM doesn't set
     `AllowPrivilegeRenewal` to `false`, or `AutoRenewalProcessPaths` names an app. A renewal
-    doesn't reach Altiward (#90), so enforcement removes renewed rights at the original
-    expiry.
+    reaches Altiward only from a log line a user's process writes (see below), so
+    enforcement may still remove renewed rights at the original expiry.
   - `privileges_give_back_hook`: MDM doesn't set `PostChangeActionOnGrantOnly` to `false`, so
     a user can stop Privileges running Altiward's hook when rights are given back.
   - `privileges_revoke_exclusions`: `RevokePrivilegesAtLogin` or
@@ -99,6 +110,8 @@ None.
   Privileges reports give-backs, Privileges spares permanent admins), and a Mac's
   **Expires after** shows the cap on what a user picks (`Up to 60 min`), and says when MDM
   doesn't set it.
+- A session's timeline notes a renewal read from Privileges' log as "Renewed in
+  Privileges".
 
 ## Agent 0.4.0 - 2026-10-25
 

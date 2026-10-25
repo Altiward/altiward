@@ -65,6 +65,11 @@ public struct AgentEnvironment: Sendable {
     public var privilegesExtensionPID: @Sendable () -> Int32?
     /// The uid of the account with this short name; nil when there is none.
     public var userID: @Sendable (_ shortName: String) -> UInt32?
+    /// Renewals SAP Privileges' per-user agent logged since the given time, oldest first
+    /// (``PrivilegesAgentLog``).
+    public var privilegesRenewals: @Sendable (_ since: Date) -> [PrivilegesRenewalLine]
+    /// The UUIDs of SAP's agent executable on disk, one for each architecture.
+    public var privilegesAgentImageUUIDs: @Sendable () -> Set<String>
 
     public init(
         device: @escaping @Sendable () -> DeviceInfo,
@@ -91,7 +96,9 @@ public struct AgentEnvironment: Sendable {
         privilegesDaemonLines: @escaping @Sendable (_ since: Date) -> [PrivilegesDaemonLine] = { _ in [] },
         processIdentity: @escaping @Sendable (_ pid: Int32) -> ProcessIdentity? = { _ in nil },
         privilegesExtensionPID: @escaping @Sendable () -> Int32? = { nil },
-        userID: @escaping @Sendable (_ shortName: String) -> UInt32? = { _ in nil }
+        userID: @escaping @Sendable (_ shortName: String) -> UInt32? = { _ in nil },
+        privilegesRenewals: @escaping @Sendable (_ since: Date) -> [PrivilegesRenewalLine] = { _ in [] },
+        privilegesAgentImageUUIDs: @escaping @Sendable () -> Set<String> = { [] }
     ) {
         self.device = device
         self.privileges = privileges
@@ -116,6 +123,8 @@ public struct AgentEnvironment: Sendable {
         self.processIdentity = processIdentity
         self.privilegesExtensionPID = privilegesExtensionPID
         self.userID = userID
+        self.privilegesRenewals = privilegesRenewals
+        self.privilegesAgentImageUUIDs = privilegesAgentImageUUIDs
     }
 
     /// The real system.
@@ -144,7 +153,9 @@ public struct AgentEnvironment: Sendable {
             privilegesDaemonLines: { PrivilegesDaemonLog.lines(since: $0) },
             processIdentity: { ProcessIdentity.of(pid: $0) },
             privilegesExtensionPID: { PrivilegesExtensionProcess.pid() },
-            userID: { ProcessIdentity.uid(of: $0) })
+            userID: { ProcessIdentity.uid(of: $0) },
+            privilegesRenewals: { PrivilegesAgentLog.renewals(since: $0) },
+            privilegesAgentImageUUIDs: { MachOImage.uuids(atPath: PrivilegesAgentLog.executable) })
     }
 }
 
@@ -428,12 +439,15 @@ public final class ElevationTracker: Sendable {
         // permanent admins, as nothing it holds would be reported.
         let useLogFrom = try permanentUseLogStart(now: now)
         let useLog = env.config.permanentAdmins.isEmpty ? [] : env.permanentUseLog(useLogFrom)
+        // And PrivilegesAgent's renewals, which Privileges reports nowhere else.
+        let renewals = try renewalsToApply(settings, now: now)
 
         return try resolved + store.transaction {
             try notePrivilegesLog(logAvailability)
             try noteExtensionInstance(extensionInstance)
             let admins = env.admins.adminMembers()
-            var events: [AltiwardEvent] = []
+            // Before expiry is enforced below, so renewed rights keep their new expiry.
+            var events = try applyRenewals(renewals, admins: admins, settings: settings, device: device)
             let open = try store.openSessions()
 
             for session in open where !admins.contains(session.user) {

@@ -242,8 +242,20 @@ leaves neither, so the agent holds a grant claim until one of them backs it.
   claim made while a Privileges session is open and the user is admin has nothing real to
   match. The session is renewed only when fresh log evidence confirms the claim (the log
   shows Privileges granted again). Otherwise the claim is refused in every mode, reported
-  with kind `renewal`, and the session keeps its expiry. Real renewals are a separate gap
-  (#90).
+  with kind `renewal`, and the session keeps its expiry.
+- *Real renewals* (#90). Privileges records one only as a line from `PrivilegesAgent`,
+  which runs as the user: "SAPCorp: Administrator privileges for user jdoe have been renewed
+  (60 minutes)". At each heartbeat, before expiry is enforced, the agent reads these lines
+  and moves the session's expiry to the line's time plus its minutes, capped by
+  `ExpirationIntervalMax`, sending an `elevation.granted` with `trigger`
+  `privileges_renewal`. A user could log such a line from their own program and then exec
+  SAP's agent, keeping the pid, so a line counts only when the executable the log recorded
+  for it is SAP's agent on disk (by its Mach-O UUID), and the process is SAP's signed agent,
+  running as the user the line names and started before it. A line whose process has gone
+  can't be checked and is ignored. While MDM sets `AllowPrivilegeRenewal` to `false` the
+  lines aren't read at all, as no real renewal can happen, which is why that stays the
+  recommendation. It is not a boundary against someone with admin rights who sets out to
+  forge a binary with SAP's UUID: each renewal is sent, and capped by the maximum.
 - *Binding the caller to the user.* Privileges runs the hook as the user whose rights
   changed. With the log available, a claim whose caller UID is neither the claimed user's nor
   0 is refused and reported, which stops a standard user ending someone else's session with

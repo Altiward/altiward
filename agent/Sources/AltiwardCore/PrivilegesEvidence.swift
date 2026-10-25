@@ -80,6 +80,8 @@ public enum PrivilegesSigning {
     static let teamID = "7R5ZEU67FQ"
     static let daemon = "corp.sap.privileges.daemon"
     static let systemExtension = "corp.sap.privileges.extension"
+    /// The per-user agent, which runs Privileges' timer and logs renewals.
+    static let agent = "corp.sap.privileges.agent"
     /// The processes whose `ADMIN_ADD` is a Privileges grant.
     static let grantInstigators: Set<String> = ["corp.sap.privileges.daemon"]
 }
