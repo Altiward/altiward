@@ -260,8 +260,9 @@ for the first time belongs to the caller. Check new enrolments against your devi
 Stronger first-enrolment assurance needs per-device bootstrap credentials or independently
 verified inventory.
 
-Each key that enrols also reaches your SIEM as an `agent.enrollment` event, so you don't
-have to watch **Enrollments**. It names the Mac, the new key's fingerprint and the token
+If you export to a SIEM, each key that enrols also reaches it as an `agent.enrollment`
+event, so you don't have to watch **Enrollments** for new keys; you still approve a key that
+waits in **Enrollments**. The event names the Mac, the new key's fingerprint and the token
 the Mac enrolled with, and its `state` says what happened:
 
 - `enrolled`: the Mac's first key, or its first after earlier ones were revoked with
@@ -275,10 +276,12 @@ the Mac enrolled with, and its `state` says what happened:
   only with approval off and the same hardware UUID.
 
 Alert on `pending` and `replaced`: they are Medium and High in the SIEM, and each means a
-Mac's key changed. When you didn't expect one, it may be someone using the enrolment token,
-so ask the Mac's owner before you approve it. When a key was active before, the event says
-whether the new key reported the same hardware UUID (`hardware_uuid_matches`). The
-[event schema](schema/README.md) lists its fields, and the
+Mac's key changed. When you didn't expect one, it may be someone using the enrolment token.
+For an unexpected `pending` key, ask the Mac's owner before you approve it. A `replaced`
+key is already active: turn **Approve Macs that enrol again** on and revoke the new key in
+**Enrollments**, and the genuine Mac then enrols again and waits for your approval. When a
+key was active before, the event says whether the new key reported the same hardware UUID
+(`hardware_uuid_matches`). The [event schema](schema/README.md) lists its fields, and the
 [syslog guide](../integrations/syslog/README.md#starter-rules) has a starter rule.
 
 On a Mac with a Secure Enclave (Apple silicon, or an Intel Mac with a T2 chip) the key is
@@ -480,6 +483,15 @@ wait that hour before asking again (an agent that restarts asks once more straig
 earlier agents ask about once a minute. A Mac sending a key that is already enrolled is
 never refused. Run `docker compose up -d` to apply a change (on Azure, see
 [Changing settings](../deploy/azure/README.md#changing-settings)).
+
+Someone with the enrolment token can also use the limits against you. They can keep the
+new-Macs allowance full with invented serials, so that genuine Macs enrolling for the first
+time are refused, or use up a serial's keys for the day (five by default). Revoking a key
+frees neither. The signs are Macs being refused (`enrolment rate limited` in the server's
+log, `device id: (not enrolled)` in `altiward-agent status`) while **Enrollments** fills
+with serials or keys you don't recognise. Then change the agent token
+([Changing tokens](#changing-tokens)), revoke the keys you don't recognise, and meanwhile
+raise the limit or set it to `0`.
 
 To retire a Mac, revoke its enrollment in **Enrollments**. It then stops being able to
 report and never raises a "not checking in" alert.
