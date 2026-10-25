@@ -61,6 +61,10 @@ extension ElevationTracker {
         switch check {
         case .privilegesTamperProtection, .privilegesHook, .privilegesTimer:
             return "SAP Privileges isn't installed now"
+        case .grantConfirmation:
+            return device.privilegesVersion == nil
+                ? "SAP Privileges isn't installed now"
+                : "neither OutOfBandEnforcement nor ExpiryEnforcement is enforce now"
         default:
             return "the check no longer applies on this Mac"
         }

@@ -178,6 +178,8 @@ var tamperChecks = map[string]struct {
 	"privileges_timer":             {"SAP Privileges' timer stopped while someone holds admin rights", SeverityHigh},
 	"agent_version":                {"Altiward agent was downgraded", SeverityHigh},
 	"privileges_blocked":           {"SAP Privileges blocked an attempt to tamper with it", SeverityHigh},
+	"grant_claim":                  {"A SAP Privileges grant claim was refused or not confirmed by Privileges' log", SeverityHigh},
+	"grant_confirmation":           {"Altiward can't confirm SAP Privileges grants against Privileges' log", SeverityMedium},
 }
 
 // TamperSeverities names the severity a failure of each known tamper check is exported

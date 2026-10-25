@@ -13,7 +13,9 @@
 //                                 PermanentAdmins in the last HOURS (default 24), as the agent
 //                                 reads them (run as root)
 //   altiward-agent simulate-hook USER STATE [REASON]
-//                                 record a change as if the hook had called (development)
+//                                 send a change as if the hook had called (development); a
+//                                 grant is held, as the hook's is, while Privileges' log is
+//                                 available
 //
 // Configuration comes from the com.altiward.agent preference domain (MDM profile) with
 // ALTIWARD_SERVER_URL, ALTIWARD_TOKEN, ALTIWARD_DATA_DIR and ALTIWARD_HEARTBEAT_SECONDS
@@ -98,8 +100,12 @@ do {
         try await daemon.printStatus()
     case "simulate-hook":
         let invocation = try HookInvocation.parse(arguments: Array(arguments.dropFirst()))
-        let event = try daemon.tracker.record(invocation, callerUID: getuid())
-        print("queued \(event.type.rawValue) \(event.eventID) session \(event.sessionID ?? "-")")
+        switch try daemon.tracker.submit(invocation, callerUID: getuid()) {
+        case .recorded(let event):
+            print("queued \(event.type.rawValue) \(event.eventID) session \(event.sessionID ?? "-")")
+        case .pending(let claimID):
+            print("held claim \(claimID) for Privileges' log")
+        }
         try daemon.tracker.checkPersistence()
         Daemon.printFlush(await daemon.delivery.flush())
     default:

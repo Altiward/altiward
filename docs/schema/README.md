@@ -20,6 +20,9 @@ decoder rejects unknown fields, so drift fails loudly.
 | | `replaced_out_of_band` | `true` when the grant replaced this user's out-of-band session, which an `elevation.revoked` with trigger `privileges_grant` ends just before it. Absent otherwise |
 | | `expires_basis` | Where `elevation.expires` came from: `ExpirationInterval` or `ExpirationIntervalMax`; `PrivilegesTimer`, the duration the user picked in Privileges, read from Privileges' own timer and never later than `ExpirationIntervalMax` |
 | | `caller_uid` | UID of the process that called the daemon over XPC |
+| | `privileges_log` | Whether SAP Privileges' own log backed the claim: `confirmed`, `not_confirmed` (only `OutOfBandEnforcement` `alert`: the grant was accepted, and an `agent.tamper` `grant_claim` follows) or `unavailable` (the log can't be read on this Mac, so the claim was accepted as before). Absent from Agent 0.3.0 and earlier, on a give-back, and on a grant to an account in `PermanentAdmins` |
+| | `confirmed_at` | When the agent confirmed the claim against the log (`confirmed` only). The event's `timestamp` is still when the claim arrived |
+| | `evidence` | What confirmed it: `daemon` (a line from `PrivilegesDaemon`), `extension` (the system extension's record of the change) or both (`confirmed` only) |
 | `elevation.revoked` | `trigger` | `hook`, `heartbeat`, `command` (remote revoke) `permanent_admin` (an out-of-band session's user is now in `PermanentAdmins`: the session ends and the rights stay) or `privileges_grant` (a Privileges grant replaced the user's out-of-band session: the session ends, the rights stay, and the grant's session follows) |
 | | `command_id` | The console command that caused it (`command` only) |
 | | `claimed_state` | As above (`hook` only) |
@@ -37,7 +40,7 @@ decoder rejects unknown fields, so drift fails loudly.
 | `elevation.expired_enforced` | `trigger`, `expired_at`, `grace_seconds` | As for `elevation.overdue` |
 | | `observed_admin`, `verified` | `false`, `true`: the daemon removed the rights and confirmed it |
 | `admin.out_of_band` | `first_observed` | When the agent raised these rights: at a heartbeat, or at the check every 15 seconds once they had gone 30 seconds without a grant |
-| | `instigator` | The process that added the user to `admin`, from SAP Privileges' system extension log (Privileges 2.6+, extension on, macOS 14+): `executable`, `signing_id`, `team_id` (empty for Apple's own), `platform_binary`, `pid`, `ppid`, `tty` (empty when not from a terminal) and `logged_at`. Absent when the extension logged nothing for this user in the last heartbeat interval plus 10 minutes |
+| | `instigator` | The process that added the user to `admin`, from SAP Privileges' system extension log (Privileges 2.6+, extension on, macOS 14+): `executable`, `signing_id`, `team_id` (empty for Apple's own), `platform_binary`, `pid`, `ppid`, `tty` (empty when not from a terminal) and `logged_at`, and `extension_verified`: `true` when the agent matched the entry to a running instance of the real extension (signed by SAP, running as root, started before it logged), `false` when it couldn't, for example an entry from before the agent first saw the extension. Absent when the extension logged nothing for this user in the last heartbeat interval plus 10 minutes |
 | `admin.out_of_band_removed` | `trigger` | `heartbeat` |
 | | `first_observed` | When the agent raised these rights, the same as its `admin.out_of_band` |
 | | `grace_seconds` | Configured `OutOfBandGraceMinutes`, in seconds |
@@ -49,14 +52,21 @@ decoder rejects unknown fields, so drift fails loudly.
 | | `privileges` | `installed`, `post_change_hook_configured`, `pass_reason_to_executable`, `expiration_interval_minutes`, `expiration_interval_max_minutes`, `enforce_privileges`, `system_extension_enabled`, `admin_budget_minutes` (`AdminBudget`, Privileges 2.7+; `null` when unset or 0) |
 | | `integrity` | Each tamper check that applies on this Mac, check → passing (see `agent.tamper`) |
 | | `persistence_unreadable` | Persistence locations that exist but the last snapshot couldn't read, such as a home folder privacy protection covers; empty when all were read. Missing before the first snapshot |
-| `agent.tamper` | `check` | `launch_daemon`, `code_signature` (Altiward.app fails a strict signature check), `settings_managed` (one of the settings it checks comes from /Library/Preferences, not MDM), `privileges_tamper_protection`, `privileges_hook` (Privileges installed: its hook isn't Altiward's, or its checksum doesn't match Altiward's hook), `privileges_timer` (Privileges installed: someone logged in holds rights from a Privileges grant and their Privileges agent, which runs the timer, isn't running), `agent_version` or `privileges_blocked` (Privileges' system extension blocked an attempt to delete, rename, clone, add to or unload Privileges, one event per process and item each heartbeat) |
-| | `state` | `failed` (the check started failing, or fails the first time it runs), `restored` (it passes again), `retired` (it was failing and no longer applies, so its alert closes) or `detected` (a one-off: a downgrade, or an attempt Privileges blocked) |
+| `agent.tamper` | `check` | `launch_daemon`, `code_signature` (Altiward.app fails a strict signature check), `settings_managed` (one of the settings it checks comes from /Library/Preferences, not MDM), `privileges_tamper_protection` (Privileges installed: `EnableSystemExtension` is off, or SAP's system extension isn't running or isn't SAP's), `privileges_hook` (Privileges installed: its hook isn't Altiward's, or its checksum doesn't match Altiward's hook), `privileges_timer` (Privileges installed: someone logged in holds rights from a Privileges grant and their Privileges agent, which runs the timer, isn't running), `agent_version`, `privileges_blocked` (Privileges' system extension blocked an attempt to delete, rename, clone, add to or unload Privileges, one event per process and item each heartbeat), `grant_claim` (a claim from Privileges' hook was refused, or accepted without Privileges' log backing it; one event per claim) or `grant_confirmation` (Privileges installed, and `OutOfBandEnforcement` or `ExpiryEnforcement` is `enforce`: the agent can't confirm grants against Privileges' log, or the extension has logged no record of a grant the daemon's line confirmed) |
+| | `state` | `failed` (the check started failing, or fails the first time it runs), `restored` (it passes again), `retired` (it was failing and no longer applies, so its alert closes) or `detected` (a one-off: a downgrade, an attempt Privileges blocked, or a claim the agent refused or couldn't confirm) |
 | | `problem` | What is wrong; for `retired`, why the check no longer applies (`SAP Privileges isn't installed now`); `null` when `restored` |
 | | `previous_version`, `current_version` | The versions either side of a downgrade (`agent_version` only) |
 | | `blocked_action`, `item` | What Privileges blocked (`DELETE`, `RENAME`, `CLONE`, `CREATE` or `EXEC`, which is unloading its launchd items) and the item's path (`privileges_blocked` only) |
 | | `instigator` | The process that tried, as for `admin.out_of_band` without `logged_at`; `null` when the extension didn't say (`privileges_blocked` only) |
+| | `extension_verified` | `true` when every attempt in the group was matched to a running instance of the real extension, as for `instigator` in `admin.out_of_band` (`privileges_blocked` only) |
 | | `attempts`, `first_attempt`, `last_attempt` | How many times that process tried on that item since the last heartbeat, and when (`privileges_blocked` only) |
 | | `truncated` | On the last of a heartbeat's 20 `privileges_blocked` events, how many more were left out; absent otherwise |
+| | `user`, `claimed_state` | The account the claim named, and what it claimed: `admin` for a grant or renewal, `user` for a give-back (`grant_claim` only) |
+| | `kind` | `grant`, `renewal` (a claim while the user's Privileges session was open and they were already admin) or `give_back` (`grant_claim` only) |
+| | `outcome` | `refused`: nothing was recorded for the claim, and a session was neither opened nor renewed. Or `accepted_unconfirmed`: the claim was recorded, without Privileges' log backing it, because the log was lost on a Mac where the agent had read it before, or `OutOfBandEnforcement` is `alert` (`grant_claim` only) |
+| | `reason` | Why, in words, the same as `problem`: the log doesn't confirm it; the caller is neither the user nor root; the log was available on this Mac before and isn't now; a grant claimed on a Mac without SAP Privileges; a grant claimed too long after Altiward raised the rights; or a give-back claimed while the user is still admin (`kind` `give_back`). Only grant claims refused for being too many (more than 5 in a minute from one caller) are logged on the Mac and not sent (`grant_claim` only) |
+| | `caller_uid` | UID of the process that sent the claim; `null` when the daemon couldn't tell (`grant_claim` only) |
+| | `evidence_at`, `evidence_sources` | When the log line behind the claim was written, and which sources it came from (`daemon`, `extension`). Present only when the log did back the claim and it was refused anyway: a grant on a Mac without SAP Privileges (`grant_claim` only) |
 | `admin.permanent_use` | `use_id` | UUID. A sign-in's `started` and `ended` events share it |
 | | `method` | `console`, `terminal`, `ssh`, `screen_sharing`, `prompt`, `sudo` or `su`. `terminal` is a terminal with no remote host, such as `login` in Terminal; a Terminal tab opened while the account is signed in at the Mac is part of that `console` sign-in and isn't sent. The server accepts any non-empty value, so a later method needs no server upgrade first |
 | | `state` | `started` or `ended` for sign-ins; `single` for prompt and screen sharing, and for any sudo, su or SSH use a later agent sees only in the log |
@@ -89,6 +99,15 @@ leaves the session open. `elevation.expired_enforced` ends it.
 `agent.tamper` is sent when a check changes, not on every heartbeat: the agent keeps each
 check's last result, so a restart doesn't repeat an alert. A check that stops applying
 sends `retired` if it was failing, and is dropped without an event if it was passing.
+
+`agent.tamper` with check `grant_claim` is sent when a claim from Privileges' hook is refused,
+whatever the reason except a caller sending too many, or accepted without Privileges' log backing it. It is a one-off (`detected`), never
+`restored`. With Privileges' log available, a grant claim is held for up to a minute, and its
+event is sent when the claim is confirmed or refused. While the log is available, a renewal claim through the hook renews the
+session only when fresh log evidence confirms it. Otherwise, once the confirmation window has
+passed (or at once if the log is lost), it is refused in every mode, reported with kind
+`renewal`, and the expiry doesn't move: a real Privileges renewal sends no claim.
+`elevation.granted` carries `privileges_log` when the agent checked the claim.
 
 `admin.permanent_use` records a use of an account in `PermanentAdmins`. Its `user` is that
 account; it has no `session_id` and no `elevation`, so it is never a session. A sign-in sends

@@ -3,6 +3,13 @@ import os
 
 private let log = Logger(subsystem: "com.altiward.agent", category: "tracker")
 
+/// Whether the agent can read SAP's own log of what Privileges did, which is what confirms a
+/// grant claim. Unavailable carries why, for the logs and the tamper event.
+public enum PrivilegesLogAvailability: Sendable, Equatable {
+    case available
+    case unavailable(String)
+}
+
 /// The outside world the tracker reads from, injectable for tests.
 public struct AgentEnvironment: Sendable {
     public var device: @Sendable () -> DeviceInfo
@@ -43,6 +50,21 @@ public struct AgentEnvironment: Sendable {
     public var fullName: @Sendable (_ shortName: String) -> String?
     /// Whether the directory has an account with this short name.
     public var accountExists: @Sendable (_ shortName: String) -> Bool
+    /// Whether Privileges' log can be read now (``PrivilegesLogAvailability``). While it can,
+    /// a grant claim is held until the log confirms it; while it can't, claims are recorded
+    /// as they arrive.
+    public var privilegesLogAvailability: @Sendable () -> PrivilegesLogAvailability
+    /// What `PrivilegesDaemon` logged about changes it made since the given time, oldest first
+    /// (``PrivilegesDaemonLine``).
+    public var privilegesDaemonLines: @Sendable (_ since: Date) -> [PrivilegesDaemonLine]
+    /// The code signature and start time of a running process; nil when it is gone or can't
+    /// be verified (``ProcessIdentity``).
+    public var processIdentity: @Sendable (_ pid: Int32) -> ProcessIdentity?
+    /// The pid of SAP Privileges' running system extension; nil when none is running
+    /// (``PrivilegesExtensionProcess/pid()``). Whether it is SAP's is for ``processIdentity`` to say.
+    public var privilegesExtensionPID: @Sendable () -> Int32?
+    /// The uid of the account with this short name; nil when there is none.
+    public var userID: @Sendable (_ shortName: String) -> UInt32?
 
     public init(
         device: @escaping @Sendable () -> DeviceInfo,
@@ -62,7 +84,14 @@ public struct AgentEnvironment: Sendable {
         loginHistory: @escaping @Sendable (_ since: Date) -> [LoginRecord] = { _ in [] },
         permanentUseLog: @escaping @Sendable (_ since: Date) -> [PermanentUseLogRecord] = { _ in [] },
         fullName: @escaping @Sendable (_ shortName: String) -> String? = { _ in nil },
-        accountExists: @escaping @Sendable (_ shortName: String) -> Bool = { _ in false }
+        accountExists: @escaping @Sendable (_ shortName: String) -> Bool = { _ in false },
+        privilegesLogAvailability: @escaping @Sendable () -> PrivilegesLogAvailability = {
+            .unavailable("not checked")
+        },
+        privilegesDaemonLines: @escaping @Sendable (_ since: Date) -> [PrivilegesDaemonLine] = { _ in [] },
+        processIdentity: @escaping @Sendable (_ pid: Int32) -> ProcessIdentity? = { _ in nil },
+        privilegesExtensionPID: @escaping @Sendable () -> Int32? = { nil },
+        userID: @escaping @Sendable (_ shortName: String) -> UInt32? = { _ in nil }
     ) {
         self.device = device
         self.privileges = privileges
@@ -82,6 +111,11 @@ public struct AgentEnvironment: Sendable {
         self.permanentUseLog = permanentUseLog
         self.fullName = fullName
         self.accountExists = accountExists
+        self.privilegesLogAvailability = privilegesLogAvailability
+        self.privilegesDaemonLines = privilegesDaemonLines
+        self.processIdentity = processIdentity
+        self.privilegesExtensionPID = privilegesExtensionPID
+        self.userID = userID
     }
 
     /// The real system.
@@ -105,7 +139,12 @@ public struct AgentEnvironment: Sendable {
             loginHistory: { LoginRecords.history(since: $0) },
             permanentUseLog: { PermanentUseLog.records(since: $0) },
             fullName: { PermanentUseLog.fullName(of: $0) },
-            accountExists: { PermanentUseLog.accountExists($0) })
+            accountExists: { PermanentUseLog.accountExists($0) },
+            privilegesLogAvailability: { .current() },
+            privilegesDaemonLines: { PrivilegesDaemonLog.lines(since: $0) },
+            processIdentity: { ProcessIdentity.of(pid: $0) },
+            privilegesExtensionPID: { PrivilegesExtensionProcess.pid() },
+            userID: { ProcessIdentity.uid(of: $0) })
     }
 }
 
@@ -118,6 +157,8 @@ public final class ElevationTracker: Sendable {
     let persistenceLock = NSLock()
     /// Admins with no open session, and when ``checkUntrackedAdmins()`` first saw them so.
     let untrackedSince = OSAllocatedUnfairLock<[String: Date]>(initialState: [:])
+    /// When each caller's recent grant claims arrived, by uid (``submit(_:callerUID:)``).
+    let recentClaims = OSAllocatedUnfairLock<[UInt32: [Date]]>(initialState: [:])
 
     public init(store: AgentStore, environment: AgentEnvironment) {
         self.store = store
@@ -145,6 +186,16 @@ public final class ElevationTracker: Sendable {
             case privilegesNotInstalled
             /// A give-back claim while the daemon still sees the user in `admin`.
             case stillAdmin
+            /// A grant claim, or a renewal when `renewal`, that Privileges' log doesn't confirm.
+            case notConfirmed(renewal: Bool)
+            /// A claim for a user sent by a process of another user, who isn't root.
+            case callerMismatch(callerUID: UInt32)
+            /// More grant claims from one caller in a minute than ``ElevationTracker/maxClaimsPerMinute``.
+            case tooManyClaims
+            /// A grant or renewal claim recorded without Privileges' log on a Mac where the
+            /// agent has read that log before. Losing the log is how a hand-run claim would
+            /// get past the check, so it is reported.
+            case privilegesLogLost
         }
         public let user: String
         public let reason: Reason
@@ -157,6 +208,14 @@ public final class ElevationTracker: Sendable {
                 "a Privileges grant claimed for \(user) on a Mac without SAP Privileges; OutOfBandEnforcement accepts no grant claim without it"
             case .stillAdmin:
                 "a give-back claimed for \(user), who is still an admin; OutOfBandEnforcement keeps the rights out of band"
+            case .notConfirmed(let renewal):
+                "a Privileges \(renewal ? "renewal" : "grant") claimed for \(user), which Privileges' own log does not confirm"
+            case .callerMismatch(let callerUID):
+                "a claim for \(user) sent by a process of user ID \(callerUID), who is neither \(user) nor root"
+            case .tooManyClaims:
+                "more than \(ElevationTracker.maxClaimsPerMinute) grant claims in a minute from one caller; this one for \(user) was ignored"
+            case .privilegesLogLost:
+                "Privileges' log was available on this Mac before and isn't now"
             }
         }
     }
@@ -174,6 +233,16 @@ public final class ElevationTracker: Sendable {
     /// and the decision.
     @discardableResult
     public func record(_ invocation: HookInvocation, callerUID: UInt32? = nil) throws -> AltiwardEvent {
+        try record(invocation, callerUID: callerUID, grantDetail: [:]) { _ in nil }
+    }
+
+    /// ``record(_:callerUID:)``, with `grantDetail` added to a grant's event. When
+    /// `alsoQueue` makes an event from the one recorded, it is queued after it in the same
+    /// transaction.
+    func record(
+        _ invocation: HookInvocation, callerUID: UInt32?, grantDetail: [String: JSONValue],
+        alsoQueue: (AltiwardEvent) -> AltiwardEvent?
+    ) throws -> AltiwardEvent {
         let device = env.device()
         let user = UserInfo(localName: invocation.user, upn: env.config.upn(for: invocation.user))
         // Read before the transaction: it can wait a moment for Privileges to write it. A
@@ -183,55 +252,18 @@ public final class ElevationTracker: Sendable {
             ? env.privilegesTimer(invocation.user, invocation.invokedAt) : nil
 
         return try store.transaction {
-            let observedAdmin = env.admins.isAdmin(user: invocation.user)
-            var detail: [String: JSONValue] = [
-                "trigger": "hook",
-                "claimed_state": .string(invocation.state.rawValue),
-                "observed_admin": .bool(observedAdmin),
-                "verified": .bool(observedAdmin == (invocation.state == .admin)),
-            ]
-            if let callerUID { detail["caller_uid"] = .number(Double(callerUID)) }
-
-            let existing = try store.openSession(user: invocation.user)
             let event: AltiwardEvent
             switch invocation.state {
             case .admin:
-                // Before any write, so a refusal leaves the ledger and the outbox as they were.
-                try checkGrant(invocation, existing: existing, device: device)
-                // A grant while a Privileges session is open renews that session.
-                let renewing = existing?.source == .privileges ? existing : nil
-                let sessionID = renewing?.sessionID ?? newID()
-                let limit = env.privileges().expiry(grantedAt: invocation.invokedAt, timer: timer)
-                let expiresAt = limit?.date
-                detail["renewed"] = .bool(renewing != nil)
-                if let limit { detail["expires_basis"] = .string(limit.basis) }
-                // A grant replaces an out-of-band session: end it first, or it stays open on
-                // the server with its finding. The grant says so, since the claim closes it.
-                if let replaced = existing, replaced.source == .outOfBand {
-                    detail["replaced_out_of_band"] = true
-                    try store.enqueue(
-                        AltiwardEvent(
-                            type: .elevationRevoked, sessionID: replaced.sessionID,
-                            timestamp: invocation.invokedAt, device: device, user: user,
-                            elevation: ElevationInfo(source: .outOfBand),
-                            detail: [
-                                "trigger": "privileges_grant", "observed_admin": .bool(observedAdmin),
-                                "verified": .bool(observedAdmin),
-                            ]))
-                }
-                // The overdue report is re-armed only when the expiry moves.
-                let unchanged = renewing.map { $0.expiresAt == expiresAt } ?? false
-                try store.upsertOpenSession(
-                    OpenSession(
-                        user: invocation.user, sessionID: sessionID, source: .privileges,
-                        startedAt: renewing?.startedAt ?? invocation.invokedAt, expiresAt: expiresAt,
-                        overdueReported: unchanged && renewing?.overdueReported == true))
-                event = AltiwardEvent(
-                    type: .elevationGranted, sessionID: sessionID, timestamp: invocation.invokedAt,
-                    device: device, user: user,
-                    elevation: ElevationInfo(reason: invocation.reason, expires: expiresAt, source: .privileges),
-                    detail: detail)
+                let granted = try applyGrant(
+                    invocation, callerUID: callerUID, grantedAt: invocation.invokedAt, timer: timer,
+                    extraDetail: grantDetail, skipLateCheck: false, device: device)
+                if let replaced = granted.replaced { try store.enqueue(replaced) }
+                event = granted.event
             case .user:
+                let observedAdmin = env.admins.isAdmin(user: invocation.user)
+                var detail = hookDetail(invocation, observedAdmin: observedAdmin, callerUID: callerUID)
+                let existing = try store.openSession(user: invocation.user)
                 // A give-back while still admin would close the session, and a grant claimed
                 // next would find none to replace. Checked before any write.
                 if let open = existing, open.source == .outOfBand, observedAdmin,
@@ -248,20 +280,98 @@ public final class ElevationTracker: Sendable {
                     detail: detail)
             }
             try store.enqueue(event)
+            if let also = alsoQueue(event) { try store.enqueue(also) }
             return event
         }
     }
 
+    /// What every hook claim's event says: what was claimed, what the daemon observed, and
+    /// whether the two agree.
+    private func hookDetail(_ invocation: HookInvocation, observedAdmin: Bool, callerUID: UInt32?)
+        -> [String: JSONValue]
+    {
+        var detail: [String: JSONValue] = [
+            "trigger": "hook",
+            "claimed_state": .string(invocation.state.rawValue),
+            "observed_admin": .bool(observedAdmin),
+            "verified": .bool(observedAdmin == (invocation.state == .admin)),
+        ]
+        if let callerUID { detail["caller_uid"] = .number(Double(callerUID)) }
+        return detail
+    }
+
+    /// Opens or renews the Privileges session a grant claim asks for, replacing an
+    /// out-of-band session where there is one. Runs inside the caller's transaction, which
+    /// queues what it returns: the `elevation.granted`, and before it the `elevation.revoked`
+    /// that ends the out-of-band session it replaced, if any.
+    ///
+    /// The expiry counts from `grantedAt`, when the grant was made: the claim's arrival, or
+    /// the time of the log lines that confirmed it. `timer` is Privileges' timer, read before
+    /// the transaction. The events carry the claim's arrival (`invokedAt`). `extraDetail` is
+    /// added to the grant's detail. `skipLateCheck` is for a grant Privileges' log confirmed,
+    /// which replaces an out-of-band session however long it has been open; a grant on a Mac
+    /// without SAP Privileges is still refused in `enforce` mode.
+    func applyGrant(
+        _ invocation: HookInvocation, callerUID: UInt32?, grantedAt: Date, timer: Date?,
+        extraDetail: [String: JSONValue], skipLateCheck: Bool, device: DeviceInfo
+    ) throws -> (event: AltiwardEvent, replaced: AltiwardEvent?) {
+        let user = UserInfo(localName: invocation.user, upn: env.config.upn(for: invocation.user))
+        // Read inside the transaction, so a grant can't commit between the read and the decision.
+        let observedAdmin = env.admins.isAdmin(user: invocation.user)
+        var detail = hookDetail(invocation, observedAdmin: observedAdmin, callerUID: callerUID)
+        let existing = try store.openSession(user: invocation.user)
+        // Before any write, so a refusal leaves the ledger and the outbox as they were.
+        try checkGrant(invocation, existing: existing, skipLateCheck: skipLateCheck, device: device)
+        // A grant while a Privileges session is open renews that session.
+        let renewing = existing?.source == .privileges ? existing : nil
+        let sessionID = renewing?.sessionID ?? newID()
+        let limit = env.privileges().expiry(grantedAt: grantedAt, timer: timer)
+        let expiresAt = limit?.date
+        detail["renewed"] = .bool(renewing != nil)
+        if let limit { detail["expires_basis"] = .string(limit.basis) }
+        // A grant replaces an out-of-band session: end it first, or it stays open on
+        // the server with its finding. The grant says so, since the claim closes it.
+        var replacedEvent: AltiwardEvent?
+        if let replaced = existing, replaced.source == .outOfBand {
+            detail["replaced_out_of_band"] = true
+            replacedEvent = AltiwardEvent(
+                type: .elevationRevoked, sessionID: replaced.sessionID,
+                timestamp: invocation.invokedAt, device: device, user: user,
+                elevation: ElevationInfo(source: .outOfBand),
+                detail: [
+                    "trigger": "privileges_grant", "observed_admin": .bool(observedAdmin),
+                    "verified": .bool(observedAdmin),
+                ])
+        }
+        detail.merge(extraDetail) { $1 }
+        // The overdue report is re-armed only when the expiry moves.
+        let unchanged = renewing.map { $0.expiresAt == expiresAt } ?? false
+        try store.upsertOpenSession(
+            OpenSession(
+                user: invocation.user, sessionID: sessionID, source: .privileges,
+                startedAt: renewing?.startedAt ?? invocation.invokedAt, expiresAt: expiresAt,
+                overdueReported: unchanged && renewing?.overdueReported == true))
+        let event = AltiwardEvent(
+            type: .elevationGranted, sessionID: sessionID, timestamp: invocation.invokedAt,
+            device: device, user: user,
+            elevation: ElevationInfo(reason: invocation.reason, expires: expiresAt, source: .privileges),
+            detail: detail)
+        return (event, replacedEvent)
+    }
+
     /// Throws ``ClaimRefused`` when, in `enforce` mode, a grant claim may not be recorded: on
-    /// a Mac without SAP Privileges, whatever the user's session, or when it would replace an
-    /// out-of-band session later than ``grantReplacementWindow``. Times are the daemon's: the
-    /// session's start and the claim's `invokedAt`, which the XPC handler sets on arrival.
-    private func checkGrant(_ invocation: HookInvocation, existing: OpenSession?, device: DeviceInfo) throws {
+    /// a Mac without SAP Privileges, whatever the user's session, or (unless `skipLateCheck`)
+    /// when it would replace an out-of-band session later than ``grantReplacementWindow``.
+    /// Times are the daemon's: the session's start and the claim's `invokedAt`, which the XPC
+    /// handler sets on arrival.
+    private func checkGrant(
+        _ invocation: HookInvocation, existing: OpenSession?, skipLateCheck: Bool, device: DeviceInfo
+    ) throws {
         guard env.config.outOfBandEnforcement == .enforce else { return }
         if device.privilegesVersion == nil {
             throw ClaimRefused(user: invocation.user, reason: .privilegesNotInstalled)
         }
-        guard let replaced = existing, replaced.source == .outOfBand else { return }
+        guard !skipLateCheck, let replaced = existing, replaced.source == .outOfBand else { return }
         let elapsed = invocation.invokedAt.timeIntervalSince(replaced.startedAt)
         if elapsed > Self.grantReplacementWindow {
             throw ClaimRefused(user: invocation.user, reason: .late(seconds: Int(elapsed.rounded())))
@@ -281,17 +391,25 @@ public final class ElevationTracker: Sendable {
     /// - an `agent.health` event reports who is admin now and the result of each tamper
     ///   check.
     ///
+    /// Grant claims held for Privileges' log are resolved first
+    /// (``resolvePendingClaims()``), and their events come first in what it returns. An admin
+    /// whose claim is still in its confirmation window isn't raised out-of-band.
+    ///
     /// Membership is read inside the transaction, so a grant or an expiry can't commit
     /// between the read and the reconciliation.
     @discardableResult
     public func heartbeat() throws -> [AltiwardEvent] {
+        let resolved = resolveHeldClaims()
         let now = env.now()
         let device = env.device()
         let settings = env.privileges()
+        let logAvailability = env.privilegesLogAvailability()
         // Read outside the transaction: it checks the bundle's signature.
         var integrity = env.integrity()
         // So is the unified log, which can take a moment.
         let audit = env.privilegesAudit(try auditStart(now: now))
+        // And the extension's process, for which of those records it wrote.
+        let extensionInstance = verifiedExtensionInstance()
         // And wtmp: sign-ins by permanent admins too short for the checks to see.
         let loginsFrom = try permanentUseHistoryStart(now: now)
         let loginHistory = env.loginHistory(loginsFrom)
@@ -300,7 +418,9 @@ public final class ElevationTracker: Sendable {
         let useLogFrom = try permanentUseLogStart(now: now)
         let useLog = env.config.permanentAdmins.isEmpty ? [] : env.permanentUseLog(useLogFrom)
 
-        return try store.transaction {
+        return try resolved + store.transaction {
+            try notePrivilegesLog(logAvailability)
+            try noteExtensionInstance(extensionInstance)
             let admins = env.admins.adminMembers()
             var events: [AltiwardEvent] = []
             let open = try store.openSessions()
@@ -338,8 +458,9 @@ public final class ElevationTracker: Sendable {
                 open.filter { admins.contains($0.user) }, now: now, device: device)
             events += expiryEvents
 
-            // Admins with no open session: raised out-of-band below.
-            let untrackedAdmins = untracked(admins: admins, open: open)
+            // Admins with no open session: raised out-of-band below, unless a claim of theirs
+            // is waiting for Privileges' log.
+            let untrackedAdmins = untracked(admins: admins, open: open).subtracting(try heldUsers(now: now))
 
             // Sessions closed above are left out: the not-admin ones by `admins`, the
             // permanent-admin ones by name. Expiry only touches Privileges sessions.
@@ -360,6 +481,7 @@ public final class ElevationTracker: Sendable {
             if device.privilegesVersion != nil {
                 integrity[.privilegesTimer] = privilegesTimerCheck(open, admins: admins.subtracting(demoted))
             }
+            integrity[.grantConfirmation] = try grantConfirmationCheck(logAvailability)
             events += try tamperEvents(integrity, now: now, device: device)
             events += try blockedEvents(audit, now: now, device: device)
             // Sign-ins of permanent admins that began and ended between two checks. The next read
@@ -401,6 +523,25 @@ public final class ElevationTracker: Sendable {
             for event in events { try store.enqueue(event, now: now) }
             return events
         }
+    }
+
+    /// Fails while enforcement can't confirm Privileges grants: Privileges' log is unavailable
+    /// (the reason is the problem), or the system extension has logged no record of a grant
+    /// the daemon's line confirmed (``extensionSilentKey``). Nil, so left out of the report,
+    /// unless `OutOfBandEnforcement` or `ExpiryEnforcement` is `enforce` (only enforcement
+    /// depends on the confirmation) and SAP Privileges is installed. `availability` is the
+    /// heartbeat's reading of the log.
+    func grantConfirmationCheck(_ availability: PrivilegesLogAvailability? = nil) throws -> IntegrityResult? {
+        guard env.config.outOfBandEnforcement == .enforce || env.config.expiryEnforcement == .enforce,
+            env.device().privilegesVersion != nil
+        else { return nil }
+        if case .unavailable(let reason) = availability ?? env.privilegesLogAvailability() {
+            return .failed(reason)
+        }
+        if try store.value(forKey: Self.extensionSilentKey) != nil {
+            return .failed("Privileges' system extension logged no record of a Privileges grant")
+        }
+        return .ok
     }
 
     /// Fails while someone logged in holds rights from a Privileges grant and their
@@ -558,15 +699,22 @@ public final class ElevationTracker: Sendable {
     /// session for ``untrackedGrace``, so rights nobody granted show within a minute instead
     /// of a heartbeat, while a grant whose hook is still on its way isn't reported as one.
     /// Run it every few seconds; the heartbeat still raises anything it misses.
+    ///
+    /// Grant claims held for Privileges' log are resolved first (``resolvePendingClaims()``),
+    /// and their events come first in what it returns. An admin whose claim is still in its
+    /// confirmation window isn't raised, though when they were first seen is still kept: if
+    /// the claim is refused, their rights count as out of band from then.
     public func checkUntrackedAdmins() throws -> [AltiwardEvent] {
+        let resolved = resolveHeldClaims()
         let now = env.now()
         let device = env.device()
-        return try store.transaction {
+        return try resolved + store.transaction {
             let untracked = untracked(admins: env.admins.adminMembers(), open: try store.openSessions())
+            let held = try heldUsers(now: now)
             let confirmed = untrackedSince.withLock { since in
                 since = Dictionary(uniqueKeysWithValues: untracked.map { ($0, since[$0] ?? now) })
                 return Set(since.filter { now.timeIntervalSince($0.value) >= Self.untrackedGrace }.keys)
-            }
+            }.subtracting(held)
             var events: [AltiwardEvent] = []
             // Rare, so the log is read here, only when there is something to attribute.
             let audit = confirmed.isEmpty ? [] : env.privilegesAudit(now.addingTimeInterval(-auditLookback))
@@ -586,15 +734,17 @@ public final class ElevationTracker: Sendable {
 
     /// Opens an out-of-band session for `user` and returns its `admin.out_of_band` event,
     /// for the caller to enqueue. `audit` says which process added them, when Privileges'
-    /// system extension logged it.
-    private func openOutOfBand(_ user: String, now: Date, device: DeviceInfo, audit: [PrivilegesAuditRecord])
-        throws -> AltiwardEvent
-    {
+    /// system extension logged it. The session starts at `startedAt`, when the rights were
+    /// first seen, or `now` when that isn't given; the grace period counts from it.
+    func openOutOfBand(
+        _ user: String, now: Date, startedAt: Date? = nil, device: DeviceInfo, audit: [PrivilegesAuditRecord]
+    ) throws -> AltiwardEvent {
         let sessionID = newID()
+        let firstObserved = startedAt ?? now
         try store.upsertOpenSession(
-            OpenSession(user: user, sessionID: sessionID, source: .outOfBand, startedAt: now, expiresAt: nil))
-        var detail: [String: JSONValue] = ["first_observed": .date(now)]
-        if let instigator = instigator(of: user, in: audit) { detail["instigator"] = instigator }
+            OpenSession(user: user, sessionID: sessionID, source: .outOfBand, startedAt: firstObserved, expiresAt: nil))
+        var detail: [String: JSONValue] = ["first_observed": .date(firstObserved)]
+        if let instigator = try instigator(of: user, in: audit) { detail["instigator"] = instigator }
         return AltiwardEvent(
             type: .adminOutOfBand, sessionID: sessionID, timestamp: now, device: device,
             user: UserInfo(localName: user, upn: env.config.upn(for: user)),

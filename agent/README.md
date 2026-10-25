@@ -27,7 +27,8 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
 ## What the daemon does
 
 - **Records each change Privileges reports.** The hook's claim is checked against the
-  real `admin` group, and the event says whether they agree (`verified`). A grant's
+  real `admin` group, and the event says whether they agree (`verified`). With Privileges'
+  own log available, a grant claim is held until the log confirms it (see the trust model). A grant's
   expiry is the one Privileges set: `ExpirationInterval`, or the duration the person
   picked, read from Privileges' own timer and capped by `ExpirationIntervalMax`.
 - **Keeps every event until your server has it.** Each event is written to the outbox in
@@ -40,7 +41,8 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
   recorded, below). By default
   it only reports them; `OutOfBandEnforcement` (below) can remove them. With
   Privileges 2.6+ and its system extension on (macOS 14+), the event names the process
-  that added them (`detail.instigator`), read from the extension's unified log entries.
+  that added them (`detail.instigator`), read from the extension's unified log entries and
+  marked `extension_verified` when the agent matched the entry to the real extension.
 - **Sends a heartbeat** every 5 minutes (`HeartbeatInterval`). It reconciles the `admin`
   group with the ledger, closing sessions whose revoke never arrived and raising anything
   the 15-second check missed, and sends `agent.health`.
@@ -113,7 +115,10 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
   LaunchDaemon plist, the app's code signature, seven settings set outside MDM
   (`ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`,
   `OutOfBandEnforcement`, `OutOfBandGraceMinutes`, `HookCodeRequirement`), a downgrade, and, with Privileges installed, its tamper protection, its hook setting, and its timer
-  stopped while someone holds rights it granted. It also reports each attempt Privileges'
+  stopped while someone holds rights it granted. With either enforcement setting on `enforce`
+  it also fails `grant_confirmation` while it can't confirm Privileges grants against
+  Privileges' log, and it reports each claim it refuses or accepts unconfirmed as `grant_claim`.
+  It also reports each attempt Privileges'
   system extension blocked on Privileges since the last heartbeat (`privileges_blocked`),
   which Privileges itself only logs on the Mac. `sudo altiward-agent privileges-audit [HOURS]`
   prints what the agent reads from that log.
@@ -176,19 +181,102 @@ Privileges, a grant claimed more than a minute after Altiward raised the rights
 the user in `admin`; the rights are then still removed after the grace period. A give-back
 after the rights really went ends the session as before.
 
-Hand-run claims can still keep rights nobody granted in `enforce` mode, in two ways: a
-grant claimed before the agent raises the rights (in the 30 seconds or so before it does,
-or between heartbeats), and an account with root that removes itself from `admin`, gives
-the rights back, adds itself again and claims a grant. The hook is untrusted and an admin
-can do this. A later release will accept a grant claim in `enforce` mode only when
-Privileges' own log shows Privileges added the user.
+**Confirming a grant claim with Privileges' log.** From Privileges 2.6.0, `PrivilegesDaemon`
+writes a line to the unified log (subsystem `com.apple.defaults`, category `audit`) for each
+change it makes, and with its system extension on (macOS 14 or later) the extension logs
+every change to `admin` by any process, with the process that made it. A hand-run hook
+leaves neither, so the agent holds a grant claim until one of them backs it.
 
-In `alert` mode both claims work as before: a claimed grant replaces the out-of-band
-session, shown in the console as **Followed rights without a grant** and in the SIEM as
-"Replaced by a Privileges grant". Once a session is a Privileges session, with
-`ExpiryEnforcement` set to `enforce` and an expiry from Privileges' settings, the rights
-end at expiry, unless they run the hook again before then: each claim renews the grant, and
-each is reported as `elevation.granted`.
+- *Evidence.* A **daemon line** says, from its start, `SAPCorp: User <name> now has
+  administrator privileges`, with the claimed user's exact short name: the reason a person
+  types is later in the same line, and can't be read as a line about someone else. An
+  **extension record** is an `ADMIN_ADD` for that user whose instigating process is signed
+  `corp.sap.privileges.daemon` by team `7R5ZEU67FQ`; `dseditgroup` or any other SAP binary
+  isn't enough, since signing IDs are pinned one by one. Evidence counts when it was logged
+  from two minutes before the claim arrived (`ClaimEvidence.lookBack`: the agent was seen
+  taking up to 45 seconds to handle the hook's call, #91) to a minute after it. An
+  `ADMIN_REMOVE`, or a daemon line saying the user now has standard privileges, voids the
+  evidence before it, so removing, re-adding and claiming within two minutes of a real grant
+  doesn't work. One piece of evidence confirms one claim, remembered across restarts for 5
+  minutes. If the extension logged any change for the user in the window, the latest must
+  be an allowlisted add, whatever the daemon line says. Both rules look only at changes made
+  at or before the claim's arrival: a real grant given back seconds after its claim arrived
+  is still confirmed, not reported. A daemon line and an extension record within 5 seconds
+  of each other are one grant.
+- *Verification.* A line counts only if the process that logged it is verified: its pid's
+  code signature has the expected signing ID (`corp.sap.privileges.daemon` for the daemon
+  line, `corp.sap.privileges.extension` for the record) and team, it runs as root, and it
+  **started before the line**, because pids are reused and a forger could land on a SAP
+  process's pid. The log's own image path and UUID aren't trusted: a forged binary can copy
+  them. The agent remembers the pid and start time of each extension instance it verified
+  (the last 20), so older records are checked against the instance that wrote them; a record
+  from an instance it never saw is `extension_verified: false` on `instigator` and
+  `privileges_blocked`, not dropped.
+- *When the log is available.* Privileges 2.6.0 or later is installed, macOS is 14 or later,
+  and a running extension verifies as above. The agent decides by looking at the process,
+  not at settings or version strings, which root can write.
+- *Confirming afterwards.* The hook can't wait for the log: it times out after 5 seconds,
+  and a refused real grant can't be recovered, since Privileges sends no second claim. So
+  the daemon holds a grant claim in its store and tells the hook it is accepted for
+  confirmation. The 15-second check and the heartbeat resolve it as soon as evidence
+  appears, or when its minute is over. While it is held the user isn't raised as out of band.
+  On confirmation the session opens exactly as before, even if the agent raised the rights
+  longer than a minute ago (the confirmed grant overrides the `late` refusal), timed by the
+  claim's arrival, with an expiry counted from the evidence's time, not the claim's.
+  `elevation.granted` carries `privileges_log: "confirmed"`, `confirmed_at` and the
+  `evidence` sources. In `OutOfBandEnforcement` `enforce` mode an unconfirmed grant is
+  refused and reported (`grant_claim`, `refused`), and the user's rights become out of band
+  from when the agent first saw them, so a hand-run claim doesn't lengthen the grace period.
+  In `alert` mode it is accepted, marked `not_confirmed` and reported (`accepted_unconfirmed`).
+  A daemon line without an extension record, while the extension's log is available, is
+  held until 5 seconds after the line was logged, as the record lands a moment after the
+  line and can take up to a second to be readable. Then it still confirms the grant (a real
+  grant is never stripped because the extension went quiet), and fails the
+  `grant_confirmation` check.
+- *Renewals.* A real Privileges renewal sends no hook claim and writes no audit line, so a
+  claim made while a Privileges session is open and the user is admin has nothing real to
+  match. The session is renewed only when fresh log evidence confirms the claim (the log
+  shows Privileges granted again). Otherwise the claim is refused in every mode, reported
+  with kind `renewal`, and the session keeps its expiry. Real renewals are a separate gap
+  (#90).
+- *Binding the caller to the user.* Privileges runs the hook as the user whose rights
+  changed. With the log available, a claim whose caller UID is neither the claimed user's nor
+  0 is refused and reported, which stops a standard user ending someone else's session with
+  a give-back. A caller is limited to 5 grant claims a minute, checked before anything
+  else; those refusals are logged on the Mac and not sent, so a flood can't fill the
+  outbox. Give-back claims don't count and aren't limited, so a real give-back is always
+  recorded. Every other
+  refusal is reported as `grant_claim` (`refused`), including the earlier ones: a grant on a
+  Mac without SAP Privileges, a grant claimed too long after the rights were raised, and a
+  give-back (`kind` `give_back`) while the user is still admin.
+- *Without the log.* Nothing can confirm a claim. The agent keeps removing rights nobody
+  granted, accepts a grant claim with the earlier checks, and marks it
+  `privileges_log: "unavailable"`. The `grant_confirmation` check fails, naming what is
+  missing (it is left out unless `OutOfBandEnforcement` or `ExpiryEnforcement` is `enforce`
+  and Privileges is installed). On a Mac where the agent has had the log, accepting a claim
+  without it is also reported (`accepted_unconfirmed`): killing the extension and claiming in
+  the restart gap is how an attacker would get here.
+
+The residual: this is not a boundary against root. An admin is root through `sudo`, and
+someone with root can still forge a line, for example by logging as a process that then
+runs the genuine SAP binary (the pid and start time stay the same), or by editing
+`agent.sqlite`. The aim is that the quiet routes (a hand-run claim, a claim just before the
+agent raises rights, remove-give-back-re-add-claim, and endless renewal) stop working, and
+that what is left needs root and leaves a tamper event. The agent doesn't check that the
+log subsystem is still persisting, and it trusts the Mac's clock.
+
+The older refusals (no Privileges installed, `late`, a give-back while still admin) still apply
+in `enforce` mode, and without Privileges' log they are all there is: a hand-run
+claim can keep rights nobody granted in two ways, a grant claimed before the agent raises
+the rights (in the 30 seconds or so before it does, or between heartbeats), and an account
+with root that removes itself from `admin`, gives the rights back, adds itself again and
+claims a grant.
+
+In `alert` mode, without the log, both claims work as before: a claimed grant replaces the
+out-of-band session, shown in the console as **Followed rights without a grant** and in the
+SIEM as "Replaced by a Privileges grant", and each claim renews a Privileges session, each
+reported as `elevation.granted`. With the log, a claim it doesn't confirm still replaces the
+session but is marked `not_confirmed` and reported, and a claim renews a session only when fresh log evidence confirms it.
 
 **The device key stops a copy, not a person at the Mac.** Altiward watches people who hold
 admin rights for a while, and admin rights can read root-only files. A key in a file could

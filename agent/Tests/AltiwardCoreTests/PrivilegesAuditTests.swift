@@ -14,31 +14,48 @@ struct PrivilegesAuditTests {
     /// the live one does.
     let logged = OSAllocatedUnfairLock<[PrivilegesAuditRecord]>(initialState: [])
     let reads = OSAllocatedUnfairLock<[Date]>(initialState: [])
+    /// The pid of the running extension, if any, and the identity of each pid; both can change
+    /// between heartbeats.
+    let extensionPID = OSAllocatedUnfairLock<Int32?>(initialState: nil)
+    let identities = OSAllocatedUnfairLock<[Int32: ProcessIdentity]>(initialState: [:])
 
     init() throws {
         store = try makeStore()
     }
 
     func tracker() -> ElevationTracker {
-        let (logged, reads) = (logged, reads)
+        let (logged, reads, extensionPID, identities) = (logged, reads, extensionPID, identities)
         let env = makeEnvironment(
             admins: admins, clock: clock,
             privilegesAudit: { since in
                 reads.withLock { $0.append(since) }
                 return logged.withLock { $0.filter { $0.date >= since } }
-            })
+            },
+            processIdentity: { pid in identities.withLock { $0[pid] } },
+            privilegesExtensionPID: { extensionPID.withLock { $0 } })
         return ElevationTracker(store: store, environment: env)
     }
 
-    func log(_ type: String, _ subject: String, by executable: String? = "/usr/sbin/dseditgroup", ago: TimeInterval = 0) {
+    func log(_ type: String, _ subject: String, by executable: String? = "/usr/sbin/dseditgroup", ago: TimeInterval = 0, loggerPID: Int32 = 0) {
         let process = executable.map {
             PrivilegesAuditRecord.Instigator(
                 executable: $0, signingID: "com.apple.dseditgroup", teamID: "", platformBinary: true, pid: 5165,
                 ppid: 606, tty: "")
         }
         let record = PrivilegesAuditRecord(
-            eventType: type, subject: subject, date: clock.now.addingTimeInterval(-ago), process: process)
+            eventType: type, subject: subject, date: clock.now.addingTimeInterval(-ago), process: process,
+            loggerPID: loggerPID)
         logged.withLock { $0.append(record) }
+    }
+
+    /// Makes `pid` the running extension, genuine and started `startedAgo` seconds ago.
+    func runExtension(pid: Int32, startedAgo: TimeInterval, signingID: String = PrivilegesSigning.systemExtension) {
+        extensionPID.withLock { $0 = pid }
+        identities.withLock {
+            $0[pid] = ProcessIdentity(
+                signingID: signingID, teamID: PrivilegesSigning.teamID,
+                startedAt: clock.now.addingTimeInterval(-startedAgo), uid: 0)
+        }
     }
 
     func blocked(_ t: ElevationTracker) throws -> [AltiwardEvent] {
@@ -201,5 +218,125 @@ struct PrivilegesAuditTests {
         let events = try blocked(tracker())
         #expect(events.first?.detail["problem"] == "SAP Privileges blocked an attempt to delete /Applications/Privileges.app")
         #expect(events.first?.detail["instigator"] == .null)
+    }
+
+    // MARK: Which records came from the real extension
+
+    func storedInstances() throws -> [[String: Any]] {
+        let raw = try #require(try store.value(forKey: "privileges_extension_instances"))
+        return try #require(try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [[String: Any]])
+    }
+
+    func outOfBandInstigator(_ t: ElevationTracker) throws -> [String: JSONValue]? {
+        let raised = try t.heartbeat().filter { $0.type == .adminOutOfBand }
+        guard case .object(let fields) = raised.first?.detail["instigator"] else { return nil }
+        return fields
+    }
+
+    @Test func aRecordFromAKnownInstanceIsVerified() throws {
+        runExtension(pid: 700, startedAgo: 1000)
+        admins.set(["backdoor"])
+        log("ADMIN_ADD", "backdoor", ago: 100, loggerPID: 700)
+        log("DELETE", "/Applications/Privileges.app", by: "/bin/rm", ago: 50, loggerPID: 700)
+        let t = tracker()
+        let events = try t.heartbeat()
+        let raised = events.filter { $0.type == .adminOutOfBand }
+        guard case .object(let fields) = raised.first?.detail["instigator"] else {
+            Issue.record("no instigator")
+            return
+        }
+        #expect(fields["extension_verified"] == .bool(true))
+        let tamper = events.filter { $0.type == .agentTamper && $0.detail["check"] == "privileges_blocked" }
+        #expect(tamper.first?.detail["extension_verified"] == .bool(true))
+    }
+
+    @Test func aRecordFromAnUnknownPidIsMarkedUnverifiedNotDropped() throws {
+        runExtension(pid: 700, startedAgo: 1000)
+        admins.set(["backdoor"])
+        log("ADMIN_ADD", "backdoor", ago: 100, loggerPID: 4242)  // some other process wrote it
+        log("DELETE", "/Applications/Privileges.app", by: "/bin/rm", ago: 50, loggerPID: 4242)
+        let events = try tracker().heartbeat()
+        let raised = events.filter { $0.type == .adminOutOfBand }
+        guard case .object(let fields) = raised.first?.detail["instigator"] else {
+            Issue.record("no instigator")
+            return
+        }
+        #expect(fields["executable"] == "/usr/sbin/dseditgroup")
+        #expect(fields["extension_verified"] == .bool(false))
+        let tamper = events.filter { $0.type == .agentTamper && $0.detail["check"] == "privileges_blocked" }
+        #expect(tamper.count == 1)
+        #expect(tamper.first?.detail["extension_verified"] == .bool(false))
+    }
+
+    @Test func aRecordFromBeforeAnInstanceStartedIsUnverified() throws {
+        runExtension(pid: 700, startedAgo: 60)
+        admins.set(["backdoor"])
+        // Logged by the pid, but before the process that has it now began: a reused pid.
+        log("ADMIN_ADD", "backdoor", ago: 100, loggerPID: 700)
+        let fields = try #require(try outOfBandInstigator(tracker()))
+        #expect(fields["extension_verified"] == .bool(false))
+    }
+
+    @Test func withoutAnExtensionNothingIsVerifiedAndNothingIsDropped() throws {
+        admins.set(["backdoor"])
+        log("ADMIN_ADD", "backdoor", ago: 100, loggerPID: 700)
+        let fields = try #require(try outOfBandInstigator(tracker()))
+        #expect(fields["extension_verified"] == .bool(false))
+    }
+
+    @Test func aProcessThatIsNotTheRealExtensionIsNotRemembered() throws {
+        runExtension(pid: 700, startedAgo: 1000, signingID: "com.example.imposter")
+        admins.set(["backdoor"])
+        log("ADMIN_ADD", "backdoor", ago: 100, loggerPID: 700)
+        let fields = try #require(try outOfBandInstigator(tracker()))
+        #expect(fields["extension_verified"] == .bool(false))
+    }
+
+    @Test func anInstanceIsRememberedAfterTheExtensionRestarts() throws {
+        let t = tracker()
+        runExtension(pid: 700, startedAgo: 1000)
+        _ = try t.heartbeat()
+        // The extension restarts as a new process; a heartbeat reads back across the restart.
+        clock.advance(600)
+        runExtension(pid: 810, startedAgo: 100)
+        _ = try t.heartbeat()
+        admins.set(["backdoor"])
+        log("ADMIN_ADD", "backdoor", ago: 500, loggerPID: 700)
+        let fields = try #require(try outOfBandInstigator(t))
+        #expect(fields["extension_verified"] == .bool(true))
+        let remembered = try #require(try store.value(forKey: "privileges_extension_instances"))
+        #expect(remembered.contains("700") && remembered.contains("810"))
+    }
+
+    @Test func eachInstanceIsKeptOnceAndOnlyTheLastTwentyRemain() throws {
+        let t = tracker()
+        runExtension(pid: 900, startedAgo: 10)
+        _ = try t.heartbeat()
+        _ = try t.heartbeat()  // the same instance again
+        var stored = try storedInstances()
+        #expect(stored.count == 1)
+        for pid in Int32(901)...Int32(930) {
+            clock.advance(60)
+            runExtension(pid: pid, startedAgo: 10)
+            _ = try t.heartbeat()
+        }
+        stored = try storedInstances()
+        #expect(stored.count == 20)
+        #expect(stored.last?["pid"] as? Int == 930 && stored.first?["pid"] as? Int == 911)
+    }
+
+    @Test func aStartTimeBelowTheMillisecondIsStillOneInstance() throws {
+        let t = tracker()
+        // The live start time has microsecond precision; the store keeps milliseconds.
+        runExtension(pid: 700, startedAgo: 100.0004)
+        _ = try t.heartbeat()
+        clock.advance(60)
+        _ = try t.heartbeat()
+        #expect(try storedInstances().count == 1)
+        // A record logged at the very instant the process started still counts.
+        admins.set(["backdoor"])
+        log("ADMIN_ADD", "backdoor", ago: 160.0004, loggerPID: 700)
+        let fields = try #require(try outOfBandInstigator(t))
+        #expect(fields["extension_verified"] == .bool(true))
     }
 }

@@ -18,6 +18,83 @@ package: its `PostChangeExecutableChecksum` is this build's hook. With the old c
 Privileges stops running the hook and Altiward raises "SAP Privileges no longer reports to
 Altiward".
 
+Upgrade the server to 0.5.0 first, for the console's labels.
+
+### Breaking changes
+
+None.
+
+### Security
+
+- A grant claimed through the hook now counts only when SAP Privileges' own log backs it
+  (closes #80). Anyone who already held admin rights could run `altiward-hook` by hand to
+  open a Privileges session: just before the agent raised their rights, after removing
+  themselves from `admin` and claiming a give-back, or by claiming again every few minutes
+  to renew the session for ever, which defeated `ExpiryEnforcement`. The agent now reads
+  the lines `PrivilegesDaemon` writes when it grants admin rights, and the records
+  Privileges' system extension keeps, and checks the code signature, user and start time
+  of the process that logged each. A grant claim waits up to a minute for a line that backs
+  it, logged from two minutes before the claim arrived. In `OutOfBandEnforcement` `enforce`
+  mode a claim the log doesn't confirm is refused, reported, and the rights are removed
+  after the grace period, counted from when the agent first saw them. In `alert` mode it is
+  accepted, marked not confirmed and reported. A claim through the hook renews a Privileges
+  session only when fresh log evidence confirms it; otherwise it is refused and the expiry
+  doesn't move. A claim from a process of another user, who isn't root, is refused, and a
+  caller is limited to 5 grant claims a minute. Full protection needs Privileges 2.6 or
+  later with its system extension on, on macOS 14 or later. Without it the agent works as
+  before, marks the grant as not checked, and fails a new check. It is not a boundary
+  against root: someone with root can still forge the log.
+
+### Changes
+
+- New `agent.tamper` event, check `grant_claim`, state `detected`: a claim from Privileges'
+  hook that the agent refused, or accepted without Privileges' log backing it. Every
+  refusal is reported, the earlier ones too (a grant claimed on a Mac without SAP Privileges
+  or long after the rights appeared, and a give-back while the user is still admin), except
+  a caller sending more than 5 grant claims a minute, which is only logged on the Mac. It
+  carries the account, what was claimed, whether it was a grant, a renewal or a give-back
+  (`kind`), the `outcome` (`refused` or `accepted_unconfirmed`), the reason, the UID of the
+  caller and, when a log line was found, `evidence_at` and `evidence_sources`.
+- New integrity check `grant_confirmation`, shown with the Mac's other checks and in
+  `agent.health`: it fails while the agent can't confirm Privileges grants, and says why
+  (Privileges older than 2.6, no verified system extension running, macOS older than 14, or
+  the extension logged no record of a grant the daemon's line confirmed). It is left out
+  unless `OutOfBandEnforcement` or `ExpiryEnforcement` is `enforce` and Privileges is
+  installed.
+- `elevation.granted` gains `detail.privileges_log` (`confirmed`, `not_confirmed` or
+  `unavailable`), `detail.confirmed_at` and `detail.evidence` (`daemon`, `extension`).
+  The expiry of a confirmed grant counts from when Privileges logged it, not from when the
+  claim arrived. A confirmed grant replaces an out-of-band session however long ago the
+  agent raised the rights; before, a real grant arriving more than a minute later was
+  refused and the rights removed.
+- `instigator` on `admin.out_of_band`, and `agent.tamper` events with check
+  `privileges_blocked`, gain `extension_verified`: whether the agent matched the log entry
+  to the real extension. The entry is sent either way.
+- The agent keeps a held grant claim on the Mac (account, reason, caller UID and time)
+  until it is confirmed or refused, and remembers the process ID and start time of the
+  extensions it has verified. `docs/data-handling.md` lists both.
+- A real renewal in Privileges sends no claim, so Altiward doesn't see it (#90). Until
+  that is fixed, with `ExpiryEnforcement` on `enforce`, set Privileges' `AllowPrivilegeRenewal`
+  to `false` (#92).
+- When the agent refuses a claim, for example a grant claimed long after the rights
+  appeared in `enforce` mode, `altiward-hook` now logs "altiward-agent refused the claim"
+  with the reason and exits with 77 (`EX_NOPERM`). It used to log "Could not reach
+  altiward-agent", which now only means the agent didn't answer (exit 69,
+  `EX_UNAVAILABLE`). When the agent takes the claim, the hook logs "Sent admin for <user>"
+  (or "Sent user ..."), not "Recorded ...": the agent may hold a grant claim until
+  Privileges' log confirms it.
+- The *Privileges tamper protection* check now also fails when `EnableSystemExtension` is
+  on but SAP's system extension isn't running, or isn't SAP's (#93). It used to read the
+  setting only, so a Mac whose extension was never approved, or was stopped, passed.
+
+## Server 0.5.0 - unreleased
+
+### Upgrade order
+
+None needed beyond the usual: upgrade the server before the agents. Agent 0.4.0's new
+events and fields work with Server 0.4.0 too, but the console shows the new checks by their
+raw names until you upgrade.
+
 ### Breaking changes
 
 None.
@@ -28,11 +105,11 @@ None.
 
 ### Changes
 
-- When the agent refuses a claim, for example a grant claimed long after the rights
-  appeared in `enforce` mode, `altiward-hook` now logs "altiward-agent refused the claim"
-  with the reason and exits with 77 (`EX_NOPERM`). It used to log "Could not reach
-  altiward-agent", which now only means the agent didn't answer (exit 69,
-  `EX_UNAVAILABLE`).
+- The SIEM export titles the two new `agent.tamper` checks: `grant_claim` (a high severity
+  finding for each claim refused or not confirmed, analytic `altiward.tamper.grant_claim`)
+  and `grant_confirmation` (medium severity while it fails, closed when it passes).
+- The console labels the new checks (Grant confirmation, Grant claim not confirmed) and a
+  session's timeline says whether Privileges' own log confirmed a grant.
 
 ## Agent 0.3.0 - 2026-10-24
 

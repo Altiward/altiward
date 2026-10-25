@@ -108,6 +108,8 @@ const integrityChecks: Record<string, string> = {
   privileges_timer: "Privileges timer running",
   agent_version: "Agent version",
   privileges_blocked: "Privileges blocked tampering",
+  grant_confirmation: "Grant confirmation",
+  grant_claim: "Grant claim not confirmed",
 };
 
 /** Words for the agent's tamper checks, sentence case. */
@@ -123,6 +125,7 @@ export function tamperStateLabel(state: string, check: string): string {
   if (state === "retired") return "No longer checked";
   if (state === "detected") {
     if (check === "agent_version") return "Downgraded";
+    if (check === "grant_claim") return "Not confirmed";
     return check === "privileges_blocked" ? "Blocked" : "Detected";
   }
   return "Failed";

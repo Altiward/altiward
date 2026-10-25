@@ -67,7 +67,8 @@ connection.invalidate()
 
 switch outcome.withLock({ $0 }) {
 case .success:
-    log.info("Recorded \(invocation.state.rawValue, privacy: .public) for \(invocation.user, privacy: .public)")
+    // Sent, not recorded: the agent may hold a grant claim until Privileges' log confirms it.
+    log.info("Sent \(invocation.state.rawValue, privacy: .public) for \(invocation.user, privacy: .public)")
     exit(EX_OK)
 case .failure(let failure) where failure.refused:
     log.error("altiward-agent refused the claim: \(failure.message, privacy: .public)")

@@ -583,6 +583,42 @@ func TestPrivilegesBlockedIsAOneOffAlert(t *testing.T) {
 	}
 }
 
+// A refused or unconfirmed grant claim is a one-off alert, like a blocked attempt: nothing closes it.
+func TestGrantClaimIsAOneOffAlert(t *testing.T) {
+	r := mapJSON(t, stored(t, "agent-tamper-grant-claim"))
+	if r["activity_name"] != "Create" || r["severity"] != "High" || r["is_alert"] != true {
+		t.Fatalf("activity %v severity %v alert %v", r["activity_name"], r["severity"], r["is_alert"])
+	}
+	if get(r, "finding_info.uid") != "c3f1a8e4-6b2d-4d7f-9a05-1e8b7c6d5f42" ||
+		get(r, "finding_info.analytic.name") != "altiward.tamper.grant_claim" {
+		t.Fatalf("uid %v analytic %v", get(r, "finding_info.uid"), get(r, "finding_info.analytic.name"))
+	}
+	if title := get(r, "finding_info.title"); title != "A SAP Privileges grant claim was refused or not confirmed by Privileges' log" {
+		t.Fatalf("title %v", title)
+	}
+	if msg := r["message"].(string); !strings.HasSuffix(msg, "a Privileges grant claimed for jdoe, which Privileges' own log does not confirm") {
+		t.Fatalf("message %q", msg)
+	}
+}
+
+// The standing check is a medium finding that the restore closes, paired by device and check.
+func TestGrantConfirmationIsAStandingMediumFinding(t *testing.T) {
+	e := stored(t, "agent-tamper")
+	e.Detail = map[string]any{"check": "grant_confirmation", "state": "failed",
+		"problem": "Privileges' system extension isn't running"}
+	r := mapJSON(t, e)
+	if r["severity"] != "Medium" || r["activity_name"] != "Create" ||
+		get(r, "finding_info.title") != "Altiward can't confirm SAP Privileges grants against Privileges' log" ||
+		get(r, "finding_info.analytic.name") != "altiward.tamper.grant_confirmation" ||
+		get(r, "finding_info.uid") != "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D/grant_confirmation" {
+		t.Fatalf("severity %v finding %v", r["severity"], r["finding_info"])
+	}
+	e.Detail["state"], e.Detail["problem"] = "restored", nil
+	if r := mapJSON(t, e); r["activity_name"] != "Close" || r["status"] != "Resolved" {
+		t.Fatalf("activity %v status %v", r["activity_name"], r["status"])
+	}
+}
+
 // A failing check that stops applying closes its finding, saying why rather than "Resolved".
 func TestTamperRetiredClosesTheFindingAsNoLongerChecked(t *testing.T) {
 	r := mapJSON(t, stored(t, "agent-tamper-retired"))
