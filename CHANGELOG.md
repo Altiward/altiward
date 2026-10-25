@@ -25,6 +25,17 @@ None.
 
 ### Changes
 
+- Settings is split into tabs, each at its own address: **General** (`/settings`:
+  enrollment, alerts, appearance), **SIEM export** (`/settings/siem`), and for admins
+  **Sign-ins** (`/settings/sign-ins`) and **Updates** (`/settings/updates`). Overview's SIEM
+  tile opens SIEM export.
+- **Settings › SIEM export** shows how to connect each SIEM that isn't connected yet (#37):
+  lines to copy and its setup guide. On Docker Compose they're `.env` lines, each optional
+  setting commented out under what it does; on Azure Container Apps, `az containerapp`
+  commands for the app, with secrets kept as app secrets and Sentinel signing in as the
+  app's managed identity. It shows placeholders only. SIEM settings stay in the server's
+  environment, so changing where events go still takes access to the server, not just the
+  console.
 - The install guide runs the server from a directory of its own, such as `/opt/altiward`,
   so it doesn't stay in one named for the release first installed. It gives the commands
   to download a release and make the tokens, a nightly backup, and a new Enforcement

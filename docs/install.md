@@ -285,7 +285,10 @@ timeline shows the revoke.
 ## 4. Connect your SIEM
 
 Altiward sends every event to your SIEM in OCSF format. Set the variables for your SIEM in
-`.env` and run `docker compose up -d`. If your SIEM's certificate comes from your own CA,
+`.env` and run `docker compose up -d`. The console's **Settings › SIEM export** gives, for
+each SIEM not connected yet, the lines to copy and its setup guide. It only shows them:
+SIEM settings stay with the server, so changing where events go takes access to the server,
+not just the console. If your SIEM's certificate comes from your own CA,
 put the CA's PEM file in `certs/` and set `ALTIWARD_TRUSTED_CAS_FILE` to
 `/etc/altiward/certs/<file>`: the server then trusts it alongside the public CAs. For syslog
 alone, `ALTIWARD_SYSLOG_CA_FILE` instead trusts only the CA you name.
@@ -319,7 +322,7 @@ last error, and **Retry now** sends at once after a fix.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/install/settings-siem-dark.png">
-  <img src="images/install/settings-siem-light.png" width="592" alt="Settings, SIEM export: Syslog, Up to date, nothing waiting, with the time of the last delivery, and a button to send a test event.">
+  <img src="images/install/settings-siem-light.png" width="592" alt="Settings, SIEM export: Syslog, Up to date, nothing waiting, with the time of the last delivery, and a button to send a test event. Below, Connect another SIEM, with Splunk and Microsoft Sentinel to expand.">
 </picture>
 
 If you stop sending to a SIEM, whatever was still queued for it stays in Postgres, and
@@ -394,7 +397,7 @@ after an hour unused. A change to someone's groups applies the next time they si
   <img src="images/install/sign-in-sso-light.png" width="400" alt="The sign-in page with single sign-on: a Sign in with single sign-on button, and a link to use a break-glass token instead.">
 </picture>
 
-**You should see** yourself under **Settings › Signed in to the console** once you've
+**You should see** yourself under **Settings › Sign-ins** once you've
 signed in, with your role. An admin can end someone's sign-in there, so a role change at
 your identity provider applies at once.
 
@@ -410,7 +413,7 @@ SIEM as `break-glass:` and the token's fingerprint, so alert on it. To turn it o
 
 ## 6. Settings worth reviewing
 
-In the console, under **Settings**:
+In the console, under **Settings › General**:
 
 - **Approve Macs that enroll again.** On means a Mac that comes back with a new key, for
   example after a reinstall, waits in **Enrollments** for your approval. Its earlier key
@@ -586,7 +589,7 @@ Releases are published on
 [GitHub Releases](https://github.com/Altiward/altiward/releases), with their notes.
 Nothing updates itself, and your server never contacts Altiward or GitHub.
 
-**The console tells admins when a release is out.** On Overview and in Settings, people
+**The console tells admins when a release is out.** On Overview and in **Settings › Updates**, people
 with the admin role see when a newer server or agent is out, whether it fixes a security
 problem, a link to its notes, and the `upgrade.sh` command below with the version filled
 in. It only tells: it never upgrades anything. The admin's browser makes the check, not
@@ -648,7 +651,7 @@ script shows how if the new version doesn't start.
 **Release candidates** (versions such as `<version>-rc.1`) are builds for testing, published on GitHub as
 pre-releases. Install one as above; the release itself upgrades over it. The console
 tells admins about candidates when the server runs one, or when they turn on **Show
-pre-releases** in Settings → Updates, which applies to their browser only.
+pre-releases** in **Settings › Updates**, which applies to their browser only.
 
 **Upgrading by hand**, if you'd rather: back up the database, `docker load -i` the image,
 set `ALTIWARD_VERSION` in `.env`, copy in any changed files from the new bundle's

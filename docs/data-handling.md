@@ -14,7 +14,7 @@ on your infrastructure. The Altiward project receives none of it.
   the admin role, the console's browser asks `api.github.com` for Altiward's release list:
   at most once a day per admin's browser after a successful check, and at most once an
   hour while GitHub can't be reached or the list doesn't include the running server's
-  version yet. An admin's **Check now** in Settings asks again, at most once a minute.
+  version yet. An admin's **Check now** in Settings › Updates asks again, at most once a minute.
   It sends nothing about your fleet: no versions, cookies or referrer.
   Like any request a web page makes to another site, it carries the console's address in
   its `Origin` header. The browser compares the versions itself, and the server still
@@ -106,7 +106,7 @@ browser asks GitHub's public API for the release list
 admin's browser after a successful check, and at most once an hour while GitHub can't be
 reached. When the list doesn't include the running server's version yet, as just after an
 upgrade, the browser asks again at most once an hour, and keeps the list it has if that
-fails. **Check now** in Settings asks straight away, at most once a minute. The answer is
+fails. **Check now** in Settings › Updates asks straight away, at most once a minute. The answer is
 kept in that browser's local storage for 24 hours, or in memory
 for the tab if local storage is blocked. The request carries no
 cookies, no referrer and no versions, so it says nothing about your fleet. GitHub sees
@@ -118,7 +118,7 @@ never make the request. To turn it off for everyone, set
 `ALTIWARD_UPDATE_CHECK=false` in `.env` and run `docker compose up -d`: the console then
 asks nobody, and its content security policy no longer allows `api.github.com`.
 
-**Appearance.** The theme and light or dark someone picks in Settings stay in their
+**Appearance.** The theme and light or dark someone picks in Settings › General stay in their
 browser's local storage. They never reach the server. So do an admin's dismissed update
 notices and their **Show pre-releases** choice.
 

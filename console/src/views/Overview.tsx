@@ -326,7 +326,7 @@ function HealthSection({ o }: { o: Overview }) {
               </tbody>
             </table>
           )}
-          <Link className="tile-link" to="/settings">Open Settings</Link>
+          <Link className="tile-link" to="/settings/siem">Open SIEM export</Link>
         </Tile>
       </div>
     </section>
