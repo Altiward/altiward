@@ -42,7 +42,9 @@ matches what you already have:
 The bundle and your own infrastructure use the same image and the same `deploy/compose`
 files, so you can move from one to the other later without reinstalling. Deploy to Azure
 runs the same image, set up by a template, with settings on the container app instead of
-in `.env`. If you run Kubernetes,
+in `.env`: wherever this guide says to set something in `.env` and run
+`docker compose up -d`, set it on the container app instead
+([Changing settings](../deploy/azure/README.md#changing-settings)). If you run Kubernetes,
 [open an issue](https://github.com/Altiward/altiward/issues): manifests or a Helm chart
 come when someone needs them.
 
@@ -68,22 +70,38 @@ You need:
   in `deploy/compose/`, this guide, the SIEM guides and Sentinel's setup script in
   `integrations/`, and the agent's example Mac profiles in `profiles/`), the server image
   as a file for your platform (`altiward-api-<version>-linux-amd64.tar.gz` or `…-arm64`),
-  `RELEASE_NOTES.md` and `SHA256SUMS`. An agent release is the signed package
+  `RELEASE_NOTES.md`, `SHA256SUMS` and its signature, `SHA256SUMS.sigstore.json`. An
+  agent release is the signed package
   (`Altiward-<version>.pkg`), the SAP Privileges keys pinned to that package's hook
   (`corp.sap.privileges.plist`), and its own notes and checksums. Server releases are tagged
   `server-vX.Y.Z` and agent releases `agent-vX.Y.Z`. Nothing needs an account.
 
 ## 1. Start the server
 
-Download the release files from GitHub Releases onto the server, check them (see
-[Checking a release](#checking-a-release)), then load the image and unpack the bundle. (The image is also public at
-`ghcr.io/altiward/altiward-api`, pulled without logging in: skip `docker load` and
-`docker compose up -d` below pulls it.)
+On the server, download the server release into a directory of its own. Set `v` to the
+release's version, and on an Arm server use `arm64` in place of `amd64`:
 
 ```sh
-docker load -i altiward-api-<version>-linux-amd64.tar.gz
-tar xzf altiward-server-<version>.tar.gz
-cd altiward-server-<version>/deploy/compose
+v=<version>
+mkdir ~/altiward-$v && cd ~/altiward-$v
+for f in altiward-server-$v.tar.gz altiward-api-$v-linux-amd64.tar.gz \
+    RELEASE_NOTES.md SHA256SUMS SHA256SUMS.sigstore.json; do
+  curl -fsSLO "https://github.com/Altiward/altiward/releases/download/server-v$v/$f"
+done
+```
+
+Check the files ([Checking a release](#checking-a-release)), then load the image, unpack
+the bundle and copy its deployment files to the directory the server runs from, such as
+`/opt/altiward`. Keep the server in that directory: upgrades work in it, whatever version
+it runs. (The image is also public at `ghcr.io/altiward/altiward-api`, pulled without
+logging in: skip `docker load` and `docker compose up -d` below pulls it.)
+
+```sh
+docker load -i altiward-api-$v-linux-amd64.tar.gz
+tar xzf altiward-server-$v.tar.gz
+sudo mkdir /opt/altiward && sudo chown "$(id -un)" /opt/altiward
+cp -R altiward-server-$v/deploy/compose/. /opt/altiward/
+cd /opt/altiward
 ```
 
 In that directory, holding `compose.yaml`, `Caddyfile` and `env.example`:
@@ -93,17 +111,15 @@ cp env.example .env
 chmod 600 .env
 ```
 
-Edit `.env`:
+Edit `.env`. `ALTIWARD_VERSION` is already set to the release you downloaded.
 
 | Setting | What to put |
 | --- | --- |
-| `ALTIWARD_VERSION` | The release you downloaded, for example `0.1.0` |
 | `ALTIWARD_AGENT_HOST`, `ALTIWARD_CONSOLE_HOST` | Your two hostnames |
 | `ALTIWARD_CONSOLE_ALLOW` | The networks allowed to open the console, space separated, for example your office and VPN ranges |
 | `POSTGRES_PASSWORD` | A new random value: `openssl rand -hex 24` |
-| `ALTIWARD_AGENT_TOKENS` | `yourcompany=` followed by a new random value. It goes into the Mac profile. |
-| `ALTIWARD_CONSOLE_TOKENS` | `yourcompany=` followed by a different random value. People sign in to the console with it until you set up single sign-on ([step 5](#5-sign-in-with-your-identity-provider)); after that it is a break-glass login. |
-| `ALTIWARD_UPDATE_CHECK` | Leave it empty: the console tells admins when a newer release is out ([Releases and updates](#releases-and-updates)). `false` turns that off. |
+| `ALTIWARD_AGENT_TOKENS` | `yourcompany=` followed by a new random value from `openssl rand -hex 32`. It goes into the Mac profile. |
+| `ALTIWARD_CONSOLE_TOKENS` | `yourcompany=` followed by a different value from `openssl rand -hex 32`. People sign in to the console with it until you set up single sign-on ([step 5](#5-sign-in-with-your-identity-provider)); after that it is a break-glass login. |
 
 Use the same organisation name in both token settings.
 
@@ -149,112 +165,13 @@ Create these in your MDM and scope them to a pilot group first.
 
      > **Warning:** With `OutOfBandEnforcement` set to `enforce`, every admin nobody
      > granted loses their rights within minutes, including the LAPS account your MDM
-     > manages if it isn't in `PermanentAdmins`. The agent counts as a human admin any member
-     > of `admin` with a UID of 500 or more, and any direct member of `admin` other than
-     > `root` and `_` accounts, hidden ones included, so list a hidden management account
-     > with a low UID too. Without SAP Privileges, that is every admin who isn't a permanent
-     > admin. Before turning it on, check **Admins now** for the rows marked **Without a
-     > grant** on the Macs in scope, and pilot it on a small group first.
+     > manages if it isn't in `PermanentAdmins`. Read [Enforcement](#enforcement) before
+     > turning it on.
 
-   The example explains every other key. `ExpiryEnforcement` decides what happens when
-   rights outlive the expiry Privileges set: `alert`, the default, only reports it, and
-   `enforce` removes the user from `admin`.
-
-   `OutOfBandEnforcement` decides what happens to admin rights nobody granted. `alert`,
-   the default, only raises `admin.out_of_band`, as before. `enforce` removes the account
-   from `admin` at the next heartbeat after the rights have gone `OutOfBandGraceMinutes`
-   (default 5, minimum 1) without a grant, and sends `admin.out_of_band_removed`. The
-   heartbeat runs every `HeartbeatInterval` (default 5 minutes), so it acts up to that
-   late. Any other value, including `off`, means `alert`. Upgrade the server to 0.3.0 and
-   altiward-siem to 0.3.0 first.
-
-   > **Warning:** With `enforce`, every admin nobody granted loses their rights within
-   > minutes, including the LAPS account your MDM manages if it isn't in `PermanentAdmins`
-   > (and any hidden management account the agent counts as a human admin, see above).
-   > Without SAP Privileges, that is every admin who isn't a permanent admin. Before
-   > turning it on, check **Admins now** for the rows marked **Without a grant** on the
-   > Macs in scope, and pilot it on a small group first.
-
-   In `enforce` mode the agent never removes a permanent admin, and keeps at least one
-   standing admin: a permanent admin, or else the account nobody granted it has seen
-   longest. Someone holding admin through a Privileges grant doesn't count, and nor do
-   admins still in their grace period or not yet raised. Of accounts raised at the same
-   moment, as on a fresh install, it keeps the one whose short name sorts last. It pauses
-   every removal while the **Privileges reports to Altiward** check fails (Privileges'
-   hook path or checksum isn't Altiward's), because then every real Privileges grant would
-   look like rights nobody granted. A removal that is kept, paused or fails leaves the
-   finding open, is retried at every heartbeat and is logged on the Mac. A Privileges grant
-   whose hook never reached the agent looks like rights nobody granted and can be removed;
-   the person can request it again.
-
-   > **Warning:** The pause doesn't cover a `HookCodeRequirement` that doesn't match the
-   > hook. The daemon then rejects the hook's calls, so in `enforce` mode real Privileges
-   > grants are removed after the grace period. Check that `HookCodeRequirement` names the
-   > right Team ID before turning `enforce` on.
-
-   Someone holding admin rights nobody granted can run the hook by hand to claim a
-   Privileges grant, or to claim they gave the rights back. The agent checks a grant claim
-   against SAP Privileges' own log, which a hand-run claim leaves no line in. Full
-   protection needs **Privileges 2.6 or later with its system extension on, on macOS 14
-   or later** (the extension needs the system extension policy and Full Disk Access
-   below). Then, in `enforce` mode:
-
-   - A grant claim waits up to a minute for Privileges' log to show it, usually a second or
-     two, and a grant logged up to two minutes before the claim arrived counts. The hook
-     returns at once, and nothing is recorded until the log backs the claim.
-     A claim the log doesn't confirm is refused and sent as `agent.tamper` with check
-     `grant_claim`, and the rights are removed after `OutOfBandGraceMinutes` as rights
-     nobody granted, counted from when the agent first saw them. A claim sent from
-     another person's account (neither the user nor root) is refused and sent the same way,
-     and a caller who sends more than 5 grant claims in a minute is ignored and logged on
-     the Mac, not sent, so a flood can't fill the outbox. Give-back claims have an allowance
-     of their own, 5 a minute from one caller, in every mode: past it, a give-back that
-     ends an open session is still recorded, and any other is ignored and logged the same
-     way.
-   - A claim through the hook renews a Privileges session only when fresh log evidence
-     confirms it, that is, the log shows Privileges granted the rights again. Otherwise,
-     once the minute has passed (or at once if the log becomes unavailable while the claim
-     waits), it is refused in every mode and reported as a renewal, and the expiry doesn't
-     move, so running the hook again can't keep rights past `ExpiryEnforcement`.
-     Privileges sends no claim for a real renewal, so nothing real is lost. From agent 0.5.0
-     the agent reads a real renewal from the line SAP's `PrivilegesAgent` logs, checks that
-     SAP's agent logged it, and moves the expiry. That process runs as the user, so the check
-     is weaker than for a grant, and a line whose process has gone is ignored, leaving the
-     original expiry. Setting Privileges' `AllowPrivilegeRenewal` to `false`, as the
-     release's `corp.sap.privileges.plist` does (step 3), is still the stricter choice: the
-     agent then ignores renewal lines altogether.
-   - A real grant that the person gives back within seconds is still confirmed: only
-     changes to `admin` made before the claim arrived count against it.
-
-   Without the log (Privileges older than 2.6, its extension off or stopped, or macOS 13),
-   enforcement keeps removing rights nobody granted, and the agent accepts a grant claim as
-   it did before: marked `privileges_log: "unavailable"`, and with the checks below. Without
-   a fixed `ExpirationInterval`, the agent answers the hook first and records the claim a
-   moment later, once it has read Privileges' timer, so the hook logs "Sent admin for" even
-   for a claim the agent then refuses; the refusal is still sent as `grant_claim`.
-   The Mac's details then show an integrity check failing, naming what's missing, whenever
-   `OutOfBandEnforcement` or `ExpiryEnforcement` is `enforce` and Privileges is installed.
-   Where the agent has read the log on a Mac before and can't now, each claim it accepts is
-   also sent as `grant_claim`, as someone may have stopped the extension to get one past.
-   In `enforce` mode, with or without the log, the agent refuses, logs on the Mac and sends
-   as `grant_claim` a grant claimed on a Mac without SAP Privileges, a grant claimed more
-   than a minute after Altiward raised the rights (without the log), and a give-back claimed
-   while they are still an admin, and the rights are still removed. Hand-run claims can still keep the rights there: a grant claimed before
-   the agent raises them (in the 30 seconds or so before it does, or between heartbeats),
-   and an account with root that removes itself from `admin`, gives the rights back, adds
-   itself again and claims a grant.
-
-   This stops the quiet routes, not someone with root: an admin has root, and with root a
-   forged log line is possible. Upgrade the server to 0.5.0 first, so the console labels the
-   new checks and events.
-
-   In `alert` mode a claimed grant still turns their session into a Privileges session. With
-   the log, a claim it doesn't confirm is accepted and marked not confirmed, and sent as
-   `grant_claim`; the console shows the session as **Followed rights without a grant** and
-   the SIEM as "Replaced by a Privileges grant". While the log is available, a claim through
-   the hook renews the session only when fresh log evidence confirms it, in either mode;
-   without the log, each claim renews it as before, and each is reported as
-   `elevation.granted`.
+   The example explains every other key. Two of them let the agent act, not only report:
+   `ExpiryEnforcement`, for rights that outlive the expiry Privileges set, and
+   `OutOfBandEnforcement`, for admin rights nobody granted. Both default to `alert`, which
+   only reports. Keep them there for the pilot ([Enforcement](#enforcement)).
 
    Deliver the profile through MDM rather than `defaults write`: Altiward reports
    `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`,
@@ -334,10 +251,8 @@ for a Mac that is already enrolled replaces the old one, unless **Approve Macs t
 again** is on ([step 6](#6-settings-worth-reviewing)).
 
 On a Mac with a Secure Enclave (Apple silicon, or an Intel Mac with a T2 chip) the key is
-made in the Secure Enclave, so it can't be copied to another Mac. A Mac that enrolled
-before agent 0.2.0 keeps its key in a root-only file until it enrolls again: revoke its key
-in **Enrollments** and it enrolls again with a new one, which waits for approval if
-**Approve Macs that enroll again** is on.
+made in the Secure Enclave, so it can't be copied to another Mac. Other Macs keep it in a
+file only root can read.
 
 ## 3. Check it works
 
@@ -519,6 +434,116 @@ SIEM. To remove old entries, set `ALTIWARD_AUDIT_RETENTION_DAYS` in `.env` (at l
 and run `docker compose up -d`. Altiward then removes older entries once a day, but never
 one your SIEM hasn't received yet.
 
+## Enforcement
+
+Two keys in the agent's profile let it act on a Mac, not only report. Both default to
+`alert`, and any other value, including `off`, means `alert`. Pilot `enforce` on a small
+group before everyone.
+
+> **Warning:** With `OutOfBandEnforcement` set to `enforce`, every admin nobody granted
+> loses their rights within minutes, including the LAPS account your MDM manages if it
+> isn't in `PermanentAdmins`. The agent counts as a human admin any member of `admin`
+> with a UID of 500 or more, and any direct member of `admin` other than `root` and `_`
+> accounts, hidden ones included, so list a hidden management account with a low UID too.
+> Without SAP Privileges, that is every admin who isn't a permanent admin. Before turning
+> it on, check **Admins now** for the rows marked **Without a grant** on the Macs in
+> scope.
+
+### Rights past their expiry
+
+`ExpiryEnforcement` decides what happens when rights outlive the expiry Privileges set:
+`alert` only reports it, and `enforce` removes the user from `admin`.
+
+### Rights nobody granted
+
+`OutOfBandEnforcement` decides what happens to admin rights nobody granted. `alert` only
+raises `admin.out_of_band`. `enforce` removes the account from `admin` at the next
+heartbeat after the rights have gone `OutOfBandGraceMinutes` (default 5, minimum 1)
+without a grant, and sends `admin.out_of_band_removed`. The heartbeat runs every
+`HeartbeatInterval` (default 5 minutes), so it acts up to that late.
+
+In `enforce` mode the agent never removes a permanent admin, and keeps at least one
+standing admin: a permanent admin, or else the account nobody granted it has seen
+longest. Someone holding admin through a Privileges grant doesn't count, and nor do
+admins still in their grace period or not yet raised. Of accounts raised at the same
+moment, as on a fresh install, it keeps the one whose short name sorts last. It pauses
+every removal while the **Privileges reports to Altiward** check fails (Privileges'
+hook path or checksum isn't Altiward's), because then every real Privileges grant would
+look like rights nobody granted. A removal that is kept, paused or fails leaves the
+finding open, is retried at every heartbeat and is logged on the Mac. A Privileges grant
+whose hook never reached the agent looks like rights nobody granted and can be removed;
+the person can request it again.
+
+> **Warning:** The pause doesn't cover a `HookCodeRequirement` that doesn't match the
+> hook. The daemon then rejects the hook's calls, so in `enforce` mode real Privileges
+> grants are removed after the grace period. Check that `HookCodeRequirement` names the
+> right Team ID before turning `enforce` on.
+
+### Claims made by running the hook by hand
+
+Someone holding admin rights nobody granted can run the hook by hand to claim a
+Privileges grant, or to claim they gave the rights back. The agent checks a grant claim
+against SAP Privileges' own log, which a hand-run claim leaves no line in. Full
+protection needs **Privileges 2.6 or later with its system extension on, on macOS 14 or
+later** (the extension needs the system extension policy and Full Disk Access in
+[step 2](#2-deploy-the-agent)). Then, in `enforce` mode:
+
+- A grant claim waits up to a minute for Privileges' log to show it, usually a second or
+  two, and a grant logged up to two minutes before the claim arrived counts. The hook
+  returns at once, and nothing is recorded until the log backs the claim. A claim the log
+  doesn't confirm is refused and sent as `agent.tamper` with check `grant_claim`, and the
+  rights are removed after `OutOfBandGraceMinutes` as rights nobody granted, counted from
+  when the agent first saw them. A claim sent from another person's account (neither the
+  user nor root) is refused and sent the same way, and a caller who sends more than 5
+  grant claims in a minute is ignored and logged on the Mac, not sent, so a flood can't
+  fill the outbox. Give-back claims have an allowance of their own, 5 a minute from one
+  caller, in every mode: past it, a give-back that ends an open session is still
+  recorded, and any other is ignored and logged the same way.
+- A claim through the hook renews a Privileges session only when fresh log evidence
+  confirms it, that is, the log shows Privileges granted the rights again. Otherwise,
+  once the minute has passed (or at once if the log becomes unavailable while the claim
+  waits), it is refused in every mode and reported as a renewal, and the expiry doesn't
+  move, so running the hook again can't keep rights past `ExpiryEnforcement`. Privileges
+  sends no claim for a real renewal: the agent reads it from the line SAP's
+  `PrivilegesAgent` logs, checks that SAP's agent logged it, and moves the expiry. That
+  process runs as the user, so the check is weaker than for a grant, and a line whose
+  process has gone is ignored, leaving the original expiry. Setting Privileges'
+  `AllowPrivilegeRenewal` to `false`, as the release's `corp.sap.privileges.plist` does
+  ([step 2](#2-deploy-the-agent)), is the stricter choice: the agent then ignores renewal
+  lines altogether.
+- A real grant that the person gives back within seconds is still confirmed: only
+  changes to `admin` made before the claim arrived count against it.
+
+Without the log (Privileges older than 2.6, its extension off or stopped, or macOS 13),
+enforcement keeps removing rights nobody granted, and the agent accepts a grant claim,
+marked `privileges_log: "unavailable"`, with the checks below. Without a fixed
+`ExpirationInterval`, the agent answers the hook first and records the claim a moment
+later, once it has read Privileges' timer, so the hook logs "Sent admin for" even for a
+claim the agent then refuses; the refusal is still sent as `grant_claim`. The Mac's
+details then show an integrity check failing, naming what's missing, whenever
+`OutOfBandEnforcement` or `ExpiryEnforcement` is `enforce` and Privileges is installed.
+Where the agent has read the log on a Mac before and can't now, each claim it accepts is
+also sent as `grant_claim`, as someone may have stopped the extension to get one past.
+
+In `enforce` mode, with or without the log, the agent refuses, logs on the Mac and sends
+as `grant_claim` a grant claimed on a Mac without SAP Privileges, a grant claimed more
+than a minute after Altiward raised the rights (without the log), and a give-back claimed
+while they are still an admin, and the rights are still removed. Hand-run claims can
+still keep the rights there: a grant claimed before the agent raises them (in the 30
+seconds or so before it does, or between heartbeats), and an account with root that
+removes itself from `admin`, gives the rights back, adds itself again and claims a grant.
+
+This stops the quiet routes, not someone with root: an admin has root, and with root a
+forged log line is possible.
+
+In `alert` mode a claimed grant still turns their session into a Privileges session.
+With the log, a claim it doesn't confirm is accepted and marked not confirmed, and sent
+as `grant_claim`; the console shows the session as **Followed rights without a grant**
+and the SIEM as "Replaced by a Privileges grant". While the log is available, a claim
+through the hook renews the session only when fresh log evidence confirms it, in either
+mode; without the log, each claim renews it, and each is reported as
+`elevation.granted`.
+
 ## Running it
 
 ### Health and logs
@@ -539,13 +564,24 @@ Postgres holds everything. Back it up daily, and keep `.env` somewhere safe as w
 docker compose exec -T postgres pg_dump -U altiward -Fc altiward > altiward-$(date +%F).dump
 ```
 
+To run it every night at 02:00, make a `backups` directory only you can read
+(`mkdir -m 700 backups`) and add this line with `crontab -e`, as a user who can run
+Docker. Copy the dumps off the server, and remove old ones as your policy allows:
+
+```
+0 2 * * * cd /opt/altiward && umask 077 && docker compose exec -T postgres pg_dump -U altiward -Fc altiward > backups/altiward-$(date +\%F).dump
+```
+
 To restore into an empty database:
 
 ```sh
 docker compose up -d postgres
-docker compose exec -T postgres pg_restore -U altiward -d altiward --clean --if-exists < altiward-2026-10-17.dump
+docker compose exec -T postgres pg_restore -U altiward -d altiward --clean --if-exists < altiward-<date>.dump
 docker compose up -d
 ```
+
+With [an existing Postgres](#an-existing-postgres), back it up the way you back up your
+other databases: these commands are for the bundled one.
 
 ### Releases and updates
 
@@ -569,11 +605,12 @@ and run `docker compose up -d`. On Azure Container Apps, the notice names the im
 change to instead, and upgrades work differently
 ([Upgrading](../deploy/azure/README.md#upgrading)).
 
-**Upgrading the server:** put the release files in one directory on the server, read
-`RELEASE_NOTES.md`, then run the upgrade script from your deployment directory:
+**Upgrading the server:** download the new release into a directory of its own, as in
+[step 1](#1-start-the-server), read its `RELEASE_NOTES.md`, then run the upgrade script
+from your deployment directory, such as `/opt/altiward`:
 
 ```sh
-./upgrade.sh ~/altiward-0.1.0
+./upgrade.sh ~/altiward-<version>
 ```
 
 It checks the files and their signature ([Checking a release](#checking-a-release)),
@@ -611,7 +648,7 @@ script again with `--merged`.
 Going back to an older server version isn't supported; restore the backup instead. The
 script shows how if the new version doesn't start.
 
-**Release candidates** (`0.1.1-rc.1`) are builds for testing, published on GitHub as
+**Release candidates** (versions such as `<version>-rc.1`) are builds for testing, published on GitHub as
 pre-releases. Install one as above; the release itself upgrades over it. The console
 tells admins about candidates when the server runs one, or when they turn on **Show
 pre-releases** in **Settings › Updates**, which applies to their browser only.
@@ -644,10 +681,11 @@ that alert briefly on Macs that get the new profile before the new package.
 Each release comes with `SHA256SUMS`, signed by the release workflow in the
 `Altiward/altiward` repository on GitHub. `upgrade.sh`
 checks both for you, using cosign if it's installed. To check by hand, or before a first
-install, check the files match it:
+install, check the files match it. `--ignore-missing` skips files listed that you didn't
+download, such as the image for the other platform:
 
 ```sh
-sha256sum -c SHA256SUMS          # on macOS: shasum -a 256 -c SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS     # on macOS: shasum -a 256 -c --ignore-missing SHA256SUMS
 ```
 
 To check the list itself came from that workflow, use
@@ -738,7 +776,7 @@ Logs aren't included. If a maintainer asks for them:
 | Single sign-on says your account isn't in a group that can use Altiward | The groups claim doesn't carry any group in `ALTIWARD_OIDC_*_GROUPS`. Check the IDs (Entra) or names (Okta), and that the group is assigned to the application. |
 | Single sign-on says your identity provider didn't send your groups | Entra ID: limit the groups claim to groups assigned to the application. |
 | Single sign-on can't reach your identity provider | The server can't fetch `<issuer>/.well-known/openid-configuration`. Diagnostics checks the connection as `sso`. Use the break-glass token meanwhile. |
-| The identity provider says the redirect URI doesn't match | Register `ALTIWARD_CONSOLE_URL` plus `/v1/auth/callback` exactly. |
+| The identity provider says the redirect URI doesn't match | Register `https://<console hostname>/v1/auth/callback` exactly. |
 | A Mac never appears | `ServerURL` is wrong, the agent hostname isn't reachable from the Mac, or the enrollment token doesn't match ([A Mac never appears](#a-mac-never-appears)) |
 | A Privileges grant shows as **Without a grant** | Privileges didn't run Altiward's hook, usually because its checksum is from another agent release ([Rights show as "Without a grant"](#rights-show-as-without-a-grant)) |
 | **Privileges tamper protection** fails on a Mac | `EnableSystemExtension` is off, or SAP's system extension isn't running: the Mac hasn't got SAP's system extension policy and Full Disk Access ([step 2](#2-deploy-the-agent)), or someone stopped it. The check names which |
@@ -799,7 +837,7 @@ with the reason.
 
 Deploy `corp.sap.privileges.plist` from the same agent release as the package installed on
 that Mac ([step 2](#2-deploy-the-agent)). Grants after that are recorded as Privileges
-grants. From agent 0.1.1, the first one also ends the open **Without a grant** session.
+grants. The first one also ends the open **Without a grant** session.
 
 If the check passes, the rights really were granted outside Privileges: someone added the
 account to `admin` another way. If it's an IT or managed admin account, add it to

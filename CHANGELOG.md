@@ -9,6 +9,29 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Agent 0.6.0 - unreleased
+
+### Upgrade order
+
+Deploy this release's `corp.sap.privileges.plist` keys to your Privileges profile with the
+package: its `PostChangeExecutableChecksum` is this build's hook. With the old checksum,
+Privileges stops running the hook and Altiward raises "SAP Privileges no longer reports to
+Altiward".
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+- An empty file the persistence check reads, such as an empty `~/.ssh/authorized_keys`,
+  no longer counts as unreadable, so it doesn't mark the Mac **Partly checked** in Fleet
+  (#115).
+
 ## Server 0.7.0 - unreleased
 
 ### Upgrade order
@@ -36,6 +59,11 @@ None.
   app's managed identity. It shows placeholders only. SIEM settings stay in the server's
   environment, so changing where events go still takes access to the server, not just the
   console.
+- The install guide runs the server from a directory of its own, such as `/opt/altiward`,
+  so it doesn't stay in one named for the release first installed. It gives the commands
+  to download a release and make the tokens, a nightly backup, and a new Enforcement
+  section for `ExpiryEnforcement` and `OutOfBandEnforcement`, which step 2 now points to
+  (#111).
 - The console's sidebar stays in view on long pages such as Overview, so who is signed
   in, **Sign out** and the server version show on every page (#112).
 
