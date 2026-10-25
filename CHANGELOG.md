@@ -36,6 +36,12 @@ None.
 
 ### Changes
 
+- A grant's expiry follows `ExpirationInterval` only when MDM sets it. One set anywhere else,
+  such as `/Library/Preferences`, is only a default the user's own Privileges settings
+  override, so the agent now takes the expiry from Privileges' timer, within
+  `ExpirationIntervalMax`. Before, an `ExpirationInterval` of 0 there meant the agent
+  recorded no expiry and `ExpiryEnforcement` never acted, while Privileges ended the rights
+  at the maximum. `agent.health` reports `expiration_interval_minutes` only when MDM sets it.
 - The agent answers a hook claim at once (#91). Without SAP Privileges' log, or for
   a permanent admin, a grant claim waited inside the hook's call while the agent read
   Privileges' timer, up to 18 s, and sometimes for the store while the agent read the

@@ -9,6 +9,9 @@ public struct PrivilegesSettings: Sendable, Equatable {
     /// Privileges runs the hook without checking it.
     public var postChangeExecutableChecksum: String?
     public var passReasonToExecutable: Bool
+    /// `ExpirationInterval`, only when MDM forces it: then every grant lasts this long, and 0
+    /// means no expiry. Otherwise the user's own Privileges settings override it (the daemon
+    /// reads root's preferences, not theirs), so nil, and the expiry comes from Privileges' timer.
     public var expirationIntervalMinutes: Int?
     public var expirationIntervalMaxMinutes: Int?
     public var enforcePrivileges: String?
@@ -92,7 +95,7 @@ public struct PrivilegesSettings: Sendable, Equatable {
             postChangeExecutableChecksum: checksumApplies
                 ? p.string("PostChangeExecutableChecksum").flatMap { $0.isEmpty ? nil : $0 } : nil,
             passReasonToExecutable: p.bool("PassReasonToExecutable") ?? false,
-            expirationIntervalMinutes: p.int("ExpirationInterval"),
+            expirationIntervalMinutes: p.isForced("ExpirationInterval") ? p.int("ExpirationInterval") : nil,
             expirationIntervalMaxMinutes: p.int("ExpirationIntervalMax"),
             enforcePrivileges: p.string("EnforcePrivileges"),
             systemExtensionEnabled: p.bool("EnableSystemExtension"),
