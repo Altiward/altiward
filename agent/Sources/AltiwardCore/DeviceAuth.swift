@@ -161,8 +161,8 @@ public actor DeviceAuthenticator {
         /// The Mac the key was made on. A store copied to another Mac (Migration Assistant,
         /// a clone, a restore) keeps a file key that works there, so without these the
         /// copy would go on signing as the first Mac. Nil in a record from before agent
-        /// 0.8.0, or made while the Mac wouldn't say, which is given this Mac's the first
-        /// time it is used and the Mac can say.
+        /// 0.8.0, or in one made while the Mac couldn't report its identity; such a record
+        /// gets this Mac's identity the first time the Mac can report it.
         var serial: String?
         var hardwareUUID: String?
     }
@@ -376,7 +376,7 @@ public actor DeviceAuthenticator {
     }
 
     /// The credential for the configured server that was made on this Mac, if any. One
-    /// made on another Mac is dropped, so the Mac enrolls its own key; one from before
+    /// made on another Mac is dropped, so the Mac enrols its own key; one from before
     /// agent 0.8.0 has no Mac recorded, so it gets this Mac's and stays enrolled, rather
     /// than sending every upgraded Mac to approval. Checks both records, since a downgrade
     /// and upgrade can leave a Secure Enclave key and a file key. When the Mac won't say
@@ -461,7 +461,7 @@ public actor DeviceAuthenticator {
         }
     }
 
-    /// Drops the stored credential that has `deviceID`, so the next send enrolls with a new
+    /// Drops the stored credential that has `deviceID`, so the next send enrols with a new
     /// key. For when the server says that key belongs to another Mac. Does nothing if no
     /// record has that ID, as when another process sharing the store has already replaced
     /// the credential that was signed with.

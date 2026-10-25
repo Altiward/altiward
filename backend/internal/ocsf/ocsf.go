@@ -28,7 +28,7 @@
 //	                              the Mac saw the sign-in end. A sign-in's two records share
 //	                              the use ID as metadata.correlation_uid
 //	agent.enrollment            → API Activity (6003), Create (1), like the console's approval and
-//	                              revoke of an enrollment: Informational when a Mac enrols,
+//	                              revoke of an enrolment: Informational when a Mac enrols,
 //	                              Medium (an alert) when it enrols again and waits for approval,
 //	                              High (an alert) when a new key replaced the old one unapproved
 //	agent.health, activity      → not exported (inventory and v2 telemetry)
@@ -346,8 +346,8 @@ func silent(e store.StoredEvent, tenantID string) Record {
 
 // enrollment maps an agent.enrollment event, raised by the server when a Mac registers a
 // key. It is an API Activity record like the console's approval and revoke of an
-// enrollment, so a SIEM sees the whole lifecycle in one class: the resource is the
-// enrollment (the device credential) and the actor is the enrollment token's fingerprint,
+// enrolment, so a SIEM sees the whole lifecycle in one class: the resource is the
+// enrolment (the device credential) and the actor is the enrolment token's fingerprint,
 // in the same field as a console token's.
 func enrollment(e store.StoredEvent, tenantID string) Record {
 	state, _ := e.Detail["state"].(string)

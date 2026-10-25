@@ -911,7 +911,7 @@ struct HTTPEventSinkTests {
         let store = try makeStore()
         let server = FakeServer(clock: clock)
         let (sink, auth) = sink(store, server)
-        _ = try await sink.send([])  // enrolls, so the sink knows the ID it signs with
+        _ = try await sink.send([])  // enrols, so the sink knows the ID it signs with
         let firstID = try #require(await auth.deviceID)
 
         let own = event()

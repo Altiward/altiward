@@ -52,7 +52,7 @@ func enrollAgent(t *testing.T, h http.Handler, serial string) *agent {
 	return enrollAs(t, &agent{h: h, key: newKey(t)}, serial)
 }
 
-// enrollAs enrolls a, which must say what it needs to before enrolling, and fails the test
+// enrollAs enrols a, which must say what it needs to before enrolling, and fails the test
 // unless the server accepts it.
 func enrollAs(t *testing.T, a *agent, serial string) *agent {
 	t.Helper()
@@ -409,7 +409,7 @@ func publicKeyFingerprint(t *testing.T, k *ecdsa.PrivateKey) string {
 	return fmt.Sprintf("%x", sum)
 }
 
-// agentTokenActor is the audit name of the agent enrollment token: "token:" and the first
+// agentTokenActor is the audit name of the agent enrolment token: "token:" and the first
 // 8 hex digits of its SHA-256.
 func agentTokenActor() string {
 	sum := sha256.Sum256([]byte(agentToken))

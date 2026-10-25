@@ -15,7 +15,7 @@ const agentUserAgent = "altiward-agent/"
 
 // enrollmentEvent reports a key that has just enrolled, as res says: its first key
 // (enrolled), a new key waiting for approval (pending) or one that took the place of the
-// active key without it (replaced). token is the enrollment token's audit name.
+// active key without it (replaced). token is the enrolment token's audit name.
 //
 // The ID names the credential, so the same enrolment is the same event. The Mac's own
 // claims (hardware UUID, key storage, agent version) are the ones it made when it enrolled.
