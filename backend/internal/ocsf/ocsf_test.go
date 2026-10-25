@@ -2,6 +2,8 @@ package ocsf_test
 
 import (
 	"encoding/json"
+	"maps"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -693,5 +695,66 @@ func TestSilentIsAFindingTheResumeCloses(t *testing.T) {
 	if r["activity_name"] != "Close" || r["status"] != "Resolved" || r["is_alert"] == true ||
 		get(r, "finding_info.uid") != silent.EventID {
 		t.Fatalf("activity %v status %v uid %v", r["activity_name"], r["status"], get(r, "finding_info.uid"))
+	}
+}
+
+func TestEnrollmentMapsToAPIActivity(t *testing.T) {
+	replaced := stored(t, "agent-enrollment-pending")
+	replaced.Detail = maps.Clone(replaced.Detail)
+	replaced.Detail["state"] = event.EnrollmentStateReplaced
+	tests := []struct {
+		name     string
+		event    store.StoredEvent
+		severity string
+		alert    bool
+		message  string
+	}{
+		{"enrolled", stored(t, "agent-enrollment-enrolled"), "Informational", false, "C02XK0AAJGH5 enrolled a new key"},
+		{"pending", stored(t, "agent-enrollment-pending"), "Medium", true,
+			"C02XK0AAJGH5 enrolled again with a new key, waiting for approval"},
+		{"replaced", replaced, "High", true,
+			"C02XK0AAJGH5 enrolled again; the new key replaced the previous one without approval"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := mapJSON(t, tt.event)
+			want := map[string]any{
+				"class_uid": 6003.0, "class_name": "API Activity", "category_uid": 6.0,
+				"activity_id": 1.0, "activity_name": "Create", "type_uid": 600301.0,
+				"severity": tt.severity, "status": "Success", "message": tt.message,
+				"actor.user.name":                "token:1a2b3c4d",
+				"api.operation":                  "enroll",
+				"unmapped.altiward.event_type":   "agent.enrollment",
+				"unmapped.altiward.detail.state": tt.name,
+			}
+			for path, w := range want {
+				if got := get(r, path); got != w {
+					t.Errorf("%s = %v, want %v", path, got, w)
+				}
+			}
+			if _, ok := get(r, "device.os").(map[string]any)["version"]; ok {
+				t.Error("device.os.version is set, but the server doesn't know it")
+			}
+			if (r["is_alert"] == true) != tt.alert {
+				t.Errorf("is_alert = %v, want %v", r["is_alert"], tt.alert)
+			}
+			resources, _ := r["resources"].([]any)
+			if len(resources) != 1 {
+				t.Fatalf("resources = %v", r["resources"])
+			}
+			wantResource := map[string]any{"type": "Enrollment", "uid": "5d2c8e1a-7b4f-4a93-8c6d-0f1e2a3b4c5d", "name": "C02XK0AAJGH5"}
+			if got := resources[0]; !reflect.DeepEqual(got, wantResource) {
+				t.Errorf("resource = %v, want %v", got, wantResource)
+			}
+		})
+	}
+}
+
+func TestEnrollmentWithoutATokenHasNoActor(t *testing.T) {
+	e := stored(t, "agent-enrollment-enrolled")
+	e.Detail = maps.Clone(e.Detail)
+	delete(e.Detail, "token")
+	if r := mapJSON(t, e); r["actor"] != nil {
+		t.Fatalf("actor = %v", r["actor"])
 	}
 }
