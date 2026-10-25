@@ -9,6 +9,25 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Server 0.7.0 - unreleased
+
+### Upgrade order
+
+None needed beyond the usual: upgrade the server before the agents.
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+- The console's sidebar stays in view on long pages such as Overview, so who is signed
+  in, **Sign out** and the server version show on every page (#112).
+
 ## Agent 0.5.0 - 2026-10-25
 
 ### Upgrade order
