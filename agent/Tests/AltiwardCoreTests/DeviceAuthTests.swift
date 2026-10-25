@@ -27,6 +27,7 @@ final class FakeServer: HTTPTransport, Sendable {
         var commands: [AgentCommand] = []
         var results: [String: CommandResult] = [:]
         var failResults = 0
+        var eventRejections: [String: IngestResponse.Rejection] = [:]  // event ID → answer once
     }
 
     let clock: TestClock
@@ -46,6 +47,10 @@ final class FakeServer: HTTPTransport, Sendable {
     func approve(_ id: String) { state.withLock { _ = $0.pending.remove(id) } }
     func queueCommand(_ c: AgentCommand) { state.withLock { $0.commands.append(c) } }
     func failResults(times: Int) { state.withLock { $0.failResults = times } }
+    /// Rejects the event with this ID the next time it is posted; any other event is accepted.
+    func rejectEvent(_ id: String, error: String, code: String? = nil) {
+        state.withLock { $0.eventRejections[id] = IngestResponse.Rejection(eventID: id, error: error, code: code) }
+    }
     var results: [String: CommandResult] { state.withLock { $0.results } }
 
     struct Dropped: Error {}
@@ -113,6 +118,21 @@ final class FakeServer: HTTPTransport, Sendable {
             let result = try AltiwardJSON.decoder().decode(CommandResult.self, from: r.body)
             if s.results[String(commandID)] == nil { s.results[String(commandID)] = result }
             return (200, [:], Data(#"{"status":"\#(result.status.rawValue)"}"#.utf8))
+        }
+        if r.method == "POST", r.path == "/v1/agent/events" {
+            struct Posted: Decodable {
+                struct Event: Decodable { let event_id: String }
+                let events: [Event]
+            }
+            var verdicts = IngestResponse()
+            for event in try JSONDecoder().decode(Posted.self, from: r.body).events {
+                if let rejection = s.eventRejections.removeValue(forKey: event.event_id) {
+                    verdicts.rejected.append(rejection)
+                } else {
+                    verdicts.accepted.append(event.event_id)
+                }
+            }
+            return (200, [:], try JSONEncoder().encode(verdicts))
         }
         return (200, [:], Data(#"{"accepted":[],"duplicate":[],"rejected":[]}"#.utf8))
     }
@@ -737,5 +757,149 @@ struct DeviceAuthenticatorTests {
         #expect(try await postEvents(auth) == 200)
         #expect(await auth.keyStorage == .secureEnclave)
         #expect(server.enrollments.count == 1)
+    }
+}
+
+struct HTTPEventSinkTests {
+    let clock = TestClock()
+    let serverURL = URL(string: "https://api.altiward.test")!
+    let mismatch = "device.serial does not match the sending device"
+    let logged = OSAllocatedUnfairLock(initialState: [String]())
+
+    func sink(_ store: AgentStore, _ server: FakeServer, device: DeviceInfo = testDevice) -> (HTTPEventSink, DeviceAuthenticator) {
+        let auth = DeviceAuthenticator(
+            store: store, serverURL: serverURL, enrollmentToken: "enroll-token-0001", device: { device },
+            transport: server, keys: FakeKeys(), now: { clock.now }, log: { line in logged.withLock { $0.append(line) } })
+        return (HTTPEventSink(authenticator: auth), auth)
+    }
+
+    /// An event naming `serial`, which the test's Mac sends when it is the Mac's own.
+    func event(serial: String = testDevice.serial) -> AltiwardEvent {
+        var e = sampleEvent()
+        e.device.serial = serial
+        return e
+    }
+
+    func enrolledKey(_ r: FakeServer.Request) throws -> String {
+        let body = try JSONSerialization.jsonObject(with: r.body) as! [String: String]
+        return try #require(body["public_key"])
+    }
+
+    /// The server says the key belongs to another Mac, but these events name this one: the
+    /// key is what is wrong, so the events stay queued and the next send enrols a new key.
+    @Test func aMismatchForThisMacsEventsKeepsThemAndEnrollsAgain() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (sink, auth) = sink(store, server)
+        let own = event()
+        server.rejectEvent(own.eventID, error: mismatch, code: "device_mismatch")
+
+        let response = try await sink.send([own])
+        #expect(response.rejected.isEmpty)
+        #expect(response.accepted.isEmpty)
+        #expect(server.enrollments.count == 1)
+        #expect(await auth.deviceID == nil)
+        #expect(logged.withLock { $0 } == ["the server says this key belongs to another Mac; enrolling again"])
+
+        let retry = try await sink.send([own])
+        #expect(retry.accepted == [own.eventID])
+        let enrollments = server.enrollments
+        try #require(enrollments.count == 2)
+        #expect(try enrolledKey(enrollments[0]) != enrolledKey(enrollments[1]))
+    }
+
+    /// Events naming another Mac are stale copies of its queue. That Mac delivers its own,
+    /// so these are dropped, and this Mac's key is fine.
+    @Test func aMismatchForAnotherMacsEventsDropsThem() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (sink, auth) = sink(store, server)
+        let stale = event(serial: "OTHER")
+        server.rejectEvent(stale.eventID, error: mismatch, code: "device_mismatch")
+
+        let response = try await sink.send([stale])
+        #expect(response.rejected.map(\.eventID) == [stale.eventID])
+        #expect(response.rejected.first?.code == "device_mismatch")
+        let id = try #require(await auth.deviceID)
+
+        #expect(try await sink.send([event()]).accepted.count == 1)
+        #expect(server.enrollments.count == 1)
+        #expect(await auth.deviceID == id)
+        #expect(logged.withLock { $0 }.isEmpty)
+    }
+
+    @Test func aMixedBatchDropsStaleEventsAndKeepsOwn() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (sink, auth) = sink(store, server)
+        _ = try await sink.send([])  // enrolls, so the sink knows the ID it signs with
+        let firstID = try #require(await auth.deviceID)
+
+        let own = event()
+        let stale = event(serial: "OTHER")
+        server.rejectEvent(own.eventID, error: mismatch, code: "device_mismatch")
+        server.rejectEvent(stale.eventID, error: mismatch, code: "device_mismatch")
+
+        let response = try await sink.send([own, stale])
+        #expect(response.rejected.map(\.eventID) == [stale.eventID])
+        #expect(server.enrollments.count == 1)
+        #expect(await auth.deviceID == nil)
+
+        let retry = try await sink.send([own])
+        #expect(retry.accepted == [own.eventID])
+        #expect(retry.rejected.isEmpty)
+        #expect(server.enrollments.count == 2)
+        #expect(await auth.deviceID != firstID)
+    }
+
+    /// A rejection that names no code is about the event itself, whoever sent it.
+    @Test func aRejectionWithoutTheCodeKeepsTheKeyAndDropsTheEvent() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (sink, auth) = sink(store, server)
+        let bad = event()
+        server.rejectEvent(bad.eventID, error: "schema_version must be 1")
+
+        let response = try await sink.send([bad])
+        #expect(response.rejected.map(\.eventID) == [bad.eventID])
+        #expect(response.rejected.first?.code == nil)
+        #expect(await auth.deviceID != nil)
+        #expect(server.enrollments.count == 1)
+    }
+
+    /// A Mac that won't say which it is can't tell its own events from another's, so it
+    /// neither keeps them nor throws its key away.
+    @Test func anUnreadableIdentityTakesNoMismatchAsItsOwn() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        var unreadable = testDevice
+        unreadable.serial = DeviceIdentity.unreadable
+        let (sink, auth) = sink(store, server, device: unreadable)
+        var e = sampleEvent()
+        e.device = unreadable
+        server.rejectEvent(e.eventID, error: mismatch, code: "device_mismatch")
+
+        let response = try await sink.send([e])
+        #expect(response.rejected.map(\.eventID) == [e.eventID])
+        #expect(await auth.deviceID != nil)
+        #expect(server.enrollments.count == 1)
+        #expect(logged.withLock { $0 }.isEmpty)
+    }
+
+    @Test func discardingAnIDThatIsNotStoredKeepsTheCredential() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (sink, auth) = sink(store, server)
+        _ = try await sink.send([])
+        let id = try #require(await auth.deviceID)
+
+        // Another process sharing the store has already replaced the key that was signed with.
+        try await auth.discardCredential(ifDeviceID: "not-this-one")
+        #expect(await auth.deviceID == id)
+        #expect(logged.withLock { $0 }.isEmpty)
+
+        try await auth.discardCredential(ifDeviceID: id)
+        #expect(await auth.deviceID == nil)
+        #expect(await auth.keyStorage == nil)
     }
 }

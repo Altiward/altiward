@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -215,6 +216,33 @@ func TestEventsMustComeFromTheirOwnDevice(t *testing.T) {
 	rec, out := a.post(t, batch(t, "elevation-granted"))
 	if rec.Code != 200 || len(out["rejected"].([]any)) != 1 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+// An agent keeps the events a mismatch names as its own Mac's, so only that rejection
+// carries a code; any other reason for rejecting an event doesn't.
+func TestIngestMarksEventsFromAnotherMac(t *testing.T) {
+	h := newServer(t)
+	a := enrollAgent(t, h, "SOMEONE-ELSE")
+	bad := strings.Replace(string(testfixture.Raw(t, "elevation-revoked")), `"schema_version": 1`, `"schema_version": 9`, 1)
+	body, _ := json.Marshal(map[string]any{"events": []json.RawMessage{
+		testfixture.Raw(t, "elevation-granted"), // names fixtureSerial, not this Mac's
+		json.RawMessage(bad),
+	}})
+	rec, out := a.post(t, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	rejected := out["rejected"].([]any)
+	if len(rejected) != 2 {
+		t.Fatalf("rejected = %v", rejected)
+	}
+	mismatch, invalid := rejected[0].(map[string]any), rejected[1].(map[string]any)
+	if mismatch["code"] != "device_mismatch" {
+		t.Fatalf("serial mismatch rejection = %v", mismatch)
+	}
+	if _, ok := invalid["code"]; ok || !strings.Contains(invalid["error"].(string), "schema_version") {
+		t.Fatalf("invalid event rejection = %v", invalid)
 	}
 }
 

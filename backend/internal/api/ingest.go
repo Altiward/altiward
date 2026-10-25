@@ -12,16 +12,25 @@ import (
 )
 
 // IngestResponse mirrors IngestResponse in the Swift agent. Every event in the request
-// appears in exactly one list; the agent deletes all three from its queue.
+// appears in exactly one list; the agent deletes all three from its queue, except a
+// rejection with a Code that it acts on (see RejectDeviceMismatch).
 type IngestResponse struct {
 	Accepted  []string    `json:"accepted"`
 	Duplicate []string    `json:"duplicate"`
 	Rejected  []Rejection `json:"rejected"`
 }
 
+// RejectDeviceMismatch is the Code of a rejection because the event names another serial
+// than the one the signing credential was enrolled with. An agent whose own events get it
+// has the wrong key (such as a store copied from another Mac): it keeps them, drops the
+// key and enrols again. Events naming another Mac are stale, and it deletes those.
+const RejectDeviceMismatch = "device_mismatch"
+
 type Rejection struct {
 	EventID string `json:"event_id"`
 	Error   string `json:"error"`
+	// Code is set only where an agent does something other than delete the event.
+	Code string `json:"code,omitempty"`
 }
 
 func (s *Server) ingest(w http.ResponseWriter, r *http.Request, p auth.Principal) {
@@ -49,15 +58,17 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request, p auth.Principal
 		if err == nil && e.Type.IsServerRaised() {
 			err = errors.New(string(e.Type) + " is raised only by the server")
 		}
+		code := ""
 		if err == nil && e.Device.Serial != p.Serial {
 			err = errors.New("device.serial does not match the sending device")
+			code = RejectDeviceMismatch
 		}
 		if err == nil && seen[e.EventID] {
 			resp.Duplicate = append(resp.Duplicate, e.EventID)
 			continue
 		}
 		if err != nil {
-			resp.Rejected = append(resp.Rejected, Rejection{EventID: event.PeekID(raw), Error: err.Error()})
+			resp.Rejected = append(resp.Rejected, Rejection{EventID: event.PeekID(raw), Error: err.Error(), Code: code})
 			continue
 		}
 		seen[e.EventID] = true

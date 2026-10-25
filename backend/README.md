@@ -50,7 +50,7 @@ token in `X-CSRF-Token`; requests with a token don't.
 | Method and path | Purpose |
 | --- | --- |
 | `POST /v1/agent/enroll` | Enrollment token. `{"serial", "hardware_uuid", "public_key"}` (base64 P-256 SubjectPublicKeyInfo). Responds `{"device_id", "status"}`: 201 for a new credential, 200 for the same key again. |
-| `POST /v1/agent/events` | Device signature. `{"events": [...]}`, up to 500. Responds `{"accepted": [], "duplicate": [], "rejected": [{"event_id", "error"}]}`. Events whose serial is not the signing Mac's are rejected. Auth failures carry `code`: `credential_invalid`, `enrollment_pending` or `clock_skew`. |
+| `POST /v1/agent/events` | Device signature. `{"events": [...]}`, up to 500. Responds `{"accepted": [], "duplicate": [], "rejected": [{"event_id", "error", "code"}]}`. Events whose serial is not the signing Mac's are rejected with `code`: `device_mismatch` (no other rejection has a `code`). Auth failures carry `code`: `credential_invalid`, `enrollment_pending` or `clock_skew`. |
 | `GET /v1/sessions` | Newest first. Query: `user`, `device`, `open=true`, `since`, `until` (RFC 3339, on start time), `limit` (≤ 500). Each session adds `open`, `allowed_seconds`, `actual_seconds` and `overran`. |
 | `GET /v1/sessions/{id}` | `{"session": ..., "events": [...]}`: the timeline, oldest first, with `received_at`. |
 | `GET /v1/devices` | Fleet inventory: versions, last check-in, current `admin_members` and `permanent_admins`, Privileges config. |

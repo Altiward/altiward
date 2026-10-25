@@ -214,6 +214,12 @@ public actor DeviceAuthenticator {
         (try? load())?.credential.deviceID
     }
 
+    /// The serial the Mac reports now, which is ``DeviceIdentity/unreadable`` when it
+    /// won't say.
+    public var currentSerial: String {
+        device().serial
+    }
+
     /// Where the key for the configured server is kept, if there is one. Reads the store
     /// only; it never asks the Secure Enclave.
     public var keyStorage: KeyStorage? {
@@ -426,6 +432,22 @@ public actor DeviceAuthenticator {
                 try store.setValue(nil, forKey: Self.storeKey(c.storage))
             }
         }
+    }
+
+    /// Drops the stored credential that has `deviceID`, so the next send enrolls with a new
+    /// key. For when the server says that key belongs to another Mac. Does nothing if no
+    /// record has that ID, as when another process sharing the store has already replaced
+    /// the credential that was signed with.
+    public func discardCredential(ifDeviceID deviceID: String) throws {
+        let discarded = try store.transaction {
+            var found = false
+            for storage in [KeyStorage.secureEnclave, .software] where try record(storage)?.deviceID == deviceID {
+                try store.setValue(nil, forKey: Self.storeKey(storage))
+                found = true
+            }
+            return found
+        }
+        if discarded { log("the server says this key belongs to another Mac; enrolling again") }
     }
 
     private static func code(_ data: Data) -> String? {

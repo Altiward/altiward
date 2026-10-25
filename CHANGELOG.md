@@ -37,6 +37,10 @@ None.
   by an earlier agent is given this Mac's identity and stays enrolled. If the Mac won't
   report its serial or hardware UUID at the time, the agent keeps its key and checks on a
   later run.
+- When the server rejects this Mac's own events because the agent's key belongs to another
+  Mac, the agent keeps the events, drops the key and enrols again, instead of deleting
+  them. Events that name another Mac are still deleted. This needs Server 0.8.0, which
+  says why it rejected them.
 
 ### Changes
 
@@ -93,6 +97,8 @@ None.
   (#111).
 - The console's sidebar stays in view on long pages such as Overview, so who is signed
   in, **Sign out** and the server version show on every page (#112).
+- A rejected event whose `device.serial` isn't the signing Mac's carries `code`:
+  `device_mismatch` in the ingest response. Other rejections have no `code`.
 
 ## Agent 0.5.0 - 2026-10-25
 

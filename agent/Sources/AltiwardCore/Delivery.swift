@@ -2,20 +2,30 @@ import Foundation
 
 /// The API's per-event verdicts for one batch. Events in any list are done with:
 /// accepted and duplicate are stored server-side; rejected ones will never be accepted,
-/// so retrying them would block the queue forever.
+/// so retrying them would block the queue forever. The exception is a rejection for a key
+/// that belongs to another Mac: ``HTTPEventSink`` takes this Mac's own events out of
+/// `rejected`, so they stay queued for the next key.
 public struct IngestResponse: Codable, Sendable, Equatable {
     public struct Rejection: Codable, Sendable, Equatable {
+        /// The code of a rejection that says why the credential, not the event, was the
+        /// problem: the key belongs to another Mac than the event names.
+        public static let deviceMismatch = "device_mismatch"
+
         public var eventID: String
         public var error: String
+        /// Set by servers from 0.8.0, and only to ``deviceMismatch``; nil otherwise.
+        public var code: String?
 
-        public init(eventID: String, error: String) {
+        public init(eventID: String, error: String, code: String? = nil) {
             self.eventID = eventID
             self.error = error
+            self.code = code
         }
 
         enum CodingKeys: String, CodingKey {
             case eventID = "event_id"
             case error
+            case code
         }
     }
 
@@ -63,12 +73,30 @@ public struct HTTPEventSink: EventSink {
 
     public func send(_ events: [AltiwardEvent]) async throws -> IngestResponse {
         let body = try AltiwardJSON.encoder().encode(["events": events])
+        // Nil when the send enrols first; the ID is read again afterwards.
+        let signedWith = await authenticator.deviceID
         let (data, response) = try await authenticator.send(method: "POST", path: "v1/agent/events", body: body)
         let status = response.statusCode
         guard status == 200 else {
             throw DeliveryError.http(status: status, body: String(decoding: data, as: UTF8.self))
         }
-        return try AltiwardJSON.decoder().decode(IngestResponse.self, from: data)
+        var verdicts = try AltiwardJSON.decoder().decode(IngestResponse.self, from: data)
+
+        // The server rejects an event that names another serial than the key's. If the
+        // event names this Mac, the key is wrong, not the event, and dropping the event
+        // would lose it: leave it queued and enrol again. An event naming another Mac is
+        // a stale copy of that Mac's queue, which it delivers itself. A Mac that won't say
+        // its serial can't tell which are its own.
+        let serial = await authenticator.currentSerial
+        guard serial != DeviceIdentity.unreadable else { return verdicts }
+        let own = Set(events.filter { $0.device.serial == serial }.map(\.eventID))
+        let rejected = verdicts.rejected.count
+        verdicts.rejected.removeAll { $0.code == IngestResponse.Rejection.deviceMismatch && own.contains($0.eventID) }
+        guard verdicts.rejected.count < rejected else { return verdicts }
+        var id = signedWith
+        if id == nil { id = await authenticator.deviceID }
+        if let id { try await authenticator.discardCredential(ifDeviceID: id) }
+        return verdicts
     }
 }
 
