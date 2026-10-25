@@ -674,6 +674,41 @@ func TestEnrollEventIsRecordedWhenTheRequestIsCancelled(t *testing.T) {
 	}
 }
 
+// deadlineIngest records the deadline of the context each Ingest is given.
+type deadlineIngest struct {
+	store.Store
+	deadlines chan<- time.Time
+}
+
+func (d deadlineIngest) Ingest(ctx context.Context, tenantID string, events []event.Event, receivedAt time.Time) (store.IngestResult, error) {
+	deadline, _ := ctx.Deadline() // zero without one
+	d.deadlines <- deadline
+	return d.Store.Ingest(ctx, tenantID, events, receivedAt)
+}
+
+// The enrolment event outlives the request, but not a database that never answers: its
+// write gets ten seconds.
+func TestEnrollEventWriteHasADeadline(t *testing.T) {
+	tokens, err := auth.Parse("acme="+agentToken, "acme="+consoleToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := serverNow(t)
+	deadlines := make(chan time.Time, 1)
+	h := api.New(deadlineIngest{store.NewMemory(nil), deadlines}, tokens, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		func() time.Time { return now })
+
+	started := time.Now()
+	enrollAgent(t, h, fixtureSerial)
+	deadline := <-deadlines
+	if deadline.IsZero() {
+		t.Fatal("the enrolment event was written without a deadline")
+	}
+	if latest := time.Now().Add(10 * time.Second); !deadline.After(started) || deadline.After(latest) {
+		t.Fatalf("deadline %v after the request started, want at most 10s from the write", deadline.Sub(started))
+	}
+}
+
 // newLimitedServer is a server with options, its store with one SIEM sink, and its log.
 func newLimitedServer(t *testing.T, opts ...api.Option) (http.Handler, *store.Memory, *strings.Builder) {
 	t.Helper()
