@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -602,6 +603,66 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("after a revoke = %+v previous = %+v, %v", res.Credential, res.Previous, err)
 		}
 	})
+}
+
+// TestPostgresRefusesNewMacsWithoutTheTenantLock checks that a new Mac over the limit is
+// refused without waiting for the tenant's new-Mac lock, so a flood of refused serials
+// doesn't queue on it, and that a new Mac with room still waits for it.
+func TestPostgresRefusesNewMacsWithoutTheTenantLock(t *testing.T) {
+	url := os.Getenv("ALTIWARD_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("ALTIWARD_TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	p, err := OpenPostgres(ctx, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+	t0 := testfixture.Time(t, "2026-10-16T12:00:00Z")
+	tenant := "tenant-" + randomHex(t)
+	enrol := func(ctx context.Context, limits EnrollLimits) error {
+		sn := "C02LOCK" + randomHex(t)
+		_, err := p.Enroll(ctx, DeviceCredential{
+			DeviceID: newUUID(t), TenantID: tenant, Serial: sn, HardwareUUID: "HW-" + sn, PublicKey: newKey(t), CreatedAt: t0,
+		}, limits)
+		return err
+	}
+	for i := 0; i < 2; i++ {
+		if err := enrol(ctx, EnrollLimits{NewMacsPerHour: 2}); err != nil {
+			t.Fatalf("Mac %d: %v", i+1, err)
+		}
+	}
+
+	// Another enrolment holds the tenant's lock.
+	holder, err := p.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = holder.Rollback(ctx) }()
+	if err := lockTenantNewMacs(ctx, holder, tenant); err != nil {
+		t.Fatal(err)
+	}
+
+	short, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := enrol(short, EnrollLimits{NewMacsPerHour: 2}); !errors.Is(err, ErrNewMacsLimited) {
+		t.Fatalf("over the limit while the lock is held = %v, want %v", err, ErrNewMacsLimited)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- enrol(ctx, EnrollLimits{NewMacsPerHour: 5}) }()
+	select {
+	case err := <-done:
+		t.Fatalf("with room, enrolled without waiting for the lock: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err := holder.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("with room, after the lock is released: %v", err)
+	}
 }
 
 func newKey(t *testing.T) []byte {

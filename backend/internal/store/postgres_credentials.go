@@ -41,19 +41,38 @@ func lockTenantNewMacs(ctx context.Context, tx pgx.Tx, tenantID string) error {
 	return err
 }
 
+// countNewMacs counts the tenant's serials whose first credential is under an hour old at
+// c.CreatedAt, from the rows committed when it runs.
+func countNewMacs(ctx context.Context, tx pgx.Tx, c DeviceCredential) (int, error) {
+	var n int
+	err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM (
+			SELECT serial FROM device_credentials WHERE tenant_id = $1 GROUP BY serial HAVING min(created_at) > $2
+		) AS new_macs`, c.TenantID, c.CreatedAt.Add(-newMacsWindow)).Scan(&n)
+	return n, err
+}
+
 // enforceEnrollLimits counts, in tx and under the serial's lock, what c would add to: the
 // tenant's serials whose first credential is under an hour old, if c is the first for its
 // serial, and the serial's credentials under 24 hours old.
 func enforceEnrollLimits(ctx context.Context, tx pgx.Tx, c DeviceCredential, enrolledBefore bool, limits EnrollLimits) error {
 	if !enrolledBefore && limits.NewMacsPerHour > 0 {
+		// A refusal doesn't need the tenant's lock: the count sees committed rows only, and
+		// those stay, so a count already at the limit is exactly what the count under the
+		// lock would find, or less. Without the lock, a flood of serials over the limit is
+		// refused at once instead of queueing behind each other. Only a Mac with room takes
+		// the lock and counts again, so two can't both take the last place.
+		newMacs, err := countNewMacs(ctx, tx, c)
+		if err != nil {
+			return err
+		}
+		if limits.refusesNewMac(newMacs) {
+			return ErrNewMacsLimited
+		}
 		if err := lockTenantNewMacs(ctx, tx, c.TenantID); err != nil {
 			return err
 		}
-		var newMacs int
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*) FROM (
-				SELECT serial FROM device_credentials WHERE tenant_id = $1 GROUP BY serial HAVING min(created_at) > $2
-			) AS new_macs`, c.TenantID, c.CreatedAt.Add(-newMacsWindow)).Scan(&newMacs); err != nil {
+		if newMacs, err = countNewMacs(ctx, tx, c); err != nil {
 			return err
 		}
 		if limits.refusesNewMac(newMacs) {
