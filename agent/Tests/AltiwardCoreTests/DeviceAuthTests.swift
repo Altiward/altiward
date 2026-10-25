@@ -241,11 +241,12 @@ struct DeviceAuthenticatorTests {
 
     func authenticator(
         _ store: AgentStore, _ server: FakeServer, url: URL? = nil, keys: FakeKeys? = nil,
-        role: DeviceAuthenticator.Role = .daemon, device: DeviceInfo = testDevice
+        role: DeviceAuthenticator.Role = .daemon, device: DeviceInfo = testDevice,
+        log: @escaping @Sendable (String) -> Void = { _ in }
     ) -> DeviceAuthenticator {
         DeviceAuthenticator(
             store: store, serverURL: url ?? serverURL, enrollmentToken: "enroll-token-0001", device: { device },
-            transport: server, keys: keys ?? self.keys, role: role, now: { clock.now })
+            transport: server, keys: keys ?? self.keys, role: role, now: { clock.now }, log: log)
     }
 
     /// This test's Mac, with another serial and hardware UUID.
@@ -586,6 +587,63 @@ struct DeviceAuthenticatorTests {
         #expect(server.enrollments.count == 3)
         #expect(try store.value(forKey: "device_credential") == nil)
         #expect(await copy.keyStorage == .secureEnclave)
+    }
+
+    /// When the Mac won't say which it is (IOKit failed), the agent can't tell a copy from
+    /// the original, so it keeps signing with the key it has and checks on a later run.
+    @Test func anUnreadableIdentityKeepsTheKey() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let first = mac("C02AAA", "U1")
+        #expect(try await postEvents(authenticator(store, server, device: first)) == 200)
+        let before = try store.value(forKey: "device_credential_se")
+
+        let logged = OSAllocatedUnfairLock(initialState: [String]())
+        let unreadable = authenticator(
+            store, server, device: mac(DeviceIdentity.unreadable, "U1"), log: { line in logged.withLock { $0.append(line) } })
+        #expect(try await postEvents(unreadable) == 200)
+        #expect(server.enrollments.count == 1)
+        #expect(try store.value(forKey: "device_credential_se") == before)
+        #expect(logged.withLock { $0 } == ["couldn't read this Mac's serial or hardware UUID; keeping the stored key"])
+
+        // Once the Mac can say, the check goes on as usual.
+        #expect(try await postEvents(authenticator(store, server, device: first)) == 200)
+        #expect(server.enrollments.count == 1)
+        #expect(try await postEvents(authenticator(store, server, device: mac("C02BBB", "U2"))) == 200)
+        #expect(server.enrollments.count == 2)
+    }
+
+    @Test func anUnreadableIdentityDoesNotBindAnOldRecord() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        _ = try await enrollAsAgent01(store, server)
+        let before = try store.value(forKey: "device_credential")
+
+        let auth = authenticator(store, server, device: mac(DeviceIdentity.unreadable, DeviceIdentity.unreadable))
+        #expect(try await postEvents(auth) == 200)
+        #expect(server.enrollments.count == 1)
+        #expect(try store.value(forKey: "device_credential") == before)
+        let after = try #require(try storedIdentity(store, "device_credential"))
+        #expect(after.serial == nil)
+        #expect(after.hardwareUUID == nil)
+    }
+
+    /// A key made while the Mac won't say which it is records no Mac, rather than "unknown",
+    /// and takes the Mac's identity on the first run that can read it.
+    @Test func aKeyMadeWhileTheIdentityIsUnreadableIsBoundLater() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        #expect(try await postEvents(authenticator(store, server, device: mac(DeviceIdentity.unreadable, "U1"))) == 200)
+        let made = try #require(try storedIdentity(store, "device_credential_se"))
+        #expect(made.serial == nil)
+        #expect(made.hardwareUUID == nil)
+
+        #expect(try await postEvents(authenticator(store, server, device: mac("C02AAA", "U1"))) == 200)
+        #expect(server.enrollments.count == 1)
+        let bound = try #require(try storedIdentity(store, "device_credential_se"))
+        #expect(bound.privateKey == made.privateKey)
+        #expect(bound.serial == "C02AAA")
+        #expect(bound.hardwareUUID == "U1")
     }
 
     /// A credential stored by an earlier agent has no serial. Re-enrolling it would send

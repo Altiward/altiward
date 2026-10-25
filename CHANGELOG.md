@@ -34,7 +34,9 @@ None.
 - The agent stores its Mac's serial and hardware UUID with its device key. A key found on
   a different Mac, such as a store copied by Migration Assistant, a clone or a restore,
   is dropped and the Mac enrols afresh instead of signing as the first Mac. A key stored
-  by an earlier agent is given this Mac's identity and stays enrolled.
+  by an earlier agent is given this Mac's identity and stays enrolled. If the Mac won't
+  report its serial or hardware UUID at the time, the agent keeps its key and checks on a
+  later run.
 
 ### Changes
 

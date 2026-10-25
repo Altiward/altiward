@@ -124,6 +124,11 @@ public enum DeviceKeyError: Error, Equatable, CustomStringConvertible {
     }
 }
 
+private extension DeviceInfo {
+    /// Whether the Mac said which it is, rather than ``DeviceIdentity/unreadable``.
+    var isReadable: Bool { serial != DeviceIdentity.unreadable && hardwareUUID != DeviceIdentity.unreadable }
+}
+
 /// Holds this Mac's device credential and signs agent requests with it.
 ///
 /// The key is stored before the enrollment request is sent, so a retry after a lost
@@ -156,7 +161,8 @@ public actor DeviceAuthenticator {
         /// The Mac the key was made on. A store copied to another Mac (Migration Assistant,
         /// a clone, a restore) keeps a file key that works there, so without these the
         /// copy would go on signing as the first Mac. Nil in a record from before agent
-        /// 0.8.0, which is given this Mac's the first time it is used.
+        /// 0.8.0, or made while the Mac wouldn't say, which is given this Mac's the first
+        /// time it is used and the Mac can say.
         var serial: String?
         var hardwareUUID: String?
     }
@@ -326,8 +332,8 @@ public actor DeviceAuthenticator {
             if let stored = try load() { return stored }
             let fresh = Stored(
                 credential: Credential(
-                    serverURL: serverURL.absoluteString, privateKey: key, serial: info.serial,
-                    hardwareUUID: info.hardwareUUID),
+                    serverURL: serverURL.absoluteString, privateKey: key, serial: info.isReadable ? info.serial : nil,
+                    hardwareUUID: info.isReadable ? info.hardwareUUID : nil),
                 storage: storage)
             try save(fresh)
             // Neither record is for this server, so the other one is for an old one.
@@ -340,8 +346,15 @@ public actor DeviceAuthenticator {
     /// made on another Mac is dropped, so the Mac enrolls its own key; one from before
     /// agent 0.8.0 has no Mac recorded, so it gets this Mac's and stays enrolled, rather
     /// than sending every upgraded Mac to approval. Checks both records, since a downgrade
-    /// and upgrade can leave a Secure Enclave key and a file key.
+    /// and upgrade can leave a Secure Enclave key and a file key. When the Mac won't say
+    /// which it is, it can't tell a copy from the original, so the stored key stays as it
+    /// is and a later run checks it.
     private func boundToThisMac(_ info: DeviceInfo) throws -> Stored? {
+        guard info.isReadable else {
+            let stored = try load()
+            if stored != nil { log("couldn't read this Mac's serial or hardware UUID; keeping the stored key") }
+            return stored
+        }
         while var c = try load() {
             guard let serial = c.credential.serial, let hardwareUUID = c.credential.hardwareUUID else {
                 c.credential.serial = info.serial
