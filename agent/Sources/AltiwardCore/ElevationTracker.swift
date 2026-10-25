@@ -402,9 +402,9 @@ public final class ElevationTracker: Sendable {
     /// - an `agent.health` event reports who is admin now and the result of each tamper
     ///   check.
     ///
-    /// Grant claims held for Privileges' log are resolved first
-    /// (``resolvePendingClaims()``), and their events come first in what it returns. An admin
-    /// whose claim is still in its confirmation window isn't raised out-of-band.
+    /// Held grant claims are resolved first (``resolvePendingClaims()``), and their events
+    /// come first in what it returns. An admin whose claim is still in its confirmation window
+    /// isn't raised out-of-band.
     ///
     /// Membership is read inside the transaction, so a grant or an expiry can't commit
     /// between the read and the reconciliation.
@@ -711,7 +711,7 @@ public final class ElevationTracker: Sendable {
     /// of a heartbeat, while a grant whose hook is still on its way isn't reported as one.
     /// Run it every few seconds; the heartbeat still raises anything it misses.
     ///
-    /// Grant claims held for Privileges' log are resolved first (``resolvePendingClaims()``),
+    /// Held grant claims are resolved first (``resolvePendingClaims()``),
     /// and their events come first in what it returns. An admin whose claim is still in its
     /// confirmation window isn't raised, though when they were first seen is still kept: if
     /// the claim is refused, their rights count as out of band from then.
@@ -719,6 +719,11 @@ public final class ElevationTracker: Sendable {
         let resolved = resolveHeldClaims()
         let now = env.now()
         let device = env.device()
+        // Read outside the transaction, and only when someone may be raised: it reads the
+        // unified log, and a hook claim waits for the store meanwhile. Only an admin seen by
+        // an earlier check can be past the grace period.
+        let mayRaise = untrackedSince.withLock { $0.values.contains { now.timeIntervalSince($0) >= Self.untrackedGrace } }
+        let audit = mayRaise ? env.privilegesAudit(now.addingTimeInterval(-auditLookback)) : []
         return try resolved + store.transaction {
             let untracked = untracked(admins: env.admins.adminMembers(), open: try store.openSessions())
             let held = try heldUsers(now: now)
@@ -727,8 +732,6 @@ public final class ElevationTracker: Sendable {
                 return Set(since.filter { now.timeIntervalSince($0.value) >= Self.untrackedGrace }.keys)
             }.subtracting(held)
             var events: [AltiwardEvent] = []
-            // Rare, so the log is read here, only when there is something to attribute.
-            let audit = confirmed.isEmpty ? [] : env.privilegesAudit(now.addingTimeInterval(-auditLookback))
             for user in confirmed.sorted() {
                 let event = try openOutOfBand(user, now: now, device: device, audit: audit)
                 try store.enqueue(event, now: now)

@@ -31,7 +31,18 @@ None.
 
 ### Changes
 
-None.
+- The agent answers a hook claim at once (#91). Without SAP Privileges' log, or for
+  a permanent admin, a grant claim waited inside the hook's call while the agent read
+  Privileges' timer, up to 18 s, and sometimes for the store while the agent read the
+  unified log, so the hook gave up after 5 s with "Could not reach altiward-agent" and the
+  untracked-admin check could raise the grant as `admin.out_of_band` first. Now such a
+  claim is held, like a claim waiting for Privileges' log, and recorded straight after the
+  hook has its answer; the log is read outside the store's lock. With a fixed
+  `ExpirationInterval` nothing changes, as no timer is read. On a Mac without the log and
+  without a fixed `ExpirationInterval`, the hook now logs "Sent admin for" for a grant claim
+  the agent then refuses; the refusal is still reported as `grant_claim`. When answering a
+  claim still takes more than a second, the agent logs a notice saying how long it spent on
+  each step, so a slow Mac names the cause.
 
 ## Agent 0.4.0 - 2026-10-25
 

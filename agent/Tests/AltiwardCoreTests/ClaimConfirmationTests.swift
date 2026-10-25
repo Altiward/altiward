@@ -855,3 +855,131 @@ extension ClaimConfirmationTests {
         #expect(checkTampers(events).isEmpty)
     }
 }
+
+/// The hook waits only 5 s for its answer, so nothing slow runs inside the call (#91):
+/// Privileges' timer is read after it, and the log outside the store's lock.
+extension ClaimConfirmationTests {
+    /// A tracker whose grants take their expiry from Privileges' timer, which counts its reads.
+    func timed(
+        availability: PrivilegesLogAvailability, mode: OutOfBandEnforcement = .alert,
+        reads: OSAllocatedUnfairLock<Int>, expires: Date
+    ) throws -> (ElevationTracker, AgentStore) {
+        let store = try makeStore()
+        let env = makeEnvironment(
+            admins: admins, clock: clock, privileges: PrivilegesSettings(),
+            config: AgentConfiguration(permanentAdmins: ["itadmin"], outOfBandEnforcement: mode),
+            privilegesTimer: { _, _ in
+                reads.withLock { $0 += 1 }
+                return expires
+            },
+            privilegesLogAvailability: { availability })
+        return (ElevationTracker(store: store, environment: env), store)
+    }
+
+    @Test func withoutTheLogAClaimNeedingPrivilegesTimerIsAnsweredBeforeItIsRead() throws {
+        let reads = OSAllocatedUnfairLock(initialState: 0)
+        let expires = clock.now.addingTimeInterval(1800)
+        let (tracker, store) = try timed(availability: .unavailable("x"), reads: reads, expires: expires)
+        admins.set(["jdoe"])
+        guard case .pending = try tracker.submit(claim(), callerUID: 501) else {
+            Issue.record("expected .pending")
+            return
+        }
+        #expect(reads.withLock { $0 } == 0)
+        let events = try tracker.resolvePendingClaims()
+        #expect(events.map(\.type) == [.elevationGranted])
+        #expect(events.first?.detail["privileges_log"] == .string("unavailable"))
+        #expect(events.first?.timestamp == clock.now)
+        #expect(reads.withLock { $0 } > 0)
+        #expect(try store.openSession(user: "jdoe")?.expiresAt == expires)
+        #expect(try store.pendingClaims().isEmpty)
+    }
+
+    @Test func withoutTheLogALateClaimNeedingTheTimerIsStillRefusedAndReported() throws {
+        let reads = OSAllocatedUnfairLock(initialState: 0)
+        let (tracker, store) = try timed(
+            availability: .unavailable("x"), mode: .enforce, reads: reads, expires: clock.now.addingTimeInterval(1800))
+        admins.set(["jdoe", "itadmin"])
+        _ = try tracker.heartbeat()
+        #expect(try store.openSession(user: "jdoe")?.source == .outOfBand)
+        clock.advance(61)
+        guard case .pending = try tracker.submit(claim(), callerUID: 501) else {
+            Issue.record("expected .pending")
+            return
+        }
+        let events = try tracker.resolvePendingClaims()
+        #expect(events.map(\.type) == [.agentTamper])
+        #expect(events.first?.detail["outcome"] == .string("refused"))
+        #expect(events.first?.detail["reason"] == .string(
+            ElevationTracker.ClaimRefused(user: "jdoe", reason: .late(seconds: 61)).description))
+        #expect(try store.openSession(user: "jdoe")?.source == .outOfBand)
+    }
+
+    @Test func aPermanentAdminsClaimNeedingTheTimerIsAnsweredBeforeItIsRead() throws {
+        let reads = OSAllocatedUnfairLock(initialState: 0)
+        let expires = clock.now.addingTimeInterval(1800)
+        let (tracker, store) = try timed(availability: .available, reads: reads, expires: expires)
+        admins.set(["itadmin"])
+        guard case .pending = try tracker.submit(claim("itadmin"), callerUID: 501) else {
+            Issue.record("expected .pending")
+            return
+        }
+        #expect(reads.withLock { $0 } == 0)
+        // Recorded as before, without waiting for Privileges' log.
+        let events = try tracker.resolvePendingClaims()
+        #expect(events.map(\.type) == [.elevationGranted])
+        #expect(events.first?.detail["privileges_log"] == nil)
+        #expect(try store.openSession(user: "itadmin")?.expiresAt == expires)
+    }
+
+    @Test func aFixedExpirationIntervalNeedsNoTimerSoTheClaimIsRecordedAtOnce() throws {
+        let (tracker, _) = try tracker(availability: .unavailable("x"))
+        admins.set(["jdoe"])
+        guard case .recorded = try tracker.submit(claim(), callerUID: 501) else {
+            Issue.record("expected .recorded")
+            return
+        }
+    }
+
+    @Test func raisingAnAdminReadsTheAuditLogOutsideTheStoresLock() throws {
+        let store = try makeStore()
+        let heldDuringRead = OSAllocatedUnfairLock(initialState: false)
+        let env = makeEnvironment(
+            admins: admins, clock: clock,
+            privilegesAudit: { _ in
+                // Another thread's transaction finishes only if this check isn't holding the lock.
+                let done = DispatchSemaphore(value: 0)
+                Thread.detachNewThread {
+                    _ = try? store.transaction { () }
+                    done.signal()
+                }
+                if done.wait(timeout: .now() + 1) == .timedOut { heldDuringRead.withLock { $0 = true } }
+                return []
+            })
+        let tracker = ElevationTracker(store: store, environment: env)
+        admins.set(["jdoe"])
+        _ = try tracker.checkUntrackedAdmins()
+        clock.advance(31)
+        let raised = try tracker.checkUntrackedAdmins()
+        #expect(raised.map(\.type) == [.adminOutOfBand])
+        #expect(!heldDuringRead.withLock { $0 })
+    }
+}
+
+struct ClaimStepsTests {
+    @Test func aSlowAnswerSaysWhatItWaitedFor() {
+        let now = OSAllocatedUnfairLock(initialState: 100.0)
+        let steps = ClaimSteps(uptime: { now.withLock { $0 } })
+        steps.time("Privileges' log check") { now.withLock { $0 += 0.3 } }
+        steps.time("settings") { now.withLock { $0 += 0.1 } }
+        now.withLock { $0 += 3 }
+        #expect(steps.slowSummary() == "3.4 s (Privileges' log check 0.3 s, settings 0.1 s, recording 3.0 s)")
+    }
+
+    @Test func aQuickAnswerIsNotLogged() {
+        let now = OSAllocatedUnfairLock(initialState: 100.0)
+        let steps = ClaimSteps(uptime: { now.withLock { $0 } })
+        steps.time("settings") { now.withLock { $0 += 0.5 } }
+        #expect(steps.slowSummary() == nil)
+    }
+}

@@ -30,7 +30,10 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
   real `admin` group, and the event says whether they agree (`verified`). With Privileges'
   own log available, a grant claim is held until the log confirms it (see the trust model). A grant's
   expiry is the one Privileges set: `ExpirationInterval`, or the duration the person
-  picked, read from Privileges' own timer and capped by `ExpirationIntervalMax`.
+  picked, read from Privileges' own timer and capped by `ExpirationIntervalMax`. Reading the
+  timer can take seconds and the hook waits only 5 s for its answer, so a grant claim that
+  needs it is also held, without the log or for a permanent admin, and recorded straight
+  after the hook has its answer (#91).
 - **Keeps every event until your server has it.** Each event is written to the outbox in
   the same transaction as the ledger, and removed only once the server acknowledges it.
   While the server can't be reached it retries with backoff, up to an hour apart, and sends
@@ -254,7 +257,8 @@ leaves neither, so the agent holds a grant claim until one of them backs it.
   give-back (`kind` `give_back`) while the user is still admin.
 - *Without the log.* Nothing can confirm a claim. The agent keeps removing rights nobody
   granted, accepts a grant claim with the earlier checks, and marks it
-  `privileges_log: "unavailable"`. The `grant_confirmation` check fails, naming what is
+  `privileges_log: "unavailable"`. With no fixed `ExpirationInterval`, the claim is held while
+  Privileges' timer is read, so a refusal is reported but the hook isn't told of it. The `grant_confirmation` check fails, naming what is
   missing (it is left out unless `OutOfBandEnforcement` or `ExpiryEnforcement` is `enforce`
   and Privileges is installed). On a Mac where the agent has had the log, accepting a claim
   without it is also reported (`accepted_unconfirmed`): killing the extension and claiming in
