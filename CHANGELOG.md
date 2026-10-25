@@ -97,8 +97,7 @@ raw names until you upgrade.
 
 ### Breaking changes
 
-Agent 0.2 is no longer supported: support covers the last two agent minors, now 0.3 and
-0.4. The console marks Macs still running agent 0.2.x. Update them to Agent 0.4.0.
+None.
 
 ### Security
 
