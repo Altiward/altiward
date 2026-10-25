@@ -430,7 +430,7 @@ In the console, under **Settings › General**:
   approve the new one. Turning this off allows anyone with the enrolment token to
   replace an enrolled Mac's identity by naming its serial.
 
-  Upgrading to server 0.7.0 enables approval once for every existing tenant, including
+  Upgrading to server 0.8.0 enables approval once for every existing tenant, including
   tenants where it was off. Existing credentials and the other settings stay as they are.
   An admin can explicitly turn it off after the upgrade if automatic replacement is
   required. An omitted or null approval flag in a settings API update enables approval;

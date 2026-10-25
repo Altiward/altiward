@@ -9,7 +9,7 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
-## Agent 0.6.0 - unreleased
+## Agent 0.8.0 - unreleased
 
 ### Upgrade order
 
@@ -38,7 +38,7 @@ None.
   no longer counts as unreadable, so it doesn't mark the Mac **Partly checked** in Fleet
   (#115).
 
-## Server 0.7.0 - unreleased
+## Server 0.8.0 - unreleased
 
 ### Upgrade order
 
@@ -52,8 +52,7 @@ setting off after upgrading.
 
 ### Breaking changes
 
-Re-enrolment now waits for approval by default. This upgrade enables approval once for
-existing tenants; an admin must explicitly opt out afterwards to allow automatic replacement.
+None.
 
 ### Security
 

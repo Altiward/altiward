@@ -166,7 +166,7 @@ security records ([Backups](install.md#backups)).
   profile, so anyone on a Mac can read it. A new enrolment shows in **Enrollments**, where
   an admin can revoke it. **Approve Macs that enrol again** is on by default: a new
   key for a serial that enrolled before waits for approval, even after its earlier key
-  was revoked. An earlier active key stays valid until approval. Server 0.7.0 also enables
+  was revoked. An earlier active key stays valid until approval. Server 0.8.0 also enables
   approval once for existing tenants; admins can explicitly turn it off afterwards.
   With approval off, anyone with the shared token can replace an enrolled Mac's identity
   by naming its serial, even when the earlier key is protected by the Secure Enclave.
