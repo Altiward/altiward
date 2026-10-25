@@ -101,6 +101,8 @@ function EnrollmentInspector({ enrollment: e, active, devices, onClose, onDone }
   const api = useApi();
   const newMac = !active;
   const replacesEnclaveKey = active?.key_storage === "secure_enclave";
+  // A reinstall keeps the hardware UUID, so a different one is the first thing to read.
+  const otherHardware = e.status === "pending" && active && e.hardware_uuid !== active.hardware_uuid ? active : undefined;
   const device = devices?.find((d) => d.serial === e.serial);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -132,6 +134,12 @@ function EnrollmentInspector({ enrollment: e, active, devices, onClose, onDone }
         </div>
         <button type="button" className="button icon-button" aria-label="Close details" onClick={onClose}><CloseIcon /></button>
       </div>
+      {otherHardware && (
+        <p className="secondary" style={{ marginTop: 12 }}>
+          <span className="tag attention"><AttentionGlyph /> Warning</span>{" "}
+          {`The new key reports a different hardware UUID (${e.hardware_uuid}, was ${otherHardware.hardware_uuid}). Expect this only after a logic board replacement.`}
+        </p>
+      )}
       {e.status !== "revoked" && !canManage && <RoleNote>Approving and revoking enrollments needs the admin role.</RoleNote>}
       {e.status !== "revoked" && canManage && (
         <div className="actions">
@@ -156,8 +164,9 @@ function EnrollmentInspector({ enrollment: e, active, devices, onClose, onDone }
       </div>
       {e.status === "pending" && !newMac && (
         <p className="secondary" style={{ marginTop: 12 }}>
-          This Mac enrolled again with a new key. Approve it if you expect that, for example after a
-          reinstall. Its previous key keeps working until you approve.
+          This Mac enrolled again with a new key.
+          {otherHardware ? " " : " Approve it if you expect that, for example after a reinstall. "}
+          Its previous key keeps working until you approve.
         </p>
       )}
       {e.status === "pending" && replacesEnclaveKey && e.key_storage !== "secure_enclave" && (
@@ -183,12 +192,6 @@ function EnrollmentInspector({ enrollment: e, active, devices, onClose, onDone }
           {device
             ? `This Mac last checked in ${relativeTime(lastCheckIn(device)).toLowerCase()}${newMac ? "" : " with its current key"}.`
             : "This Mac hasn’t checked in yet."}
-        </p>
-      )}
-      {e.status === "pending" && active && e.hardware_uuid !== active.hardware_uuid && (
-        <p className="secondary" style={{ marginTop: 12 }}>
-          <span className="tag attention"><AttentionGlyph /> Warning</span>{" "}
-          {`The new key reports a different hardware UUID (${e.hardware_uuid}, was ${active.hardware_uuid}). Expect this only after a logic board replacement.`}
         </p>
       )}
       {confirming && (

@@ -202,9 +202,24 @@ describe("Enrollments, the evidence for a pending key", () => {
     expect(tag.querySelector("svg")).not.toBeNull();
   });
 
-  it("doesn't warn when the hardware is the same", async () => {
+  it("puts the hardware warning before the buttons, and doesn't suggest a reinstall", async () => {
+    const changed: Enrollment = { ...pending, hardware_uuid: "HW-NEW" };
+    renderView(fakeApi({
+      enrollments: vi.fn(async () => [changed, { ...active, hardware_uuid: "HW-OLD" }]),
+    }), <EnrollmentsView />);
+    const inspector = await openPending();
+    const warning = within(inspector).getByText(/different hardware UUID/).closest("p")!;
+    const approve = within(inspector).getByRole("button", { name: "Approve" });
+    expect(warning.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(inspector).toHaveTextContent("This Mac enrolled again with a new key.");
+    expect(inspector).not.toHaveTextContent("reinstall");
+  });
+
+  it("doesn't warn when the hardware is the same, and suggests a reinstall", async () => {
     renderView(fakeApi({ enrollments: vi.fn(async () => [pending, active]) }), <EnrollmentsView />);
-    expect(await openPending()).not.toHaveTextContent("different hardware UUID");
+    const inspector = await openPending();
+    expect(inspector).not.toHaveTextContent("different hardware UUID");
+    expect(inspector).toHaveTextContent("Approve it if you expect that, for example after a reinstall.");
   });
 
   it("doesn't warn when there is no active key to compare with", async () => {
