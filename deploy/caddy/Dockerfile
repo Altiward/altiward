@@ -13,7 +13,9 @@ ARG SOURCE_DATE_EPOCH=1792886400
 # Keep symbols so the binary scanner can distinguish linked code from unused modules.
 RUN GOOS=linux GOARCH=$TARGETARCH go build -mod=readonly -tags=nomysql,nopgx,nobadger -trimpath -buildvcs=false -ldflags='-buildid=' -o /caddy .
 
-FROM caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f AS certificates
+# One platform's copy for both: the bundles match, but their timestamps differ (and are
+# older than SOURCE_DATE_EPOCH, so kept), and BuildKit may reuse either copy for both.
+FROM --platform=linux/amd64 caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f AS certificates
 FROM scratch
 ARG SOURCE_DATE_EPOCH=1792886400
 COPY --from=certificates /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt

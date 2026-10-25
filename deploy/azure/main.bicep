@@ -47,7 +47,7 @@ var version = '0.6.0'
 var image = 'ghcr.io/altiward/altiward-api:${version}'
 // Rebuilt with patched dependencies, scanned and published by each server release.
 // Compose uses the same reviewed digest (deploy/caddy/README.md).
-var caddyImage = 'ghcr.io/altiward/caddy:2.11.7-altiward.1@sha256:76624d6dc80027a6e59d9e4bece0654048c49565fff9b4acf40a56b1d3829c19'
+var caddyImage = 'ghcr.io/altiward/caddy:2.11.7-altiward.1@sha256:960049cdbf07b7659a0622d3b88c22e8c2dd2582cd4049d2308911adb91bab0d'
 
 var suffix = uniqueString(resourceGroup().id, namePrefix)
 var names = {
