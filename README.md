@@ -14,7 +14,8 @@
 
 <p align="center">
   <a href="https://github.com/Altiward/altiward/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Altiward/altiward/ci.yml?branch=main&label=CI" alt="CI"></a>
-  <a href="https://github.com/Altiward/altiward/releases/latest"><img src="https://img.shields.io/github/v/release/Altiward/altiward?label=release" alt="Latest release"></a>
+  <a href="https://github.com/Altiward/altiward/releases?q=server-v&expanded=true"><img src="https://img.shields.io/github/v/release/Altiward/altiward?filter=server-v*&label=" alt="Latest server release"></a>
+  <a href="https://github.com/Altiward/altiward/releases?q=agent-v&expanded=true"><img src="https://img.shields.io/github/v/release/Altiward/altiward?filter=agent-v*&label=" alt="Latest agent release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-Apache--2.0-blue" alt="Licence: Apache 2.0"></a>
 </p>
 
