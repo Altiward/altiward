@@ -95,8 +95,8 @@ server doesn't start, and the line says which.
 
 Altiward sends only events that happen after you turn the export on; to send earlier ones
 too, see `replay-exports` in the install guide's "Connect your SIEM". To make an event
-now, sign in to the console as an admin and choose *Send test event* in Settings, under
-SIEM export. After 5 to 15 minutes (a new table is slow to show its first rows), run this
+now, sign in to the console as an admin and choose *Send test event* in Settings,
+on the SIEM export tab. After 5 to 15 minutes (a new table is slow to show its first rows), run this
 in the workspace's Logs:
 
 ```kql
@@ -118,7 +118,7 @@ also run `docker compose exec altiward /usr/local/bin/altiward-api diagnose` and
 | No error, but no rows | You're looking in a different workspace, or the first rows haven't shown yet |
 
 Nothing is lost while it fails: events wait in Postgres and are retried with a backoff of
-30 seconds, doubling up to an hour. After a fix, choose *Retry now* in Settings to send
+30 seconds, doubling up to an hour. After a fix, choose *Retry now* in Settings, on the SIEM export tab, to send
 what's queued straight away.
 
 ### Rotate the secret
