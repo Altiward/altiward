@@ -24,6 +24,19 @@ updates:
       console-minor-patch:
         update-types: [minor, patch]
 
+  - package-ecosystem: gomod
+    directory: /deploy/caddy
+    schedule:
+      interval: weekly
+    groups:
+      proxy-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directory: /deploy/caddy
+    schedule:
+      interval: weekly
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

@@ -47,11 +47,13 @@ The package must be public: on GitHub, under the package's settings, set its vis
 to public once, after its first push. An image that needs a login is a release gone
 wrong.
 
-The workflow also copies the official Caddy image that the Deploy to Azure template uses
-to `ghcr.io/altiward/caddy`, at the tag `deploy/azure/main.bicep` names, because container
-apps pull from shared addresses that Docker Hub limits. Set that package up once too:
-make it public, and under *Manage Actions access* give the `altiward` repository the Write
-role, so the workflow can push to it.
+The workflow also rebuilds the Caddy proxy with the patched dependencies pinned in
+`deploy/caddy/`, verifies its reproducible image digest and scans both final platform
+binaries. It copies that exact OCI archive to `ghcr.io/altiward/caddy`, then checks the
+published digest. Compose and Azure use the same digest, which must be available before
+the deployment bundle is used. See [the proxy build guide](../deploy/caddy/README.md)
+when updating it. Set that package up once too: make it public, and under *Manage Actions
+access* give the `altiward` repository the Write role, so the workflow can publish it.
 
 ## Server release candidate
 

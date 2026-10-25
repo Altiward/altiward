@@ -29,7 +29,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: gofmt
-        run: test -z "$(gofmt -l backend integrations deploy/sentinel)" || (gofmt -l backend integrations deploy/sentinel; exit 1)
+        run: test -z "$(gofmt -l backend integrations deploy/sentinel deploy/caddy)" || (gofmt -l backend integrations deploy/sentinel deploy/caddy; exit 1)
       - name: go vet
         run: |
           go vet ./...
@@ -88,6 +88,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: docker/setup-docker-action@1a6edb0ba9ac496f6850236981f15d8f9a82254d # v5.0.0
+        with:
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build the image (not pushed)
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
@@ -123,7 +126,19 @@ jobs:
             grep -E '^-rwxr-xr-x .*/integrations/sentinel/setup\.sh$'
       - name: A release installs and upgrades with upgrade.sh
         run: scripts/test-upgrade.sh altiward-api:ci
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Build, verify and scan the pinned Caddy image (not pushed)
+        run: |
+          scripts/build-caddy.sh "$RUNNER_TEMP/caddy"
+          for arch in amd64 arm64; do
+            go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -mode=binary "$RUNNER_TEMP/caddy/caddy-$arch"
+          done
+          docker load -i "$RUNNER_TEMP/caddy/caddy.oci.tar"
       - name: On Azure, agents get through and the console only from the allowed networks
+        env:
+          CADDY_IMAGE: altiward-caddy:build
         run: scripts/test-azure-proxy.sh altiward-api:ci
       - name: Saved image loads and runs, as admins do it
         run: |
