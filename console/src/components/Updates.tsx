@@ -15,8 +15,8 @@ const SecurityTag = () => <span className="tag attention"><AttentionGlyph /> Sec
 
 export const UpdateAvailable = () => <span className="tag attention"><UpdateGlyph /> Update available</span>;
 
-/** A command with a button that copies it. */
-function Command({ text }: { text: string }) {
+/** A command, or lines to paste, with a button that copies them. */
+export function Command({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   async function copy() {
     try {

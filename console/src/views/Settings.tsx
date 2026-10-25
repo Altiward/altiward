@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import type { ConsoleSignIn, ExportSink, Settings } from "../api";
 import { Banner, RoleNote, Segmented, Toolbar } from "../components/Chrome";
 import { StateBadge } from "../components/StateBadge";
-import { UpdatesGroup } from "../components/Updates";
+import { Command, UpdatesGroup } from "../components/Updates";
 import { useApi, useCan } from "../context";
 import { dateTime, sinkName } from "../format";
+import { type SiemGuide, type Where, siemGuides, siemSnippet } from "../siemSetup";
 import { appearances, setLook, themes, useLook } from "../theme";
 import { useLoad } from "../useLoad";
 
@@ -143,12 +144,15 @@ function AppearanceGroup() {
   );
 }
 
-/** Each SIEM's queue, with a test event and a retry for after a fix. The SIEMs themselves
- *  are set in the server's .env, so nothing here changes their settings. */
+/** Each SIEM's queue, with a test event and a retry for after a fix, and how to connect the
+ *  others. The SIEMs themselves are set in the server's environment, so nothing here changes
+ *  their settings. */
 function SiemExport() {
   const api = useApi();
   const canAct = useCan("admin");
   const { data, error, reload } = useLoad(() => api.exports(), []);
+  const { data: about } = useLoad(() => api.about(), []);
+  const where: Where = about?.platform === "azure-container-apps" ? { azureApp: about.app ?? "" } : {};
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -178,11 +182,7 @@ function SiemExport() {
     <div className="group" role="group" aria-labelledby="siem-title">
       <h3 id="siem-title">SIEM export</h3>
       {(error || actionError) && <Banner>{actionError ?? error}</Banner>}
-      {data && data.length === 0 && (
-        <p className="hint">
-          No SIEM is connected. Set one up in the server’s .env: see “Connect your SIEM” in the install guide.
-        </p>
-      )}
+      {data && data.length === 0 && <p className="hint">No SIEM is connected.</p>}
       {data && data.length > 0 && (
         <div className="box">
           {data.map((s) => <SinkRow key={s.sink} sink={s} canAct={canAct} busy={busy}
@@ -197,7 +197,58 @@ function SiemExport() {
         </div>
       )}
       {result && <p className="hint" role="status">{result}</p>}
+      {data && <ConnectSiem connected={data.map((s) => s.sink)} where={where} version={about?.version ?? null} />}
     </div>
+  );
+}
+
+/** For each SIEM not connected yet: the settings it needs, and lines to copy to where the
+ *  server's settings live. Read-only, and only placeholders: SIEM settings belong to the
+ *  deployment, so changing where events go needs the server, not a console session. */
+function ConnectSiem({ connected, where, version }: { connected: string[]; where: Where; version: string | null }) {
+  const guides = siemGuides(where).filter((g) => !connected.includes(g.sink));
+  if (guides.length === 0) return null;
+  // The guide for the server that's running, or main for a build without a release version.
+  const ref = version && /^\d+\.\d+\.\d+(-rc\.\d+)?$/.test(version) ? `server-v${version}` : "main";
+  const azure = where.azureApp !== undefined;
+  return (
+    <div className="siem-connect">
+      <h4>{connected.length > 0 ? "Connect another SIEM" : "Connect a SIEM"}</h4>
+      <p className="hint">
+        {azure
+          ? "SIEM settings are environment variables on the container app’s altiward container, with secrets kept as app secrets. Setting them starts a new revision."
+          : "SIEM settings go in the server’s .env, then run docker compose up -d."}{" "}
+        They can’t be changed here: changing where events go takes access to the server, not just the console.
+      </p>
+      {guides.map((g) => <SiemGuideDetails key={g.sink} guide={g} where={where} docs={`https://github.com/Altiward/altiward/blob/${ref}/${g.guide}`} />)}
+    </div>
+  );
+}
+
+function SiemGuideDetails({ guide, where, docs }: { guide: SiemGuide; where: Where; docs: string }) {
+  const name = sinkName(guide.sink);
+  return (
+    <details className="siem-guide">
+      <summary>{name}</summary>
+      <p className="hint">{guide.intro} <a href={docs} target="_blank" rel="noreferrer">{name} setup guide</a>.</p>
+      <div className="box">
+        <ul className="entries" aria-label={`${name} settings`}>
+          {guide.settings.map((s) => (
+            <li key={s.name}>
+              <code>{s.name}</code>
+              <span className="secondary">{s.required ? "Required" : s.value.startsWith("<") ? "Optional" : `Optional, default ${s.value}`}</span>
+              <span className="detail secondary">{s.what}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <p className="hint">
+        {where.azureApp !== undefined
+          ? "Run these with the Azure CLI, after filling in the values in angle brackets. Add an optional setting the same way."
+          : "Add these lines to .env, after filling in the values in angle brackets. Uncomment an optional one to change it."}
+      </p>
+      <Command text={siemSnippet(guide, where)} />
+    </details>
   );
 }
 

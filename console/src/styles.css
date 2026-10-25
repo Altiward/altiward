@@ -357,6 +357,14 @@ dialog.sheet .buttons { display: flex; justify-content: flex-end; gap: var(--spa
 .update-command { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); max-width: 72ch; }
 .update-command code { flex: 1 1 auto; min-width: 0; background: var(--surface-100); border: 1px solid var(--hairline); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); overflow-x: auto; white-space: pre; user-select: all; }
 
+/* Settings: how to connect a SIEM, read-only */
+.siem-connect { margin-top: var(--space-4); max-width: 72ch; }
+.siem-connect h4 { font-size: 13px; line-height: 18px; font-weight: 600; margin: 0; }
+.siem-guide { border-top: 1px solid var(--hairline); padding: var(--space-2) 0; margin-top: var(--space-2); }
+.siem-guide summary { cursor: pointer; font-size: 13px; line-height: 18px; }
+.siem-guide .box { margin-top: var(--space-2); }
+.siem-guide .entries code { overflow-wrap: anywhere; }
+
 /* Overview */
 .overview { padding: var(--space-4) var(--space-6) var(--space-8); max-width: 1200px; }
 .overview section { margin-top: var(--space-6); }

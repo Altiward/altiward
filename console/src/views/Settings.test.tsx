@@ -188,6 +188,42 @@ describe("Settings", () => {
       renderView(fakeApi({ exports: vi.fn(async () => []) }));
       expect(await screen.findByText(/No SIEM is connected/)).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Send test event" })).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Connect a SIEM" })).toBeInTheDocument();
+      expect(screen.getByText(/go in the server’s .env/)).toBeInTheDocument();
+      const splunk = screen.getByText("Splunk", { selector: "summary" }).closest("details")!;
+      expect(within(splunk).getByRole("list", { name: "Splunk settings" })).toHaveTextContent("ALTIWARD_SPLUNK_HEC_TOKENRequired");
+      expect(splunk).toHaveTextContent("ALTIWARD_SPLUNK_HEC_TOKEN=<the HEC token>");
+      expect(splunk).toHaveTextContent("# ALTIWARD_SPLUNK_INDEX=<an index>");
+      // The guide for the server that's running.
+      await waitFor(() => expect(within(splunk).getByRole("link", { name: "Splunk setup guide" }))
+        .toHaveAttribute("href", "https://github.com/Altiward/altiward/blob/server-v0.1.0/integrations/splunk/README.md#setup"));
+      expect(within(splunk).getByRole("button", { name: "Copy" })).toBeInTheDocument();
+      expect(screen.getByText("Microsoft Sentinel", { selector: "summary" })).toBeInTheDocument();
+    });
+
+    it("offers only the SIEMs that aren't connected", async () => {
+      renderView(fakeApi({ exports: vi.fn(async () => [failing, upToDate]) }));
+      expect(await screen.findByRole("heading", { name: "Connect another SIEM" })).toBeInTheDocument();
+      const offered = [...document.querySelectorAll(".siem-guide summary")].map((s) => s.textContent);
+      expect(offered).toHaveLength(1);
+      expect(offered[0]).not.toMatch(/Splunk|Sentinel/);
+    });
+
+    it("on Azure Container Apps, gives the commands for the app, and Sentinel's managed identity", async () => {
+      renderView(fakeApi({
+        exports: vi.fn(async () => []),
+        about: vi.fn(async () => ({
+          version: "0.7.0", oldest_supported_agent: "0.4", update_check: false,
+          platform: "azure-container-apps" as const, app: "altiward-app",
+        })),
+      }));
+      expect(await screen.findByText(/environment variables on the container app/)).toBeInTheDocument();
+      const sentinel = screen.getByText("Microsoft Sentinel", { selector: "summary" }).closest("details")!;
+      expect(sentinel).toHaveTextContent("az containerapp update --name altiward-app");
+      expect(sentinel).toHaveTextContent("ALTIWARD_SENTINEL_AUTH=managed-identity");
+      expect(sentinel).not.toHaveTextContent("CLIENT_SECRET");
+      const splunk = screen.getByText("Splunk", { selector: "summary" }).closest("details")!;
+      expect(splunk).toHaveTextContent("ALTIWARD_SPLUNK_HEC_TOKEN=secretref:splunk-hec-token");
     });
 
     it("lets only admins test or retry", async () => {

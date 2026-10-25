@@ -370,7 +370,10 @@ timeline shows the revoke.
 ## 4. Connect your SIEM
 
 Altiward sends every event to your SIEM in OCSF format. Set the variables for your SIEM in
-`.env` and run `docker compose up -d`. If your SIEM's certificate comes from your own CA,
+`.env` and run `docker compose up -d`. The console's **Settings › SIEM export** lists, for
+each SIEM not connected yet, the settings it needs, with lines to copy. It only shows them:
+SIEM settings stay with the server, so changing where events go takes access to the server,
+not just the console. If your SIEM's certificate comes from your own CA,
 put the CA's PEM file in `certs/` and set `ALTIWARD_TRUSTED_CAS_FILE` to
 `/etc/altiward/certs/<file>`: the server then trusts it alongside the public CAs. For syslog
 alone, `ALTIWARD_SYSLOG_CA_FILE` instead trusts only the CA you name.
@@ -404,7 +407,7 @@ last error, and **Retry now** sends at once after a fix.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/install/settings-siem-dark.png">
-  <img src="images/install/settings-siem-light.png" width="592" alt="Settings, SIEM export: Syslog, Up to date, nothing waiting, with the time of the last delivery, and a button to send a test event.">
+  <img src="images/install/settings-siem-light.png" width="592" alt="Settings, SIEM export: Syslog, Up to date, nothing waiting, with the time of the last delivery, and a button to send a test event. Below, Connect another SIEM, with Splunk and Microsoft Sentinel to expand.">
 </picture>
 
 If you stop sending to a SIEM, whatever was still queued for it stays in Postgres, and
