@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "event_id": "7c2e4a91-5b3d-4f6e-8a1c-9d0b2e4f6a83",
+  "type": "elevation.granted",
+  "session_id": "5d1c2b7a-8e4f-4a6b-9c3d-2e1f0a9b8c7d",
+  "timestamp": "2026-10-16T09:29:10.250Z",
+  "device": {
+    "serial": "C02XK0AAJGH5",
+    "hardware_uuid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+    "os_version": "27.0.1",
+    "agent_version": "0.5.0",
+    "privileges_version": "2.6.0"
+  },
+  "user": { "local_name": "jdoe", "upn": "jane.doe@example.com" },
+  "elevation": {
+    "reason": null,
+    "expires": "2026-10-16T10:29:10.250Z",
+    "source": "privileges"
+  },
+  "delayed": false,
+  "detail": {
+    "trigger": "privileges_renewal",
+    "renewed": true,
+    "observed_admin": true,
+    "verified": true,
+    "expires_basis": "PrivilegesRenewal",
+    "renewed_minutes": 60
+  }
+}

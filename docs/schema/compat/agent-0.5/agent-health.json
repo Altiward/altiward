@@ -27,7 +27,15 @@
       "system_extension_enabled": true,
       "admin_budget_minutes": null,
       "expiration_interval_minutes": 20,
-      "expiration_interval_max_minutes": null
+      "expiration_interval_max_minutes": null,
+      "expiry_capped": true,
+      "allow_privilege_renewal": false,
+      "auto_renewal_configured": false,
+      "post_change_action_on_grant_only": false,
+      "revoke_at_login": true,
+      "revoke_at_login_excluded_users": ["itadmin"],
+      "revoke_after_time_change": null,
+      "revoke_after_time_change_excluded_users": null
     },
     "integrity": {
       "code_signature": true,
@@ -35,6 +43,9 @@
       "privileges_hook": true,
       "privileges_timer": true,
       "privileges_tamper_protection": true,
+      "privileges_expiry_cap": true,
+      "privileges_give_back_hook": true,
+      "privileges_revoke_exclusions": true,
       "settings_managed": false
     },
     "persistence_unreadable": []
