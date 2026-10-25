@@ -309,10 +309,13 @@ behind to do it later; the tamper checks and the persistence snapshot are what l
 that. The key is usable from the first unlock after boot, with nobody signed in, and only
 in the session that made it, so the daemon makes it and only the daemon uses it. A key the
 Secure Enclave can't use while a throwaway key works (the store came from another Mac or a
-backup) is dropped and the Mac enrolls again. A file key and a Secure Enclave key have
-separate records, so agent 0.1 installed over this one finds no key it can't read and
-enrolls again with a file key. Where the Mac says its key is kept is its own claim: the
-server can't check it.
+backup) is dropped and the Mac enrols again. The store also records the serial and
+hardware UUID of the Mac that made the key, so a file key copied to another Mac (by
+Migration Assistant, a clone or a restore) is dropped there the same way, instead of
+signing as the first Mac; a key stored by an earlier agent is given this Mac's identity
+and stays enrolled. A file key and a Secure Enclave key have separate records, so agent
+0.1 installed over this one finds no key it can't read and enrols again with a file key.
+Where the Mac says its key is kept is its own claim: the server can't check it.
 
 **Privileges stays at the edge.** Altiward depends on a project it doesn't control, and
 must keep working when Privileges' timer is stopped or Privileges is removed. So expiry,

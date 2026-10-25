@@ -89,14 +89,15 @@ times, terminals and SSH addresses, who approved prompts, and screen sharing vie
 actions go there too, naming the person who made them.
 
 The server also raises an `agent.enrollment` event of its own each time a key enrols. Its
-state is `enrolled` for a Mac's first key, `pending` for a new key waiting for an admin's
-approval, and `replaced` for a new key that took the place of the active one without
-approval. It carries the Mac's serial, hardware UUID and agent version (from the agent's
-`User-Agent`), the new key's device ID, its SHA-256 fingerprint and where the Mac says it
-is kept, and the enrolment token's name (`token:` and a short fingerprint, never the
-token). When a key was active before, it also carries that key's device ID and storage and
-whether the two keys came from the same hardware UUID. It holds no public key. A Mac that
-sends its key again, as a retry, raises nothing new.
+state is `enrolled` for a Mac's first key, or its first after earlier ones were revoked
+with approval off, `pending` for a new key waiting for an admin's approval, and `replaced`
+for a new key that took the place of the active one without approval. It carries the Mac's
+serial, hardware UUID and agent version (from the agent's `User-Agent`), the new key's
+device ID, its SHA-256 fingerprint and where the Mac says it is kept, and the enrolment
+token's name (`token:` and a short fingerprint, never the token). When a key was active
+before, it also carries that key's device ID and storage and whether the two keys came
+from the same hardware UUID. It holds no public key. A Mac that sends its key again, as a
+retry, raises nothing new.
 
 In the example deployment, Caddy also asks Let's Encrypt for TLS certificates unless you
 provide your own. If you pull the image from the registry instead of loading the file,
@@ -175,16 +176,20 @@ security records ([Backups](install.md#backups)).
   removing the agent with `--purge` leaves nothing behind.
 - **The enrolment token** lets a Mac enrol, and does nothing else. It is in the MDM
   profile, so anyone on a Mac can read it. A new enrolment shows in **Enrollments**, where
-  an admin can revoke it, and reaches your SIEM as an `agent.enrollment` event. **Approve Macs that enrol again** is on by default: a new
-  key for a serial that enrolled before waits for approval, even after its earlier key
-  was revoked. An earlier active key stays valid until approval. Server 0.8.0 also enables
-  approval once for existing tenants; admins can explicitly turn it off afterwards.
-  With approval off, anyone with the shared token can replace an enrolled Mac's identity
-  by naming its serial, even when the earlier key is protected by the Secure Enclave.
-  The shared token cannot verify ownership of a serial enrolling for the first time.
-  Check new enrolments against independently verified inventory; per-device bootstrap
-  credentials are needed for stronger first-enrolment assurance. Changing the token
-  doesn't affect Macs already enrolled.
+  an admin can revoke it. It also reaches your SIEM as an `agent.enrollment` event.
+  **Approve Macs that enrol again** is on by default: a new key for a serial that enrolled
+  before waits for approval, even after its earlier key was revoked. An earlier active key
+  stays valid until approval. Server 0.8.0 also enables approval once for existing
+  tenants; admins can explicitly turn it off afterwards. A new key whose hardware UUID
+  differs from the earlier active key's waits for approval whatever the setting. With
+  approval off, anyone with the shared token can replace an enrolled Mac's identity by
+  naming its serial and hardware UUID, even when the earlier key is protected by the
+  Secure Enclave. The hardware UUID is the agent's own claim, not a secret, so that rule
+  catches a key made on another Mac, not someone who names the UUID. The shared token
+  cannot verify ownership of a serial enrolling for the first time. Check new enrolments
+  against independently verified inventory; per-device bootstrap credentials are needed
+  for stronger first-enrolment assurance. Changing the token doesn't affect Macs already
+  enrolled.
 - **Console and agent tokens** are kept in the server's `.env` file (keep it `chmod 600`).
   The server holds only their SHA-256 digests in memory and records each by a fingerprint,
   never the token.

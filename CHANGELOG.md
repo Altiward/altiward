@@ -16,7 +16,8 @@ Every section has the four headings below, with "None." under any that don't app
 Deploy this release's `corp.sap.privileges.plist` keys to your Privileges profile with the
 package: its `PostChangeExecutableChecksum` is this build's hook. With the old checksum,
 Privileges stops running the hook and Altiward raises "SAP Privileges no longer reports to
-Altiward".
+Altiward". Upgrade the server to 0.8.0 first, so it can tell an agent that its key belongs
+to another Mac.
 
 ### Breaking changes
 
@@ -81,8 +82,8 @@ None.
   Mac, the key's device ID, SHA-256 fingerprint and storage, the enrolment token's name and,
   when a key was active before, that key and whether the hardware UUID matched.
 - The enrolment token can no longer add Macs or keys without end. Each organisation may
-  enrol 1000 Macs the server hasn't seen before in an hour, and one Mac may enrol 5 keys in
-  24 hours; the server answers 429 with `Retry-After` and logs `enrolment rate limited`, and
+  add 1000 Macs it hasn't enrolled before in an hour, and one Mac may enrol 5 keys in 24
+  hours; the server answers 429 with `Retry-After` and logs `enrolment rate limited`, and
   the agent backs off. A Mac sending a key that is already enrolled is never refused. Set
   `ALTIWARD_ENROLL_NEW_MACS_PER_HOUR` and `ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY` in `.env`
   (`0` turns one off), or on the Azure container app; raise the first before enrolling more
@@ -114,6 +115,8 @@ None.
   in, **Sign out** and the server version show on every page (#112).
 - A rejected event whose `device.serial` isn't the signing Mac's carries `code`:
   `device_mismatch` in the ingest response. Other rejections have no `code`.
+- **Enrollments** shows, for a key waiting for approval, when the Mac last checked in with
+  its current key, and warns when the new key reports a different hardware UUID.
 
 ## Agent 0.5.0 - 2026-10-25
 

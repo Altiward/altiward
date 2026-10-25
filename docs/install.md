@@ -252,12 +252,34 @@ a new key for a serial that enrolled before waits for approval, including after 
 key was revoked. The current key keeps reporting until you approve the replacement.
 **Approve Macs that enrol again** should stay on ([step 6](#6-settings-worth-reviewing)).
 Turning it off lets anyone with the token replace an enrolled Mac's identity by naming
-its serial. Secure Enclave key protection does not prevent that replacement.
+its serial and hardware UUID. Neither is a secret, and Secure Enclave key protection does
+not prevent that replacement.
 
 Approval protects existing serials; the shared token does not verify that a serial enrolling
 for the first time belongs to the caller. Check new enrolments against your device inventory.
 Stronger first-enrolment assurance needs per-device bootstrap credentials or independently
 verified inventory.
+
+Each key that enrols also reaches your SIEM as an `agent.enrollment` event, so you don't
+have to watch **Enrollments**. It names the Mac, the new key's fingerprint and the token
+the Mac enrolled with, and its `state` says what happened:
+
+- `enrolled`: the Mac's first key, or its first after earlier ones were revoked with
+  approval off. Check these against your device inventory.
+- `pending`: a Mac that already had a key enrolled another, and the new one waits in
+  **Enrollments** for your approval. An active earlier key keeps reporting meanwhile.
+  Expect it after a reinstall or a replaced logic board. A new key from different hardware
+  than the active one always waits, even with approval off
+  ([step 6](#6-settings-worth-reviewing)).
+- `replaced`: a new key took the place of the active one without approval. It happens
+  only with approval off and the same hardware UUID.
+
+Alert on `pending` and `replaced`: they are Medium and High in the SIEM, and each means a
+Mac's key changed. When you didn't expect one, it may be someone using the enrolment token,
+so ask the Mac's owner before you approve it. When a key was active before, the event says
+whether the new key reported the same hardware UUID (`hardware_uuid_matches`). The
+[event schema](schema/README.md) lists its fields, and the
+[syslog guide](../integrations/syslog/README.md#starter-rules) has a starter rule.
 
 On a Mac with a Secure Enclave (Apple silicon, or an Intel Mac with a T2 chip) the key is
 made in the Secure Enclave, so it can't be copied to another Mac. Other Macs keep it in a
@@ -428,7 +450,7 @@ In the console, under **Settings › General**:
   back with a new key, for example after a reinstall or after its key was revoked, waits
   in **Enrollments** for your approval. Its earlier active key keeps working until you
   approve the new one. Turning this off allows anyone with the enrolment token to
-  replace an enrolled Mac's identity by naming its serial.
+  replace an enrolled Mac's identity by naming its serial and hardware UUID.
 
   Upgrading to server 0.8.0 enables approval once for every existing tenant, including
   tenants where it was off. Existing credentials and the other settings stay as they are.
@@ -438,15 +460,17 @@ In the console, under **Settings › General**:
 
   Whatever you choose, a new key whose hardware UUID differs from the Mac's active key waits
   for approval. The hardware UUID is what the agent says about itself, so this catches a key
-  made on another Mac, not someone who sets it by hand.
+  made on another Mac, not someone who sets it by hand. **Enrollments** warns when a key
+  waiting for approval reports a different hardware UUID, and shows when the Mac last
+  checked in with its current key.
 - **Alert when a Mac stops checking in.** Hours without a check-in before Altiward raises
   an alert. The default of 72 rides out a weekend with laptops closed.
 
 Two more settings go in `.env`; `0` turns one off:
 
-- **`ALTIWARD_ENROLL_NEW_MACS_PER_HOUR`** (default 1000). How many Macs the server hasn't
-  seen before may enrol in an hour. Raise it if you roll the agent out to more Macs than that
-  in an hour; the rest are refused and try again later.
+- **`ALTIWARD_ENROLL_NEW_MACS_PER_HOUR`** (default 1000). How many Macs the organisation
+  hasn't enrolled before may enrol in an hour. Raise it if you roll the agent out to more
+  Macs than that in an hour; the rest are refused and try again later.
 - **`ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY`** (default 5). How many keys one Mac may enrol in
   24 hours, in any status. It stops the enrolment token piling keys onto one serial.
 
@@ -460,7 +484,7 @@ report and never raises a "not checking in" alert.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/install/enrollments-dark.png">
-  <img src="images/install/enrollments-light.png" width="720" alt="Enrollments in the console: each key shows its fingerprint and whether it is kept in the Secure Enclave, in a file, or not reported. A Mac waiting for approval is selected, with Approve and Reject buttons and a note that it enrolled again with a new key.">
+  <img src="images/install/enrollments-light.png" width="720" alt="Enrollments in the console: each key shows its fingerprint and whether it is kept in the Secure Enclave, in a file, or not reported. A Mac waiting for approval is selected, with Approve and Reject buttons, its hardware UUID, a note that it enrolled again with a new key and when it last checked in with its current key.">
 </picture>
 
 **Activity** keeps every change made in the console forever, and sends each one to your
@@ -848,7 +872,8 @@ persistence snapshot: (none yet)
   `EnrollmentToken` isn't the part after `yourcompany=` in `ALTIWARD_AGENT_TOKENS`. From
   the Mac, `curl -sSI https://<agent hostname>/` should answer `HTTP/2 404`: only the
   agent's own paths answer there. A connection or certificate error means the Mac can't
-  reach the server.
+  reach the server. If the server's logs show `enrolment rate limited` for its serial, it
+  is over an [enrolment limit](#6-settings-worth-reviewing) and the agent tries again later.
 - A device ID but **queued events** that never go down: the Mac enrolled but can't deliver.
   If **Approve Macs that enrol again** is on, or the Mac's key came from different hardware
   than its earlier one, look in **Enrollments** for a Mac waiting for approval.

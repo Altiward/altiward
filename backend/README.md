@@ -2,17 +2,18 @@
 
 `altiward-api` is one Go binary. It handles agent ingestion, serves the read API behind
 the console, and runs the SIEM export workers and the monitor that raises `agent.silent`
-when a Mac stops checking in.
+when a Mac stops checking in. The backend raises one other event itself, `agent.enrollment`,
+when a Mac enrols a key. Agents can't send either: the API refuses both types.
 
 | Package | Role |
 | --- | --- |
 | `internal/event` | Core event type, strict decoding, validation |
 | `internal/session` | Pure reducers: events → elevation sessions and device records |
 | `internal/store` | `Store` interface; Postgres (production) and in-memory (tests, dev) implementations |
-| `internal/api` | HTTP handlers |
+| `internal/api` | HTTP handlers. `enrollment_event.go` builds the `agent.enrollment` event stored when a key enrols |
 | `internal/ocsf` | Mapping to OCSF 1.9.0 for export |
 | `internal/export` | Outbox worker plus Splunk, Sentinel and syslog (CEF) sinks |
-| `internal/monitor` | Events the backend raises itself: `agent.silent` for a Mac that stops checking in |
+| `internal/monitor` | Raises `agent.silent` for a Mac that stops checking in |
 | `internal/retention` | Removes audit entries past `ALTIWARD_AUDIT_RETENTION_DAYS`, daily |
 | `internal/diagnose` | The `altiward-api diagnose` support report |
 | `internal/release` | `OldestSupportedAgent` and the agent version check |

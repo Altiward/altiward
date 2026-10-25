@@ -39,7 +39,8 @@ Header: `CEF:0|Altiward|Altiward|<agent version>|<signature>|<name>|<severity>|`
 
 - **Signature** is the finding's analytic for detections (`altiward.admin_out_of_band`,
   `altiward.rights_after_expiry`, `altiward.tamper.<check>`, `altiward.agent_silent`,
-  and so on). Otherwise it is the event type. Write rules against it.
+  and so on). Otherwise it is the event type, such as `agent.enrollment`. Write rules
+  against it.
 - **Name** is the finding's title, or the OCSF type, such as
   `User Access Management: Assign Privileges`.
 - **Severity** is 1 (Informational), 3 (Low), 5 (Medium) or 8 (High).
@@ -85,6 +86,10 @@ sign-outs are OCSF Authentication records, with the event types `console.sign_in
   Altiward removed them. Severity 8 means it couldn't.
 - **Tampering:** signature starting `altiward.tamper.` with `act=Create`. The matching
   `act=Close` with the same `cs5` means it was fixed.
+- **Keys enrolled:** signature `agent.enrollment`, named `API Activity: Create`. Severity 1
+  is a Mac's first key, 5 a new key waiting for approval and 8 a key that replaced the
+  previous one without approval. Alert on 5 and 8. `dvchost` is the serial, `deviceExternalId`
+  the hardware UUID the Mac claimed, and `msg` says which of the three it was.
 - **Macs that stopped checking in:** signature `altiward.agent_silent`. The Mac checking in
   again sends `act=Close` with the same `cs5`.
 - **Use of a permanent admin account:** signature `admin.permanent_use`. `act=Logon` is a
