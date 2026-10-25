@@ -93,23 +93,6 @@ None.
   Privileges reports give-backs, Privileges spares permanent admins), and a Mac's
   **Expires after** shows the cap on what a user picks (`Up to 60 min`), and says when MDM
   doesn't set it.
-
-## Server 0.6.0 - unreleased
-
-### Upgrade order
-
-None needed beyond the usual: upgrade the server before the agents.
-
-### Breaking changes
-
-None.
-
-### Security
-
-None.
-
-### Changes
-
 - The console says why a value is missing instead of showing a dash (#101): "Not set" for a
   Privileges setting MDM doesn't set, "Not reported" for what an older agent doesn't send,
   "None given" for a session without a reason, "Not yet" for a session still open or an
