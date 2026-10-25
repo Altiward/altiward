@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -219,6 +220,45 @@ func suite(t *testing.T, newStore func(t *testing.T, sink string) Store) {
 		got := mine(health.Timestamp.Add(-time.Hour))
 		if len(got) != 1 || !got[0].Silent() || !got[0].LastSeenAt.Equal(health.Timestamp) {
 			t.Fatalf("open alert missing: %+v", got)
+		}
+	})
+
+	t.Run("a server-raised event does not create a device", func(t *testing.T) {
+		s, tenant, sink := setup(t)
+		enrolled := testfixture.Event(t, "agent-enrollment-enrolled")
+		res, err := s.Ingest(ctx, tenant, []event.Event{enrolled}, now)
+		if err != nil || len(res.Accepted) != 1 {
+			t.Fatalf("res = %+v err = %v", res, err)
+		}
+		if devices, err := s.ListDevices(ctx, tenant); err != nil || len(devices) != 0 {
+			t.Fatalf("a Mac the server hasn't heard from got a device: %+v, %v", devices, err)
+		}
+		queued, err := s.ClaimExports(ctx, sink, 10, time.Minute, now)
+		if err != nil || len(queued) != 1 || queued[0].Event.EventID != enrolled.EventID || queued[0].Event.Type != event.AgentEnrollment {
+			t.Fatalf("not queued for export: %+v, %v", queued, err)
+		}
+
+		// A Mac that has checked in keeps its device exactly as it was.
+		_, _, _, health := fixtures(t)
+		if _, err := s.Ingest(ctx, tenant, []event.Event{health}, now); err != nil {
+			t.Fatal(err)
+		}
+		before, _ := s.ListDevices(ctx, tenant)
+		pending := testfixture.Event(t, "agent-enrollment-pending")
+		if res, err = s.Ingest(ctx, tenant, []event.Event{pending}, now.Add(time.Hour)); err != nil || len(res.Accepted) != 1 {
+			t.Fatalf("res = %+v err = %v", res, err)
+		}
+		after, _ := s.ListDevices(ctx, tenant)
+		beforeJSON, _ := json.Marshal(before)
+		afterJSON, _ := json.Marshal(after)
+		if len(before) != 1 || string(beforeJSON) != string(afterJSON) {
+			t.Fatalf("device changed:\n%s\n%s", beforeJSON, afterJSON)
+		}
+		// The first claim's lease has run out by now, so the whole queue comes back: the
+		// enrolment, the health event and the pending enrolment, in the order they arrived.
+		queued, _ = s.ClaimExports(ctx, sink, 10, time.Minute, now.Add(time.Hour))
+		if len(queued) != 3 || queued[2].Event.EventID != pending.EventID {
+			t.Fatalf("pending enrolment not queued for export: %d items", len(queued))
 		}
 	})
 

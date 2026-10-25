@@ -213,6 +213,9 @@ func (p *Postgres) applyDevice(ctx context.Context, tx pgx.Tx, tenantID string, 
 		tenantID, e.Device.Serial).Scan(&state)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
+		if e.Type.IsServerRaised() {
+			return nil // no check-in, so no device yet; the event is stored and exported all the same
+		}
 	case err != nil:
 		return fmt.Errorf("load device: %w", err)
 	default:

@@ -242,3 +242,13 @@ func TestSweepSkipsRetiredMacs(t *testing.T) {
 		t.Fatalf("raised = %d, err = %v for a Mac whose credentials are all revoked", raised, err)
 	}
 }
+
+// The export outbox and the SIEM dedupe an alert by its event ID, so how the ID is derived
+// must not change.
+func TestRaisedEventIDsAreStable(t *testing.T) {
+	d, seen := quietDevice(t)
+	silent, _ := monitor.Check(d, seen.Add(100*time.Hour), time.Hour)
+	if want := "3d87c4bd-d502-50eb-8f02-c12fdd45687f"; silent.EventID != want {
+		t.Fatalf("silent event ID = %s, want %s", silent.EventID, want)
+	}
+}
