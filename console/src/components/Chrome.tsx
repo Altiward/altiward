@@ -47,6 +47,12 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
   return <div className="empty"><strong>{title}</strong>{children && <span>{children}</span>}</div>;
 }
 
+/** A value that's missing, as a word that says why ("Not set", "Not reported") in secondary
+ *  text. A word, not a dash: a screen reader reads it, and it says what to do about it. */
+export function Missing({ children }: { children: string }) {
+  return <span className="secondary">{children}</span>;
+}
+
 export function Banner({ children, kind = "error" }: { children: ReactNode; kind?: "error" | "info" }) {
   return <div className={`banner${kind === "info" ? " info" : ""}`} role={kind === "error" ? "alert" : "status"}>{children}</div>;
 }

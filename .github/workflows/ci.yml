@@ -73,6 +73,8 @@ jobs:
           cache-dependency-path: console/package-lock.json
       - name: Console brand assets match their sources
         run: make brand-check
+      - name: No em dashes in any tracked file
+        run: make em-dash-check
       - run: npm --prefix console ci
       - run: npm --prefix console run typecheck
       - run: npm --prefix console test

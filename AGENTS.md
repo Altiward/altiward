@@ -12,7 +12,8 @@ Start with README.md; the agent's trust model is in agent/README.md (Design note
 
 - `make test`: Swift, Go and console unit tests (run `make console-install` once first).
   `make test-db`: adds the Postgres store suite (Docker).
-- `make lint`: gofmt + go vet. CI runs both, `go test -race`, the console build,
+- `make lint`: gofmt + go vet, and no em dashes in any tracked file
+  (`scripts/check-em-dashes.sh`). CI runs all three, `go test -race`, the console build,
   `make notices-check`, `make package package-verify` and `scripts/test-upgrade.sh`
   (`make test-upgrade` locally: installs a release in Docker and upgrades it).
 - Admins set everything in `.env`: a new server setting gets a `${VAR:-}` line in

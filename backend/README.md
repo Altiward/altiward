@@ -92,21 +92,21 @@ out-of-band session).
 | Variable | Default | |
 | --- | --- | --- |
 | `ALTIWARD_LISTEN_ADDR` | `:8080` | |
-| `ALTIWARD_DATABASE_URL` | — | Postgres URL. Unset means the in-memory store (development only). Migrations run on start. |
-| `ALTIWARD_AGENT_TOKENS` | — | Enrollment tokens, `tenant=token,tenant=token` (tokens ≥ 16 chars). They only enroll. |
-| `ALTIWARD_CONSOLE_TOKENS` | — | Same format |
+| `ALTIWARD_DATABASE_URL` | None | Postgres URL. Unset means the in-memory store (development only). Migrations run on start. |
+| `ALTIWARD_AGENT_TOKENS` | None | Enrollment tokens, `tenant=token,tenant=token` (tokens ≥ 16 chars). They only enroll. |
+| `ALTIWARD_CONSOLE_TOKENS` | None | Same format |
 | `ALTIWARD_EXPORT_INTERVAL` | `10s` | How often export workers poll |
-| `ALTIWARD_AUDIT_RETENTION_DAYS` | — | Remove audit entries older than this, daily; at least 365. Unset or `0` keeps them forever. Entries still waiting for export stay until sent, and the database refuses to delete any younger than 365 days. |
+| `ALTIWARD_AUDIT_RETENTION_DAYS` | None | Remove audit entries older than this, daily; at least 365. Unset or `0` keeps them forever. Entries still waiting for export stay until sent, and the database refuses to delete any younger than 365 days. |
 | `ALTIWARD_UPDATE_CHECK` | `true` | `false` stops the console's browser asking `api.github.com` for newer releases, and drops it from the console's `connect-src`. The server never asks. |
-| `ALTIWARD_CONSOLE_DIR` | — | The built console (`console/dist`) to serve from the API's origin. Unset means API only. Start fails if it has no `index.html`. |
-| `ALTIWARD_OIDC_ISSUER` | — | The identity provider's issuer URL. Turns on console single sign-on; console tokens become break-glass logins. |
-| `ALTIWARD_OIDC_CLIENT_ID`, `_CLIENT_SECRET` | — | The app registration. The secret may be empty for a public client. |
-| `ALTIWARD_CONSOLE_URL` | — | Required with single sign-on: the console's URL. The redirect URL to register is this plus `/v1/auth/callback`. https, or http on localhost. |
-| `ALTIWARD_OIDC_ADMIN_GROUPS`, `_OPERATOR_GROUPS`, `_VIEWER_GROUPS` | — | Comma-separated group IDs or names, as the groups claim carries them. At least one. |
+| `ALTIWARD_CONSOLE_DIR` | None | The built console (`console/dist`) to serve from the API's origin. Unset means API only. Start fails if it has no `index.html`. |
+| `ALTIWARD_OIDC_ISSUER` | None | The identity provider's issuer URL. Turns on console single sign-on; console tokens become break-glass logins. |
+| `ALTIWARD_OIDC_CLIENT_ID`, `_CLIENT_SECRET` | None | The app registration. The secret may be empty for a public client. |
+| `ALTIWARD_CONSOLE_URL` | None | Required with single sign-on: the console's URL. The redirect URL to register is this plus `/v1/auth/callback`. https, or http on localhost. |
+| `ALTIWARD_OIDC_ADMIN_GROUPS`, `_OPERATOR_GROUPS`, `_VIEWER_GROUPS` | None | Comma-separated group IDs or names, as the groups claim carries them. At least one. |
 | `ALTIWARD_OIDC_GROUPS_CLAIM` | `groups` | The claim holding groups; `roles` for Entra app roles |
 | `ALTIWARD_OIDC_SCOPES` | `openid email profile` | Okta needs `groups` added |
 | `ALTIWARD_OIDC_TENANT` | the only tenant | The Altiward tenant people who sign in belong to. Required when the tokens name more than one. |
-| `ALTIWARD_SPLUNK_HEC_URL`, `_HEC_TOKEN`, `_INDEX` | — | Enables the Splunk sink |
+| `ALTIWARD_SPLUNK_HEC_URL`, `_HEC_TOKEN`, `_INDEX` | None | Enables the Splunk sink |
 | `ALTIWARD_SENTINEL_ENDPOINT`, `_DCR_ID`, `_STREAM`, `_TENANT_ID`, `_CLIENT_ID`, `_CLIENT_SECRET` | stream `Custom-AltiwardOCSF` | Enables the Sentinel sink |
 | `ALTIWARD_SYSLOG_ADDR`, `_TLS`, `_CA_FILE`, `_FORMAT`, `_FRAMING` | TLS, `cef`, `octet` | Enables the syslog sink; see [integrations/syslog](../integrations/syslog/README.md) |
 

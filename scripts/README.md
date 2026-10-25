@@ -10,6 +10,7 @@ Run these from the repository root, or use the corresponding Make target.
 | [`azure-template.sh`](azure-template.sh) | Move the Deploy to Azure template, and its buttons, to a server release |
 | [`test-azure-proxy.sh`](test-azure-proxy.sh) | Check the Deploy to Azure template's console allowlist in Docker |
 | [`agent-smoke.mjs`](agent-smoke.mjs) | Act as one Mac against a running server: enroll, a signed event and a long poll |
+| [`check-em-dashes.sh`](check-em-dashes.sh) | Fail if a tracked file has an em dash, which the writing rules don't allow (`make em-dash-check`, part of `make lint`) |
 | [`third-party-notices.mjs`](third-party-notices.mjs) | Generate or check shipped dependency notices and the licence allowlist |
 | [`brand/generate.sh`](brand/generate.sh) | Render committed app icons, Installer backgrounds, avatars and the social preview on macOS |
 | [`brand/export.sh`](brand/export.sh) | Export canonical assets to an explicit consumer directory, or check its copies |

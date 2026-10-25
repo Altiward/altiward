@@ -13,17 +13,20 @@ DEV_ENV := ALTIWARD_LISTEN_ADDR=127.0.0.1:8080 \
 	ALTIWARD_AGENT_TOKENS=dev=dev-agent-token-0001 \
 	ALTIWARD_CONSOLE_TOKENS=dev=dev-console-token-001
 
-.PHONY: help test lint agent-build agent-test backend-build backend-test test-db docker-check go-check node-check db db-down demo demo-down run-api run-api-console notices notices-check image test-upgrade azure-template dev-hook dev-heartbeat package package-verify app-icon console-install console-dev console-test console-build console-seed docs-screenshots brand-sync brand-check
+.PHONY: help test lint em-dash-check agent-build agent-test backend-build backend-test test-db docker-check go-check node-check db db-down demo demo-down run-api run-api-console notices notices-check image test-upgrade azure-template dev-hook dev-heartbeat package package-verify app-icon console-install console-dev console-test console-build console-seed docs-screenshots brand-sync brand-check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
 
 test: agent-test backend-test console-test ## Run all unit tests (no database needed)
 
-lint: go-check ## gofmt + go vet
+lint: go-check em-dash-check ## gofmt + go vet, and no em dashes
 	@test -z "$$(gofmt -l backend integrations deploy/sentinel)" || (gofmt -l backend integrations deploy/sentinel; echo "run gofmt -w"; exit 1)
 	go vet ./...
 	cd integrations && go vet ./...
+
+em-dash-check: ## Fail if a tracked file has an em dash (the writing rules allow none)
+	@scripts/check-em-dashes.sh
 
 agent-build: ## Build altiward-agent and altiward-hook (debug)
 	swift build $(SWIFT_FLAGS)

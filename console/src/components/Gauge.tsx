@@ -1,9 +1,10 @@
 import { formatDuration, gauge } from "../format";
+import { Missing } from "./Chrome";
 
 /** Time used against time allowed, with a mark at the allowance. Orange (elevated-ink)
  *  while admin is held, muted once ended, crimson past expiry. */
 export function Gauge({ actual, allowed, ended }: { actual: number | null; allowed: number | null; ended?: boolean }) {
-  if (actual == null) return <span className="secondary">—</span>;
+  if (actual == null) return <Missing>Unknown</Missing>;
   const g = gauge(actual, allowed);
   const text = allowed == null ? formatDuration(actual) : `${formatDuration(actual)} of ${formatDuration(allowed)}`;
   const label = allowed == null ? `${text}, no expiry known` : `${text}${g.overrun ? ", past expiry" : ""}`;

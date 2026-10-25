@@ -18,7 +18,7 @@ go.work.sum
 node_modules/
 console/dist/
 
-# Local configuration and secrets — signing material never lives in the repo
+# Local configuration and secrets: signing material never lives in the repo
 .env
 .env.*
 signing.key
