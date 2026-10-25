@@ -207,7 +207,10 @@ Create these in your MDM and scope them to a pilot group first.
      nobody granted, counted from when the agent first saw them. A claim sent from
      another person's account (neither the user nor root) is refused and sent the same way,
      and a caller who sends more than 5 grant claims in a minute is ignored and logged on
-     the Mac, not sent, so a flood can't fill the outbox.
+     the Mac, not sent, so a flood can't fill the outbox. Give-back claims have an allowance
+     of their own, 5 a minute from one caller, in every mode: past it, a give-back that
+     ends an open session is still recorded, and any other is ignored and logged the same
+     way.
    - A claim through the hook renews a Privileges session only when fresh log evidence
      confirms it, that is, the log shows Privileges granted the rights again. Otherwise,
      once the minute has passed (or at once if the log becomes unavailable while the claim

@@ -159,6 +159,8 @@ public final class ElevationTracker: Sendable {
     let untrackedSince = OSAllocatedUnfairLock<[String: Date]>(initialState: [:])
     /// When each caller's recent grant claims arrived, by uid (``submit(_:callerUID:)``).
     let recentClaims = OSAllocatedUnfairLock<[UInt32: [Date]]>(initialState: [:])
+    /// When each caller's recent give-back claims arrived, by uid, counted apart from grants.
+    let recentGiveBacks = OSAllocatedUnfairLock<[UInt32: [Date]]>(initialState: [:])
 
     public init(store: AgentStore, environment: AgentEnvironment) {
         self.store = store
@@ -192,6 +194,9 @@ public final class ElevationTracker: Sendable {
             case callerMismatch(callerUID: UInt32)
             /// More grant claims from one caller in a minute than ``ElevationTracker/maxClaimsPerMinute``.
             case tooManyClaims
+            /// A give-back that wouldn't end a session, from a caller that has sent more than
+            /// ``ElevationTracker/maxGiveBacksPerMinute`` give-back claims in a minute.
+            case tooManyGiveBacks
             /// A grant or renewal claim recorded without Privileges' log on a Mac where the
             /// agent has read that log before. Losing the log is how a hand-run claim would
             /// get past the check, so it is reported.
@@ -214,6 +219,8 @@ public final class ElevationTracker: Sendable {
                 "a claim for \(user) sent by a process of user ID \(callerUID), who is neither \(user) nor root"
             case .tooManyClaims:
                 "more than \(ElevationTracker.maxClaimsPerMinute) grant claims in a minute from one caller; this one for \(user) was ignored"
+            case .tooManyGiveBacks:
+                "more than \(ElevationTracker.maxGiveBacksPerMinute) give-back claims in a minute from one caller; this one for \(user) would end no session, so it was ignored"
             case .privilegesLogLost:
                 "Privileges' log was available on this Mac before and isn't now"
             }
@@ -238,10 +245,11 @@ public final class ElevationTracker: Sendable {
 
     /// ``record(_:callerUID:)``, with `grantDetail` added to a grant's event. When
     /// `alsoQueue` makes an event from the one recorded, it is queued after it in the same
-    /// transaction.
+    /// transaction. With `endingOnly`, a give-back is recorded only when it ends an open
+    /// session, and otherwise throws `tooManyGiveBacks`, even where it would be refused.
     func record(
         _ invocation: HookInvocation, callerUID: UInt32?, grantDetail: [String: JSONValue],
-        alsoQueue: (AltiwardEvent) -> AltiwardEvent?
+        endingOnly: Bool = false, alsoQueue: (AltiwardEvent) -> AltiwardEvent?
     ) throws -> AltiwardEvent {
         let device = env.device()
         let user = UserInfo(localName: invocation.user, upn: env.config.upn(for: invocation.user))
@@ -266,9 +274,12 @@ public final class ElevationTracker: Sendable {
                 let existing = try store.openSession(user: invocation.user)
                 // A give-back while still admin would close the session, and a grant claimed
                 // next would find none to replace. Checked before any write.
-                if let open = existing, open.source == .outOfBand, observedAdmin,
-                    env.config.outOfBandEnforcement == .enforce
-                {
+                let stillAdmin =
+                    existing?.source == .outOfBand && observedAdmin && env.config.outOfBandEnforcement == .enforce
+                if endingOnly, existing == nil || stillAdmin {
+                    throw ClaimRefused(user: invocation.user, reason: .tooManyGiveBacks)
+                }
+                if stillAdmin {
                     throw ClaimRefused(user: invocation.user, reason: .stillAdmin)
                 }
                 if existing == nil { detail["orphan"] = true }

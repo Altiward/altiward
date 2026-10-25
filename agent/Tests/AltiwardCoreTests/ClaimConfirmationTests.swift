@@ -165,6 +165,57 @@ struct ClaimConfirmationTests {
             return
         }
     }
+
+    @Test func pastTheGiveBackAllowanceOnlyAGiveBackThatEndsASessionIsRecorded() throws {
+        let (tracker, store) = try tracker(availability: .unavailable("x"))
+        admins.set(["jdoe"])
+        _ = try tracker.submit(claim(), callerUID: 501)
+        for _ in 0..<ElevationTracker.maxGiveBacksPerMinute {
+            _ = try tracker.submit(claim("mallory", .user), callerUID: 501)
+        }
+        let before = try queued(store).count
+        #expect {
+            try tracker.submit(claim("mallory", .user), callerUID: 501)
+        } throws: { error in
+            (error as? ElevationTracker.ClaimRefused)?.reason == .tooManyGiveBacks
+        }
+        #expect(try queued(store).count == before)
+        // A real give-back past the allowance still ends the session.
+        admins.set([])
+        guard case .recorded(let event) = try tracker.submit(claim("jdoe", .user), callerUID: 501) else {
+            Issue.record("expected .recorded")
+            return
+        }
+        #expect(event.type == .elevationRevoked)
+        #expect(event.detail["orphan"] == nil)
+        #expect(try store.openSession(user: "jdoe") == nil)
+        // The allowance doesn't touch grant claims, and refills after a minute.
+        guard case .recorded = try tracker.submit(claim(), callerUID: 501) else {
+            Issue.record("expected .recorded")
+            return
+        }
+        clock.advance(61)
+        guard case .recorded = try tracker.submit(claim("mallory", .user), callerUID: 501) else {
+            Issue.record("expected .recorded")
+            return
+        }
+    }
+
+    @Test func pastTheGiveBackAllowanceAnotherUsersGiveBackIsNotReported() throws {
+        let (tracker, store) = try tracker(userID: { $0 == "jdoe" ? 501 : nil })
+        for _ in 0..<ElevationTracker.maxGiveBacksPerMinute {
+            #expect(throws: ElevationTracker.ClaimRefused.self) {
+                try tracker.submit(claim("jdoe", .user), callerUID: 502)
+            }
+        }
+        #expect(tampers(try queued(store)).count == ElevationTracker.maxGiveBacksPerMinute)
+        #expect {
+            try tracker.submit(claim("jdoe", .user), callerUID: 502)
+        } throws: { error in
+            (error as? ElevationTracker.ClaimRefused)?.reason == .tooManyGiveBacks
+        }
+        #expect(tampers(try queued(store)).count == ElevationTracker.maxGiveBacksPerMinute)
+    }
 }
 
 /// What Privileges' daemon and system extension logged, as the test writes it.
@@ -587,6 +638,27 @@ extension ClaimConfirmationTests {
         #expect(added.first?.detail["check"] == .string("grant_claim"))
         #expect(added.first?.detail["outcome"] == .string("refused"))
         #expect(added.first?.detail["kind"] == .string("give_back"))
+        #expect(try store.openSession(user: "jdoe")?.source == .outOfBand)
+    }
+
+    @Test func pastTheGiveBackAllowanceAGiveBackWhileStillAdminIsNotReported() throws {
+        let (tracker, store) = try resolving(.enforce)
+        admins.set(["jdoe", "itadmin"])
+        _ = try tracker.heartbeat()
+        let before = try queued(store).count
+        for _ in 0..<ElevationTracker.maxGiveBacksPerMinute {
+            #expect(throws: ElevationTracker.ClaimRefused.self) {
+                try tracker.submit(claim("jdoe", .user), callerUID: 501)
+            }
+        }
+        let reported = try queued(store).count
+        #expect(reported - before == ElevationTracker.maxGiveBacksPerMinute)
+        #expect {
+            try tracker.submit(claim("jdoe", .user), callerUID: 501)
+        } throws: { error in
+            (error as? ElevationTracker.ClaimRefused)?.reason == .tooManyGiveBacks
+        }
+        #expect(try queued(store).count == reported)
         #expect(try store.openSession(user: "jdoe")?.source == .outOfBand)
     }
 
