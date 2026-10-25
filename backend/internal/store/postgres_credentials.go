@@ -58,6 +58,9 @@ func (p *Postgres) Enroll(ctx context.Context, c DeviceCredential) (EnrollResult
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return err
 		}
+		if hasActive {
+			res.Previous = &active
+		}
 		settings, err := tenantSettings(ctx, tx, c.TenantID)
 		if err != nil {
 			return err

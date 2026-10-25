@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -9,15 +10,22 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Altiward/altiward/backend/internal/api"
 	"github.com/Altiward/altiward/backend/internal/auth"
+	"github.com/Altiward/altiward/backend/internal/event"
+	"github.com/Altiward/altiward/backend/internal/store"
 	"github.com/Altiward/altiward/backend/internal/testfixture"
 )
 
@@ -31,11 +39,21 @@ type agent struct {
 	deviceID string
 	status   string
 	skew     time.Duration // added to the server's clock when signing
+
+	// What the Mac says when it enrols. Left empty, the hardware UUID is "HW-" and the
+	// serial, and the key storage and User-Agent are left out.
+	hardwareUUID, keyStorage, userAgent string
 }
 
 func enrollAgent(t *testing.T, h http.Handler, serial string) *agent {
 	t.Helper()
-	a := &agent{h: h, key: newKey(t)}
+	return enrollAs(t, &agent{h: h, key: newKey(t)}, serial)
+}
+
+// enrollAs enrolls a, which must say what it needs to before enrolling, and fails the test
+// unless the server accepts it.
+func enrollAs(t *testing.T, a *agent, serial string) *agent {
+	t.Helper()
 	rec, out := a.enroll(t, serial)
 	if rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
 		t.Fatalf("enroll: %d %s", rec.Code, rec.Body)
@@ -50,9 +68,29 @@ func (a *agent) enroll(t *testing.T, serial string) (*httptest.ResponseRecorder,
 	if err != nil {
 		t.Fatal(err)
 	}
-	return do(t, a.h, "POST", "/v1/agent/enroll", agentToken, map[string]any{
+	body := map[string]any{
 		"serial": serial, "hardware_uuid": "HW-" + serial, "public_key": base64.StdEncoding.EncodeToString(spki),
-	})
+	}
+	if a.hardwareUUID != "" {
+		body["hardware_uuid"] = a.hardwareUUID
+	}
+	if a.keyStorage != "" {
+		body["key_storage"] = a.keyStorage
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/v1/agent/enroll", bytes.NewReader(raw))
+	req.Header.Set("Authorization", "Bearer "+agentToken)
+	if a.userAgent != "" {
+		req.Header.Set("User-Agent", a.userAgent)
+	}
+	rec := httptest.NewRecorder()
+	a.h.ServeHTTP(rec, req)
+	var out map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	return rec, out
 }
 
 func (a *agent) post(t *testing.T, body []byte) (*httptest.ResponseRecorder, map[string]any) {
@@ -317,5 +355,270 @@ func TestRevokeCredential(t *testing.T) {
 	wantCode(t, rec, out, http.StatusUnauthorized, "credential_invalid")
 	if rec, _ := do(t, h, "POST", "/v1/enrollments/not-a-uuid/revoke", consoleToken, nil); rec.Code != 404 {
 		t.Fatalf("bad id: %d", rec.Code)
+	}
+}
+
+// newServerWithQueue is newServer with its store and one SIEM sink exposed, so a test can
+// read the events the server queued for export.
+func newServerWithQueue(t *testing.T) (http.Handler, *store.Memory) {
+	t.Helper()
+	st := store.NewMemory([]string{"splunk"})
+	tokens, err := auth.Parse("acme="+agentToken, "acme="+consoleToken+",other="+otherConsole)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := serverNow(t)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	return api.New(st, tokens, log, func() time.Time { return now }), st
+}
+
+// queuedEnrollments returns the agent.enrollment events queued for export, oldest first.
+func queuedEnrollments(t *testing.T, st store.Store) []event.Event {
+	t.Helper()
+	queued, err := st.ClaimExports(context.Background(), "splunk", 100, 0, serverNow(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := []event.Event{}
+	for _, item := range queued {
+		if item.Event.Type == event.AgentEnrollment {
+			out = append(out, item.Event.Event)
+		}
+	}
+	return out
+}
+
+// publicKeyFingerprint is how the test says what the event's key_fingerprint should be:
+// the lower-case hex SHA-256 of the key's SubjectPublicKeyInfo DER.
+func publicKeyFingerprint(t *testing.T, k *ecdsa.PrivateKey) string {
+	t.Helper()
+	spki, err := x509.MarshalPKIXPublicKey(&k.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(spki)
+	return fmt.Sprintf("%x", sum)
+}
+
+// agentTokenActor is the audit name of the agent enrollment token: "token:" and the first
+// 8 hex digits of its SHA-256.
+func agentTokenActor() string {
+	sum := sha256.Sum256([]byte(agentToken))
+	return fmt.Sprintf("token:%x", sum[:4])
+}
+
+func TestEnrollRaisesEnrolledEvent(t *testing.T) {
+	h, st := newServerWithQueue(t)
+	a := enrollAs(t, &agent{h: h, key: newKey(t), keyStorage: "secure_enclave", userAgent: "altiward-agent/0.8.0"}, fixtureSerial)
+
+	got := queuedEnrollments(t, st)
+	if len(got) != 1 {
+		t.Fatalf("%d agent.enrollment events queued, want 1", len(got))
+	}
+	e := got[0]
+	if err := e.Validate(serverNow(t)); err != nil {
+		t.Fatalf("invalid event: %v", err)
+	}
+	if want := event.RaisedID("acme/enrollment/" + a.deviceID); e.EventID != want {
+		t.Errorf("event_id = %s, want %s", e.EventID, want)
+	}
+	if !e.Timestamp.Equal(serverNow(t)) || e.SessionID != nil || e.User != nil || e.Elevation != nil || e.Delayed {
+		t.Errorf("event = %+v", e)
+	}
+	wantDevice := event.Device{Serial: fixtureSerial, HardwareUUID: "HW-" + fixtureSerial, OSVersion: "", AgentVersion: "0.8.0"}
+	if e.Device != wantDevice {
+		t.Errorf("device = %+v, want %+v", e.Device, wantDevice)
+	}
+	wantDetail := map[string]any{
+		"state":           "enrolled",
+		"device_id":       a.deviceID,
+		"key_fingerprint": publicKeyFingerprint(t, a.key),
+		"key_storage":     "secure_enclave",
+		"token":           agentTokenActor(),
+	}
+	if !reflect.DeepEqual(e.Detail, wantDetail) {
+		t.Errorf("detail = %v, want %v", e.Detail, wantDetail)
+	}
+}
+
+func TestReenrollRaisesPendingWithPrevious(t *testing.T) {
+	h, st := newServerWithQueue(t)
+	first := enrollAs(t, &agent{h: h, key: newKey(t), hardwareUUID: "HW-FIRST", keyStorage: "software"}, fixtureSerial)
+	second := enrollAs(t, &agent{h: h, key: newKey(t), hardwareUUID: "HW-OTHER", keyStorage: "secure_enclave"}, fixtureSerial)
+	if second.status != "pending" {
+		t.Fatalf("status = %s", second.status)
+	}
+
+	got := queuedEnrollments(t, st)
+	if len(got) != 2 {
+		t.Fatalf("%d agent.enrollment events queued, want 2", len(got))
+	}
+	if got[0].Detail["state"] != "enrolled" || got[0].Detail["device_id"] != first.deviceID {
+		t.Errorf("first event = %v", got[0].Detail)
+	}
+	e := got[1]
+	if err := e.Validate(serverNow(t)); err != nil {
+		t.Fatalf("invalid event: %v", err)
+	}
+	if e.Device.HardwareUUID != "HW-OTHER" || e.Device.AgentVersion != "" {
+		t.Errorf("device = %+v, want the new key's hardware UUID and no agent version", e.Device)
+	}
+	wantDetail := map[string]any{
+		"state":                 "pending",
+		"device_id":             second.deviceID,
+		"key_fingerprint":       publicKeyFingerprint(t, second.key),
+		"key_storage":           "secure_enclave",
+		"token":                 agentTokenActor(),
+		"previous_device_id":    first.deviceID,
+		"previous_key_storage":  "software",
+		"hardware_uuid_matches": false,
+	}
+	if !reflect.DeepEqual(e.Detail, wantDetail) {
+		t.Errorf("detail = %v, want %v", e.Detail, wantDetail)
+	}
+}
+
+func TestReenrollRaisesReplaced(t *testing.T) {
+	h, st := newServerWithQueue(t)
+	if rec, _ := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"reenrollment_requires_approval": false}); rec.Code != http.StatusOK {
+		t.Fatalf("opt-out: %d %s", rec.Code, rec.Body)
+	}
+	first := enrollAs(t, &agent{h: h, key: newKey(t), keyStorage: "software"}, fixtureSerial)
+	second := enrollAs(t, &agent{h: h, key: newKey(t), keyStorage: "secure_enclave"}, fixtureSerial)
+	if second.status != "active" {
+		t.Fatalf("status = %s", second.status)
+	}
+
+	got := queuedEnrollments(t, st)
+	if len(got) != 2 {
+		t.Fatalf("%d agent.enrollment events queued, want 2", len(got))
+	}
+	wantDetail := map[string]any{
+		"state":                 "replaced",
+		"device_id":             second.deviceID,
+		"key_fingerprint":       publicKeyFingerprint(t, second.key),
+		"key_storage":           "secure_enclave",
+		"token":                 agentTokenActor(),
+		"previous_device_id":    first.deviceID,
+		"previous_key_storage":  "software",
+		"hardware_uuid_matches": true,
+	}
+	if !reflect.DeepEqual(got[1].Detail, wantDetail) {
+		t.Errorf("detail = %v, want %v", got[1].Detail, wantDetail)
+	}
+}
+
+func TestEnrollRetryRaisesNothingNew(t *testing.T) {
+	h, st := newServerWithQueue(t)
+	first := enrollAs(t, &agent{h: h, key: newKey(t)}, fixtureSerial)
+	if rec, _ := first.enroll(t, fixtureSerial); rec.Code != http.StatusOK {
+		t.Fatalf("retry: %d %s", rec.Code, rec.Body)
+	}
+	if got := queuedEnrollments(t, st); len(got) != 1 {
+		t.Fatalf("%d events after retrying a first enrolment, want 1", len(got))
+	}
+
+	pending := enrollAs(t, &agent{h: h, key: newKey(t)}, fixtureSerial)
+	if rec, _ := pending.enroll(t, fixtureSerial); rec.Code != http.StatusOK {
+		t.Fatalf("pending retry: %d %s", rec.Code, rec.Body)
+	}
+	got := queuedEnrollments(t, st)
+	if len(got) != 2 || got[1].Detail["state"] != "pending" {
+		t.Fatalf("%d events after retrying a pending enrolment, want the first and one pending", len(got))
+	}
+}
+
+// What the server can't say is left out of the event, not sent empty.
+func TestEnrollmentEventOmitsWhatItDoesNotKnow(t *testing.T) {
+	h, st := newServerWithQueue(t)
+	first := enrollAs(t, &agent{h: h, key: newKey(t), userAgent: "curl/8.7.1"}, fixtureSerial) // no key storage, not an Altiward agent
+	if rec, _ := do(t, h, "POST", "/v1/enrollments/"+first.deviceID+"/revoke", consoleToken, nil); rec.Code != http.StatusOK {
+		t.Fatalf("revoke: %d %s", rec.Code, rec.Body)
+	}
+	// Nothing is active now, so the next key waits for approval with no key to compare to.
+	second := enrollAs(t, &agent{h: h, key: newKey(t)}, fixtureSerial)
+	if second.status != "pending" {
+		t.Fatalf("status = %s", second.status)
+	}
+
+	got := queuedEnrollments(t, st)
+	if len(got) != 2 {
+		t.Fatalf("%d agent.enrollment events queued, want 2", len(got))
+	}
+	for i, e := range got {
+		if e.Device.AgentVersion != "" {
+			t.Errorf("event %d agent_version = %q, want none", i, e.Device.AgentVersion)
+		}
+		if _, has := e.Detail["key_storage"]; has {
+			t.Errorf("event %d detail has key_storage: %v", i, e.Detail)
+		}
+	}
+	wantDetail := map[string]any{
+		"state":           "pending",
+		"device_id":       second.deviceID,
+		"key_fingerprint": publicKeyFingerprint(t, second.key),
+		"token":           agentTokenActor(),
+	}
+	if !reflect.DeepEqual(got[1].Detail, wantDetail) {
+		t.Errorf("detail = %v, want %v", got[1].Detail, wantDetail)
+	}
+}
+
+// The version comes from the User-Agent the agent sets, "altiward-agent/<version>"; anything
+// else is not taken as a version, because the header is the caller's to write.
+func TestEnrollmentEventAgentVersion(t *testing.T) {
+	for _, c := range []struct{ name, userAgent, want string }{
+		{"release", "altiward-agent/0.8.0", "0.8.0"},
+		{"pre-release", "altiward-agent/0.8.0-rc.1", "0.8.0-rc.1"},
+		{"no header", "", ""},
+		{"no version", "altiward-agent/", ""},
+		{"no slash", "altiward-agent", ""},
+		{"extra words", "altiward-agent/0.8.0 (extra)", ""},
+		{"control character", "altiward-agent/0.8.0\tx", ""},
+		{"another client", "curl/8.7.1", ""},
+		{"not at the start", "Mozilla/5.0 altiward-agent/1", ""},
+		{"too long", "altiward-agent/" + strings.Repeat("9", 300), ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, st := newServerWithQueue(t)
+			enrollAs(t, &agent{h: h, key: newKey(t), userAgent: c.userAgent}, fixtureSerial)
+			got := queuedEnrollments(t, st)
+			if len(got) != 1 {
+				t.Fatalf("%d agent.enrollment events queued, want 1", len(got))
+			}
+			if got[0].Device.AgentVersion != c.want {
+				t.Fatalf("agent_version = %q, want %q", got[0].Device.AgentVersion, c.want)
+			}
+		})
+	}
+}
+
+// failingIngest stands in for a store that can't record the event.
+type failingIngest struct{ store.Store }
+
+func (failingIngest) Ingest(context.Context, string, []event.Event, time.Time) (store.IngestResult, error) {
+	return store.IngestResult{}, errors.New("disk full")
+}
+
+// The Mac is enrolled whether or not the SIEM hears of it: the credential is already stored,
+// and the agent can't retry its way to a second chance at an event.
+func TestEnrollSucceedsWhenTheEventCannotBeRecorded(t *testing.T) {
+	tokens, err := auth.Parse("acme="+agentToken, "acme="+consoleToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs strings.Builder
+	log := slog.New(slog.NewTextHandler(&logs, nil))
+	now := serverNow(t)
+	h := api.New(failingIngest{store.NewMemory(nil)}, tokens, log, func() time.Time { return now })
+
+	a := enrollAgent(t, h, fixtureSerial)
+	if a.status != "active" || a.deviceID == "" {
+		t.Fatalf("enrolled as %q %q", a.deviceID, a.status)
+	}
+	if out := logs.String(); !strings.Contains(out, "level=ERROR") || !strings.Contains(out, `msg="enrollment event not recorded"`) ||
+		!strings.Contains(out, "tenant=acme") || !strings.Contains(out, "serial="+fixtureSerial) ||
+		!strings.Contains(out, "device_id="+a.deviceID) || !strings.Contains(out, "disk full") {
+		t.Fatalf("log = %s", out)
 	}
 }

@@ -107,9 +107,10 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal
 		s.serverError(w, "device id", err)
 		return
 	}
+	now := s.now()
 	res, err := s.store.Enroll(r.Context(), store.DeviceCredential{
 		DeviceID: id, TenantID: p.TenantID, Serial: req.Serial, HardwareUUID: req.HardwareUUID,
-		PublicKey: spki, KeyStorage: store.ParseKeyStorage(req.KeyStorage), CreatedAt: s.now(),
+		PublicKey: spki, KeyStorage: store.ParseKeyStorage(req.KeyStorage), CreatedAt: now,
 	})
 	if errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "this key is enrolled elsewhere; generate a new one")
@@ -121,18 +122,16 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal
 		return
 	}
 	c := res.Credential
-	switch {
-	case res.Replaced != "":
-		s.log.Warn("device re-enrolled; previous credential revoked",
-			"tenant", p.TenantID, "serial", c.Serial, "device_id", c.DeviceID, "replaced", res.Replaced,
-			"key_storage", c.KeyStorage)
-	case c.DeviceID == id && c.Status == store.CredentialPending:
-		s.log.Warn("device enrollment awaiting approval", "tenant", p.TenantID, "serial", c.Serial, "device_id", c.DeviceID,
-			"key_storage", c.KeyStorage)
-	}
-	status := http.StatusOK // the same key again: a retry
+	status := http.StatusOK // the same key again: a retry, which raises nothing
 	if c.DeviceID == id {
 		status = http.StatusCreated
+		// The credential is stored either way; a Mac that can't be reported still enrols.
+		e := enrollmentEvent(p.TenantID, res, r.UserAgent(), p.Actor, now)
+		if _, err := s.store.Ingest(r.Context(), p.TenantID, []event.Event{e}, now); err != nil {
+			s.log.Error("enrollment event not recorded", "tenant", p.TenantID, "serial", c.Serial, "device_id", c.DeviceID, "err", err)
+		}
+		s.log.Info("device enrolled", "tenant", p.TenantID, "serial", c.Serial, "device_id", c.DeviceID,
+			"state", e.Detail["state"], "key_storage", c.KeyStorage)
 	}
 	writeJSON(w, status, map[string]string{"device_id": c.DeviceID, "status": string(c.Status)})
 }

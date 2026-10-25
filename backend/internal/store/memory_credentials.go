@@ -20,6 +20,9 @@ func (m *Memory) Enroll(_ context.Context, c DeviceCredential) (EnrollResult, er
 	}
 	var res EnrollResult
 	active, hasActive := m.activeFor(c.TenantID, c.Serial)
+	if hasActive {
+		res.Previous = ptr(active)
+	}
 	if m.tenantSettings(c.TenantID).ReenrollmentRequiresApproval && m.enrolledBefore(c.TenantID, c.Serial) {
 		c.Status = CredentialPending
 	} else {

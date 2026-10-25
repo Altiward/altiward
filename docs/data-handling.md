@@ -88,6 +88,16 @@ details. That includes every permanent admin use event the agent sends: sign-in
 times, terminals and SSH addresses, who approved prompts, and screen sharing viewers' addresses, as listed above. Console
 actions go there too, naming the person who made them.
 
+The server also raises an `agent.enrollment` event of its own each time a key enrols. Its
+state is `enrolled` for a Mac's first key, `pending` for a new key waiting for an admin's
+approval, and `replaced` for a new key that took the place of the active one without
+approval. It carries the Mac's serial, hardware UUID and agent version (from the agent's
+`User-Agent`), the new key's device ID, its SHA-256 fingerprint and where the Mac says it
+is kept, and the enrolment token's name (`token:` and a short fingerprint, never the
+token). When a key was active before, it also carries that key's device ID and storage and
+whether the two keys came from the same hardware UUID. It holds no public key. A Mac that
+sends its key again, as a retry, raises nothing new.
+
 In the example deployment, Caddy also asks Let's Encrypt for TLS certificates unless you
 provide your own. If you pull the image from the registry instead of loading the file,
 Docker connects to `ghcr.io`. With the Deploy to Azure template, Azure pulls the images
@@ -128,7 +138,7 @@ Everything is in your Postgres database.
 
 | Data | Kept |
 | --- | --- |
-| Every event from every Mac, in full | Forever, for now |
+| Every event from every Mac, in full, and each `agent.enrollment` event the server raises | Forever, for now |
 | Elevation sessions, including the person's UPN and reason | Forever, for now |
 | Each Mac's latest state: versions, admins, health, its open permanent admin sign-ins (up to 20) and its newest 20 other permanent admin uses (the console shows up to 10, open sign-ins first) | Forever, replaced as it changes |
 | Each Mac's enrollment: serial, hardware UUID, **public** key, and whether the Mac says its key is in its Secure Enclave | Forever; revoking stops the Mac reporting |
@@ -165,7 +175,7 @@ security records ([Backups](install.md#backups)).
   removing the agent with `--purge` leaves nothing behind.
 - **The enrolment token** lets a Mac enrol, and does nothing else. It is in the MDM
   profile, so anyone on a Mac can read it. A new enrolment shows in **Enrollments**, where
-  an admin can revoke it. **Approve Macs that enrol again** is on by default: a new
+  an admin can revoke it, and reaches your SIEM as an `agent.enrollment` event. **Approve Macs that enrol again** is on by default: a new
   key for a serial that enrolled before waits for approval, even after its earlier key
   was revoked. An earlier active key stays valid until approval. Server 0.8.0 also enables
   approval once for existing tenants; admins can explicitly turn it off afterwards.

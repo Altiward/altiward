@@ -76,6 +76,10 @@ None.
 - Compose and Azure use the same digest-pinned Caddy 2.11.7 proxy rebuilt with patched
   Go and HTTP/2 dependencies. Each server release verifies and scans both platform
   binaries before publishing the exact reviewed image.
+- The server reports each new enrolment to your SIEM as an `agent.enrollment` event, in the
+  state `enrolled`, `pending` (a new key waiting for approval) or `replaced`. It carries the
+  Mac, the key's device ID, SHA-256 fingerprint and storage, the enrolment token's name and,
+  when a key was active before, that key and whether the hardware UUID matched.
 
 ### Changes
 

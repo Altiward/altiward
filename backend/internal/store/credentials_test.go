@@ -156,6 +156,62 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 	})
 
+	t.Run("enrollment reports the previous active credential", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		enrollStored := func(key []byte, hardware string, storage KeyStorage, at time.Time) EnrollResult {
+			t.Helper()
+			res, err := s.Enroll(ctx, DeviceCredential{
+				DeviceID: newUUID(t), TenantID: tenant, Serial: serial, HardwareUUID: hardware, PublicKey: key,
+				KeyStorage: storage, CreatedAt: at,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return res
+		}
+		first := enrollStored(newKey(t), "HW-FIRST", KeyStorageSecureEnclave, t0)
+		if first.Previous != nil {
+			t.Fatalf("a first key has no previous credential: %+v", first.Previous)
+		}
+
+		// With approval on, the new key waits and the active one is still in use.
+		pendingKey := newKey(t)
+		pending := enrollStored(pendingKey, "HW-OTHER", KeyStorageSoftware, t0.Add(time.Hour))
+		if pending.Credential.Status != CredentialPending || pending.Previous == nil {
+			t.Fatalf("pending = %+v previous = %+v", pending.Credential, pending.Previous)
+		}
+		if p := pending.Previous; p.DeviceID != first.Credential.DeviceID || p.HardwareUUID != "HW-FIRST" ||
+			p.KeyStorage != KeyStorageSecureEnclave || p.Status != CredentialActive {
+			t.Fatalf("previous = %+v, want the first credential as it was", p)
+		}
+		// A retry of the pending key is not a new enrolment, so it reports nothing.
+		if again := enrollStored(pendingKey, "HW-OTHER", KeyStorageSoftware, t0.Add(90*time.Minute)); again.Previous != nil {
+			t.Fatalf("a retry reported a previous credential: %+v", again.Previous)
+		}
+
+		// With approval off, the new key replaces the active one, and Previous names it.
+		if err := s.PutTenantSettings(ctx, tenant, TenantSettings{ReenrollmentRequiresApproval: false}, auditFor(t, tenant, AuditChangeSettings)); err != nil {
+			t.Fatal(err)
+		}
+		replaced := enrollStored(newKey(t), "HW-FIRST", KeyStorageSoftware, t0.Add(2*time.Hour))
+		if replaced.Replaced != first.Credential.DeviceID || replaced.Previous == nil ||
+			replaced.Previous.DeviceID != first.Credential.DeviceID || replaced.Previous.KeyStorage != KeyStorageSecureEnclave {
+			t.Fatalf("replaced = %+v previous = %+v", replaced, replaced.Previous)
+		}
+
+		// Once nothing is active, a new key has no previous credential to report.
+		if _, err := s.RevokeCredential(ctx, tenant, replaced.Credential.DeviceID, t0.Add(3*time.Hour), auditFor(t, tenant, AuditRevokeEnrollment)); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.PutTenantSettings(ctx, tenant, TenantSettings{ReenrollmentRequiresApproval: true}, auditFor(t, tenant, AuditChangeSettings)); err != nil {
+			t.Fatal(err)
+		}
+		afterRevoke := enrollStored(newKey(t), "HW-FIRST", KeyStorageSoftware, t0.Add(4*time.Hour))
+		if afterRevoke.Credential.Status != CredentialPending || afterRevoke.Previous != nil {
+			t.Fatalf("after revoke = %+v previous = %+v", afterRevoke.Credential, afterRevoke.Previous)
+		}
+	})
+
 	t.Run("a revoked Mac cannot re-enroll by default", func(t *testing.T) {
 		s, tenant, serial := setup(t)
 		oldKey := newKey(t)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -62,11 +63,20 @@ type DeviceCredential struct {
 	RevokedAt    *time.Time       `json:"revoked_at"`
 }
 
+// KeyFingerprint is the lower-case hex SHA-256 of the public key's DER, which is how a key
+// is told apart in the console (it shows the first 16 digits) and in the SIEM.
+func (c DeviceCredential) KeyFingerprint() string { return hex.EncodeToString(keyDigest(c.PublicKey)) }
+
 // EnrollResult is the credential an enrollment produced or found, and the device ID of
 // the active credential it replaced, if any.
 type EnrollResult struct {
 	Credential DeviceCredential
 	Replaced   string
+	// Previous is the serial's active credential as it was just before a new key enrolled,
+	// whether the key replaced it or is waiting for approval. It is nil for a serial's first
+	// key, when nothing was active (the earlier credentials were revoked), and when the same
+	// key enrolled again.
+	Previous *DeviceCredential
 }
 
 type CredentialFilter struct {
@@ -115,7 +125,7 @@ func (s TenantSettings) SilentAfter() time.Duration {
 type Credentials interface {
 	// Enroll records c (DeviceID, TenantID, Serial, HardwareUUID, PublicKey, KeyStorage,
 	// CreatedAt). The same key again returns its existing credential, KeyStorage
-	// unchanged; a key held by another tenant
+	// unchanged, and no Previous; a key held by another tenant
 	// is ErrConflict. A serial's first credential is active. A later one replaces the
 	// active credential (revoking it) only when the tenant explicitly disables approval.
 	// Otherwise it is pending, even when the earlier credential was revoked. There is no limit on
