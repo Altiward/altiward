@@ -50,6 +50,8 @@ None.
 
 ### Security
 
+- Splunk exports complete only after a valid explicit accepted HEC acknowledgement.
+  Redirects and ambiguous, invalid or incomplete responses keep the batch queued for retry.
 - Compose and Azure use the same digest-pinned Caddy 2.11.7 proxy rebuilt with patched
   Go and HTTP/2 dependencies. Each server release verifies and scans both platform
   binaries before publishing the exact reviewed image.

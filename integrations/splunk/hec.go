@@ -22,6 +22,7 @@ type Event struct {
 }
 
 // Client posts to {URL}/services/collector/event with "Authorization: Splunk <token>".
+// Redirects are never followed, including when HTTP supplies a shared client.
 type Client struct {
 	URL   string // e.g. https://splunk.example.com:8088
 	Token string
@@ -70,23 +71,92 @@ func (c *Client) post(ctx context.Context, body []byte) error {
 		return fmt.Errorf("splunk: %w", err)
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	// An acknowledgement is small. Read one byte past the cap so a valid JSON prefix
+	// followed by an oversized or interrupted body can never count as accepted.
+	const maxAcknowledgementBytes = 4096
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxAcknowledgementBytes+1))
+	if err != nil {
+		return fmt.Errorf("splunk: read acknowledgement: %w", err)
+	}
+	if len(respBody) > maxAcknowledgementBytes {
+		return fmt.Errorf("splunk: acknowledgement exceeds %d bytes", maxAcknowledgementBytes)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("splunk: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
-	var ack struct {
-		Code int    `json:"code"`
-		Text string `json:"text"`
+	code, text, err := acknowledgement(respBody)
+	if err != nil {
+		return fmt.Errorf("splunk: invalid acknowledgement: %w", err)
 	}
-	if err := json.Unmarshal(respBody, &ack); err == nil && ack.Code != 0 {
-		return fmt.Errorf("splunk: code %d: %s", ack.Code, ack.Text)
+	// Splunk also accepts data with capacity warning codes 24 and 25. Health code 17
+	// belongs to the health endpoint and does not acknowledge this event batch.
+	// https://help.splunk.com/en/splunk-enterprise/get-started/get-data-in/10.2/get-data-with-http-event-collector/troubleshoot-http-event-collector
+	switch code {
+	case 0, 24, 25:
+		return nil
+	default:
+		return fmt.Errorf("splunk: code %d: %s", code, text)
 	}
-	return nil
+}
+
+// acknowledgement requires one complete object and an explicit, non-null integer code.
+// Duplicate fields are ambiguous and must not turn a rejected batch into an accepted one.
+func acknowledgement(body []byte) (code int, text string, err error) {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	first, err := dec.Token()
+	if err != nil {
+		return 0, "", err
+	}
+	if first != json.Delim('{') {
+		return 0, "", fmt.Errorf("expected an object")
+	}
+	seen := map[string]bool{}
+	var acceptedCode *int
+	for dec.More() {
+		token, err := dec.Token()
+		if err != nil {
+			return 0, "", err
+		}
+		key := token.(string) // object keys are strings after a successful Token call
+		if seen[key] {
+			return 0, "", fmt.Errorf("duplicate field %q", key)
+		}
+		seen[key] = true
+		switch key {
+		case "code":
+			if err := dec.Decode(&acceptedCode); err != nil {
+				return 0, "", err
+			}
+		case "text":
+			if err := dec.Decode(&text); err != nil {
+				return 0, "", err
+			}
+		default:
+			var ignored json.RawMessage
+			if err := dec.Decode(&ignored); err != nil {
+				return 0, "", err
+			}
+		}
+	}
+	if _, err := dec.Token(); err != nil {
+		return 0, "", err
+	}
+	var trailing json.RawMessage
+	if err := dec.Decode(&trailing); err != io.EOF {
+		return 0, "", fmt.Errorf("expected the end of the acknowledgement")
+	}
+	if acceptedCode == nil {
+		return 0, "", fmt.Errorf("missing or null code")
+	}
+	return *acceptedCode, text, nil
 }
 
 func (c *Client) http() *http.Client {
+	shared := http.DefaultClient
 	if c.HTTP != nil {
-		return c.HTTP
+		shared = c.HTTP
 	}
-	return http.DefaultClient
+	client := *shared
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &client
 }
