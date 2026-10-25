@@ -1,8 +1,9 @@
 # Core event schema
 
 [`event.schema.json`](event.schema.json) is the contract between the Mac agent and the
-API. One type, `agent.silent`, is raised only by the backend; the API refuses it from
-agents. The [examples](examples/) are decoded by both the Swift and Go test suites.
+API. Two types, `agent.silent` and `agent.enrollment`, are raised only by the backend;
+the API refuses them from agents. The [examples](examples/) are decoded by both the Swift
+and Go test suites.
 
 Changing the schema means changing, together: the JSON Schema, the fixtures,
 `agent/Sources/AltiwardCore/Event.swift` and `backend/internal/event/event.go`. The Go
@@ -110,6 +111,13 @@ ownership checks over concurrent ingestion writes within one tenant.
 | | `last_seen_at` | The Mac's last check-in, by the server's clock (when it received the event, not the event's `timestamp`): before the silence for `silent`, the one that ended it for `resumed` |
 | | `silent_after_seconds` | The tenant's limit when it was raised (`silent` only) |
 | | `silent_since`, `alert_event_id` | The `last_seen_at` and event ID of the `silent` event this ends (`resumed` only) |
+| `agent.enrollment` | `state` | `enrolled` (the Mac's first key, or its first after earlier ones were revoked with approval off), `pending` (a new key for a Mac that already had one, waiting for an admin to approve it) or `replaced` (a new key took the place of the previous one without approval) |
+| | `device_id` | The new key's device ID (a lower-case UUID), which names the credential |
+| | `key_fingerprint` | Lower-case hex SHA-256 of the new key's public key (SPKI DER), 64 characters. The console's **Enrollments** shows its first 16 digits in capitals, in groups of four |
+| | `key_storage` | Where the Mac said the private key is kept: `secure_enclave` or `software`; left out when the Mac didn't say |
+| | `token` | The agent token the Mac enrolled with: `token:` and a short fingerprint of it, never the token |
+| | `previous_device_id`, `previous_key_storage` | The device ID and key storage of the credential that was active before the new key (`pending` and `replaced` only, and left out when none was, such as after it was revoked) |
+| | `hardware_uuid_matches` | Whether the new key's hardware UUID is the previous credential's (sent with `previous_device_id`) |
 
 `elevation.overdue` is sent at most once per session expiry (a renewal re-arms it) and
 leaves the session open. `elevation.expired_enforced` ends it.
@@ -146,6 +154,12 @@ the backend raised it and `device` is the Mac's last known identity and versions
 doesn't count as a check-in. Each silence is raised once: the event ID is a name-based
 UUID of the tenant, serial and what it reports. Macs whose credentials were all revoked
 don't alert.
+
+`agent.enrollment` is raised by the backend when a Mac enrols a key, not by the agent.
+Its `timestamp` is when the backend raised it, and `device` is what the Mac said when it
+enrolled, with an empty `os_version`. It doesn't count as a check-in, and it doesn't add a
+Mac to the fleet: a Mac the server hasn't heard from yet has no entry until it reports.
+Each key is reported once: the event ID is a name-based UUID of the tenant and `device_id`.
 
 `activity` is defined but not yet emitted.
 

@@ -101,7 +101,7 @@ func auditSuite(t *testing.T, newStore func(t *testing.T) Store) {
 	t.Run("a change that fails records nothing", func(t *testing.T) {
 		s, tenant := newStore(t), "tenant-"+randomHex(t)
 		res, err := s.Enroll(ctx, DeviceCredential{DeviceID: newUUID(t), TenantID: tenant, Serial: "C02" + randomHex(t),
-			HardwareUUID: "HW", PublicKey: newKey(t), CreatedAt: t0})
+			HardwareUUID: "HW", PublicKey: newKey(t), CreatedAt: t0}, EnrollLimits{})
 		if err != nil {
 			t.Fatal(err)
 		}

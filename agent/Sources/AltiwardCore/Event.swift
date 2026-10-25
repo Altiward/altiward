@@ -17,6 +17,8 @@ public enum EventType: String, Codable, Sendable, CaseIterable {
     case agentSilent = "agent.silent"
     /// A permanent admin account was used: a sign-in, an authorisation prompt or screen sharing.
     case adminPermanentUse = "admin.permanent_use"
+    /// Raised by the backend when a Mac enrols a key; the agent never sends it.
+    case agentEnrollment = "agent.enrollment"
 }
 
 public struct DeviceInfo: Codable, Sendable, Equatable {

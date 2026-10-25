@@ -1,0 +1,80 @@
+[
+  {
+    "activity_id": 1,
+    "activity_name": "Create",
+    "actor": {
+      "user": {
+        "name": "token:1a2b3c4d"
+      }
+    },
+    "api": {
+      "operation": "enroll",
+      "service": {
+        "name": "Altiward server"
+      }
+    },
+    "category_name": "Application Activity",
+    "category_uid": 6,
+    "class_name": "API Activity",
+    "class_uid": 6003,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "is_alert": true,
+    "message": "C02XK0AAJGH5 enrolled again with a new key, waiting for approval",
+    "metadata": {
+      "logged_time": 1792139400000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.8.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "b7e4a2d1-6c3f-5a98-8e01-4d2b7c9f3a60",
+      "version": "1.9.0"
+    },
+    "resources": [
+      {
+        "name": "C02XK0AAJGH5",
+        "type": "Enrollment",
+        "uid": "5d2c8e1a-7b4f-4a93-8c6d-0f1e2a3b4c5d"
+      }
+    ],
+    "severity": "Medium",
+    "severity_id": 3,
+    "src_endpoint": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792139400000,
+    "type_name": "API Activity: Create",
+    "type_uid": 600301,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "device_id": "5d2c8e1a-7b4f-4a93-8c6d-0f1e2a3b4c5d",
+          "hardware_uuid_matches": false,
+          "key_fingerprint": "3c9a1f5e7b2d4086a1b3c5d7e9f024681d3f5a7c9e0b2d4f6a8c0e2b4d6f8a1c",
+          "key_storage": "secure_enclave",
+          "previous_device_id": "e1f0a9b8-c7d6-4e5f-8a4b-3c2d1e0f9a8b",
+          "previous_key_storage": "secure_enclave",
+          "state": "pending",
+          "token": "token:1a2b3c4d"
+        },
+        "event_type": "agent.enrollment"
+      }
+    }
+  }
+]

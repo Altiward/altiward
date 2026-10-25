@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Altiward/altiward/backend/internal/config"
+	"github.com/Altiward/altiward/backend/internal/store"
 	"github.com/Altiward/altiward/backend/internal/testfixture"
 )
 
@@ -41,6 +42,40 @@ func TestUpdateCheck(t *testing.T) {
 		c, err := config.Load(env(map[string]string{"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_UPDATE_CHECK": v}))
 		if err != nil || c.UpdateCheck != want {
 			t.Errorf("%q: %v, %v", v, c.UpdateCheck, err)
+		}
+	}
+}
+
+// How fast a tenant may add Macs and keys is bounded by default: 1000 new Macs an hour and
+// 5 keys for one Mac a day. 0 turns a limit off.
+func TestEnrollLimits(t *testing.T) {
+	load := func(m map[string]string) (config.Config, error) {
+		m["ALTIWARD_AGENT_TOKENS"] = "a=x"
+		return config.Load(env(m))
+	}
+	for name, c := range map[string]struct {
+		macs, keys string
+		want       store.EnrollLimits
+	}{
+		"defaults":     {"", "", store.EnrollLimits{NewMacsPerHour: 1000, KeysPerMacPerDay: 5}},
+		"set":          {"50", "3", store.EnrollLimits{NewMacsPerHour: 50, KeysPerMacPerDay: 3}},
+		"no Mac limit": {"0", "", store.EnrollLimits{NewMacsPerHour: 0, KeysPerMacPerDay: 5}},
+		"no key limit": {"", "0", store.EnrollLimits{NewMacsPerHour: 1000, KeysPerMacPerDay: 0}},
+		"both off":     {"0", "0", store.EnrollLimits{}},
+		"one set":      {"7", "", store.EnrollLimits{NewMacsPerHour: 7, KeysPerMacPerDay: 5}},
+	} {
+		cfg, err := load(map[string]string{"ALTIWARD_ENROLL_NEW_MACS_PER_HOUR": c.macs, "ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY": c.keys})
+		if err != nil || cfg.EnrollLimits != c.want {
+			t.Errorf("%s: %+v, %v, want %+v", name, cfg.EnrollLimits, err, c.want)
+		}
+	}
+	for _, name := range []string{"ALTIWARD_ENROLL_NEW_MACS_PER_HOUR", "ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY"} {
+		for _, v := range []string{"-1", "abc", "1.5", "1e3", "ten"} {
+			_, err := load(map[string]string{name: v})
+			want := name + `: want 0 (no limit) or a positive whole number, got "` + v + `"`
+			if err == nil || err.Error() != want {
+				t.Errorf("%s=%q: err = %v, want %s", name, v, err, want)
+			}
 		}
 	}
 }

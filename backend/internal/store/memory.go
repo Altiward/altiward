@@ -114,14 +114,17 @@ func (m *Memory) Ingest(_ context.Context, tenantID string, events []event.Event
 			_ = s.Apply(e)
 			m.sessions[sk] = s
 		}
+		// An event the server raised is no check-in, so it doesn't make a Mac it hasn't heard
+		// from appear as a device. It is stored and exported all the same.
 		dk := key{tenantID, e.Device.Serial}
-		d, ok := m.devices[dk]
-		if !ok {
-			d = session.NewDevice(tenantID, e.Device.Serial)
+		if d, ok := m.devices[dk]; ok || !e.Type.IsServerRaised() {
+			if !ok {
+				d = session.NewDevice(tenantID, e.Device.Serial)
+			}
+			d.Apply(e)
+			d.Received(e, receivedAt)
+			m.devices[dk] = d
 		}
-		d.Apply(e)
-		d.Received(e, receivedAt)
-		m.devices[dk] = d
 
 		for _, sink := range m.sinks {
 			m.nextID++

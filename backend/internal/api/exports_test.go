@@ -44,10 +44,15 @@ func TestExportStatusListsEveryConfiguredSink(t *testing.T) {
 	if len(got) != 2 || got["splunk"]["pending"] != 0.0 || got["sentinel"]["failing"] != 0.0 {
 		t.Fatalf("status with nothing queued = %v", got)
 	}
-	if rec, _ := enrollAgent(t, h, fixtureSerial).post(t, batch(t, "elevation-granted")); rec.Code != 200 {
+	a := enrollAgent(t, h, fixtureSerial)
+	// The enrolment is reported to the SIEM like any event.
+	if got := sinkStatus(t, h, consoleToken); got["sentinel"]["pending"] != 1.0 || got["sentinel"]["oldest_queued_at"] == nil {
+		t.Fatalf("status after an enrolment = %v", got)
+	}
+	if rec, _ := a.post(t, batch(t, "elevation-granted")); rec.Code != 200 {
 		t.Fatalf("ingest: %d %s", rec.Code, rec.Body)
 	}
-	if got := sinkStatus(t, h, consoleToken); got["sentinel"]["pending"] != 1.0 || got["sentinel"]["oldest_queued_at"] == nil {
+	if got := sinkStatus(t, h, consoleToken); got["sentinel"]["pending"] != 2.0 {
 		t.Fatalf("status after an event = %v", got)
 	}
 	// Another tenant's queue is its own.

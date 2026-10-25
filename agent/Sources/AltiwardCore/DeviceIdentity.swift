@@ -9,11 +9,15 @@ public enum AgentVersion {
 public enum DeviceIdentity {
     public static let privilegesAppPath = "/Applications/Privileges.app"
 
+    /// What the serial or hardware UUID is when the Mac won't say. It is not an identity:
+    /// ``DeviceAuthenticator`` neither checks a stored key against it nor binds a key to it.
+    public static let unreadable = "unknown"
+
     public static func current() -> DeviceInfo {
         let os = ProcessInfo.processInfo.operatingSystemVersion
         return DeviceInfo(
-            serial: platformProperty(kIOPlatformSerialNumberKey) ?? "unknown",
-            hardwareUUID: platformProperty(kIOPlatformUUIDKey) ?? "unknown",
+            serial: platformProperty(kIOPlatformSerialNumberKey) ?? unreadable,
+            hardwareUUID: platformProperty(kIOPlatformUUIDKey) ?? unreadable,
             osVersion: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
             agentVersion: AgentVersion.current,
             privilegesVersion: privilegesVersion())

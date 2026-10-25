@@ -205,12 +205,18 @@ func TestTokenConfig(t *testing.T) {
 }
 
 func TestAgentsCannotSendServerRaisedEvents(t *testing.T) {
-	h := newServer(t)
-	rec, out := enrollAgent(t, h, fixtureSerial).post(t, batch(t, "agent-silent"))
-	rejected, _ := out["rejected"].([]any)
-	if rec.Code != 200 || len(rejected) != 1 ||
-		!strings.Contains(rejected[0].(map[string]any)["error"].(string), "raised only by the server") {
-		t.Fatalf("%d %s", rec.Code, rec.Body)
+	for _, c := range []struct{ fixture, want string }{
+		{"agent-silent", "agent.silent is raised only by the server"},
+		{"agent-enrollment-pending", "agent.enrollment is raised only by the server"},
+	} {
+		t.Run(c.fixture, func(t *testing.T) {
+			h := newServer(t)
+			rec, out := enrollAgent(t, h, fixtureSerial).post(t, batch(t, c.fixture))
+			rejected, _ := out["rejected"].([]any)
+			if rec.Code != 200 || len(rejected) != 1 || rejected[0].(map[string]any)["error"] != c.want {
+				t.Fatalf("%d %s", rec.Code, rec.Body)
+			}
+		})
 	}
 }
 

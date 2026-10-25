@@ -124,6 +124,11 @@ public enum DeviceKeyError: Error, Equatable, CustomStringConvertible {
     }
 }
 
+private extension DeviceInfo {
+    /// Whether the Mac said which it is, rather than ``DeviceIdentity/unreadable``.
+    var isReadable: Bool { serial != DeviceIdentity.unreadable && hardwareUUID != DeviceIdentity.unreadable }
+}
+
 /// Holds this Mac's device credential and signs agent requests with it.
 ///
 /// The key is stored before the enrollment request is sent, so a retry after a lost
@@ -153,6 +158,13 @@ public actor DeviceAuthenticator {
         var serverURL: String
         var privateKey: Data  // the raw P256 key, or the Secure Enclave's handle
         var deviceID: String?
+        /// The Mac the key was made on. A store copied to another Mac (Migration Assistant,
+        /// a clone, a restore) keeps a file key that works there, so without these the
+        /// copy would go on signing as the first Mac. Nil in a record from before agent
+        /// 0.8.0, or in one made while the Mac couldn't report its identity; such a record
+        /// gets this Mac's identity the first time the Mac can report it.
+        var serial: String?
+        var hardwareUUID: String?
     }
 
     /// A credential and the record it came from.
@@ -179,6 +191,9 @@ public actor DeviceAuthenticator {
     private let log: @Sendable (String) -> Void
     /// Server time minus local time, learned from a `clock_skew` response.
     private var clockOffset: TimeInterval = 0
+    /// After the server's enrolment limits refused this Mac (429), when it may ask again.
+    /// In memory only: a restarted agent asks once more.
+    private var enrollNotBefore: Date?
 
     public init(
         store: AgentStore, serverURL: URL, enrollmentToken: String, device: @escaping @Sendable () -> DeviceInfo,
@@ -202,6 +217,12 @@ public actor DeviceAuthenticator {
         (try? load())?.credential.deviceID
     }
 
+    /// The serial the Mac reports now, which is ``DeviceIdentity/unreadable`` when it
+    /// won't say.
+    public var currentSerial: String {
+        device().serial
+    }
+
     /// Where the key for the configured server is kept, if there is one. Reads the store
     /// only; it never asks the Secure Enclave.
     public var keyStorage: KeyStorage? {
@@ -212,8 +233,10 @@ public actor DeviceAuthenticator {
     /// URL, optionally with a query), giving up after `timeout` seconds. Throws
     /// ``DeliveryError/credentialInvalid`` (the credential was discarded, unless another
     /// process had already replaced it; the next call enrolls again or uses the
-    /// replacement) or ``DeliveryError/enrollmentPending``; any other response is returned
-    /// for the caller to judge.
+    /// replacement), ``DeliveryError/enrollmentPending``, or
+    /// ``DeliveryError/enrollmentRateLimited(until:)`` without sending anything while the
+    /// server's enrolment limits make this Mac wait; any other response is returned for the
+    /// caller to judge.
     public func send(
         method: String, path: String, body: Data, timeout: TimeInterval = 30
     ) async throws -> (Data, HTTPURLResponse) {
@@ -260,12 +283,13 @@ public actor DeviceAuthenticator {
     }
 
     private func enrolled() async throws -> Stored {
-        var c = try load() ?? makeCredential()
+        let info = device()
+        var c = try boundToThisMac(info) ?? makeCredential(info)
         if role == .command, c.storage == .secureEnclave { throw DeviceKeyError.heldByDaemon }
         if c.credential.deviceID != nil { return c }
+        if let until = enrollNotBefore, now() < until { throw DeliveryError.enrollmentRateLimited(until: until) }
 
         let publicKey = try withKey(c) { try keys.publicKey($0, c.storage) }
-        let info = device()
         var request = URLRequest(url: serverURL.appendingPathComponent("v1/agent/enroll"), timeoutInterval: 30)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -276,9 +300,17 @@ public actor DeviceAuthenticator {
             "public_key": publicKey.base64EncodedString(), "key_storage": c.storage.rawValue,
         ])
         let (data, response) = try await transport.send(request)
+        if response.statusCode == 429 {
+            let until = now().addingTimeInterval(retryDelay(response.value(forHTTPHeaderField: "Retry-After")))
+            enrollNotBefore = until
+            log("the server's enrolment limits refused this Mac (\(String(decoding: data, as: UTF8.self).prefix(200))); "
+                + "trying again after \(until.formatted(.iso8601))")
+            throw DeliveryError.enrollmentRateLimited(until: until)
+        }
         guard response.statusCode == 200 || response.statusCode == 201 else {
             throw DeliveryError.http(status: response.statusCode, body: String(decoding: data, as: UTF8.self))
         }
+        enrollNotBefore = nil
         struct Enrolled: Decodable {
             let device_id: String
             let status: String
@@ -297,11 +329,24 @@ public actor DeviceAuthenticator {
         return c
     }
 
+    /// How long a refused enrolment waits: `Retry-After` in seconds or as a date by the
+    /// server's clock, an hour when it's missing or unreadable, and at most a day.
+    private func retryDelay(_ retryAfter: String?) -> TimeInterval {
+        let value = retryAfter?.trimmingCharacters(in: .whitespaces) ?? ""
+        var delay: TimeInterval = 3600
+        if !value.isEmpty, value.allSatisfy({ ("0"..."9").contains($0) }), let seconds = TimeInterval(value) {
+            delay = seconds
+        } else if let date = Self.parseHTTPDate(value) {
+            delay = date.timeIntervalSince(now().addingTimeInterval(clockOffset))
+        }
+        return min(max(delay, 0), 86400)
+    }
+
     /// Makes a key for the configured server and stores it, unless another process
     /// sharing the store stored one first. The key is made outside the transaction:
     /// the Secure Enclave can take seconds while someone signs in, and the store
     /// mustn't wait on it.
-    private func makeCredential() throws -> Stored {
+    private func makeCredential(_ info: DeviceInfo) throws -> Stored {
         var storage = KeyStorage.software
         if keys.secureEnclaveAvailable {
             guard role == .daemon else { throw DeviceKeyError.notEnrolled }
@@ -318,12 +363,50 @@ public actor DeviceAuthenticator {
         }
         return try store.transaction {
             if let stored = try load() { return stored }
-            let fresh = Stored(credential: Credential(serverURL: serverURL.absoluteString, privateKey: key), storage: storage)
+            let fresh = Stored(
+                credential: Credential(
+                    serverURL: serverURL.absoluteString, privateKey: key, serial: info.isReadable ? info.serial : nil,
+                    hardwareUUID: info.isReadable ? info.hardwareUUID : nil),
+                storage: storage)
             try save(fresh)
             // Neither record is for this server, so the other one is for an old one.
             try store.setValue(nil, forKey: Self.storeKey(storage == .software ? .secureEnclave : .software))
             return fresh
         }
+    }
+
+    /// The credential for the configured server that was made on this Mac, if any. One
+    /// made on another Mac is dropped, so the Mac enrols its own key; one from before
+    /// agent 0.8.0 has no Mac recorded, so it gets this Mac's and stays enrolled, rather
+    /// than sending every upgraded Mac to approval. Checks both records, since a downgrade
+    /// and upgrade can leave a Secure Enclave key and a file key. When the Mac won't say
+    /// which it is, it can't tell a copy from the original, so the stored key stays as it
+    /// is and a later run checks it.
+    private func boundToThisMac(_ info: DeviceInfo) throws -> Stored? {
+        guard info.isReadable else {
+            let stored = try load()
+            if stored != nil { log("couldn't read this Mac's serial or hardware UUID; keeping the stored key") }
+            return stored
+        }
+        while var c = try load() {
+            guard let serial = c.credential.serial, let hardwareUUID = c.credential.hardwareUUID else {
+                c.credential.serial = info.serial
+                c.credential.hardwareUUID = info.hardwareUUID
+                try store.transaction {
+                    // Unless another process has replaced the key meanwhile.
+                    if var current = try record(c.storage), current.privateKey == c.credential.privateKey {
+                        current.serial = info.serial
+                        current.hardwareUUID = info.hardwareUUID
+                        try save(Stored(credential: current, storage: c.storage))
+                    }
+                }
+                return c
+            }
+            if serial == info.serial, hardwareUUID == info.hardwareUUID { return c }
+            log("this Mac's stored key was made on another Mac (serial \(serial)); enrolling again")
+            try discard(c)
+        }
+        return nil
     }
 
     /// Runs `body` with `c`'s key. When the Secure Enclave can't use a key it holds, a
@@ -376,6 +459,22 @@ public actor DeviceAuthenticator {
                 try store.setValue(nil, forKey: Self.storeKey(c.storage))
             }
         }
+    }
+
+    /// Drops the stored credential that has `deviceID`, so the next send enrols with a new
+    /// key. For when the server says that key belongs to another Mac. Does nothing if no
+    /// record has that ID, as when another process sharing the store has already replaced
+    /// the credential that was signed with.
+    public func discardCredential(ifDeviceID deviceID: String) throws {
+        let discarded = try store.transaction {
+            var found = false
+            for storage in [KeyStorage.secureEnclave, .software] where try record(storage)?.deviceID == deviceID {
+                try store.setValue(nil, forKey: Self.storeKey(storage))
+                found = true
+            }
+            return found
+        }
+        if discarded { log("the server says this key belongs to another Mac; enrolling again") }
     }
 
     private static func code(_ data: Data) -> String? {

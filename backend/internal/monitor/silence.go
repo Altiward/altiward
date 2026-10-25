@@ -9,7 +9,6 @@ package monitor
 
 import (
 	"context"
-	"crypto/sha1"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -61,7 +60,7 @@ func back(d session.Device) bool {
 func raise(d session.Device, now time.Time, key string, detail map[string]any) event.Event {
 	return event.Event{
 		SchemaVersion: event.SchemaVersion,
-		EventID:       nameUUID(d.TenantID + "/" + d.Serial + "/" + key),
+		EventID:       event.RaisedID(d.TenantID + "/" + d.Serial + "/" + key),
 		Type:          event.AgentSilent,
 		Timestamp:     now.UTC(),
 		Device: event.Device{
@@ -75,20 +74,6 @@ func raise(d session.Device, now time.Time, key string, detail map[string]any) e
 // Detail values are strings, as they would be after a JSON round trip, so the device
 // reducer reads them the same from either store.
 func timestamp(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
-
-// namespace scopes the name-based UUIDs of raised events.
-var namespace = [16]byte{0x6b, 0x1e, 0x2f, 0x9a, 0x3c, 0x4d, 0x4e, 0x8f, 0x9a, 0x0b, 0x1c, 0x2d, 0x3e, 0x4f, 0x50, 0x61}
-
-// nameUUID is a version 5 (SHA-1, name-based) UUID: the same name always gives the same ID.
-func nameUUID(name string) string {
-	h := sha1.New()
-	h.Write(namespace[:])
-	h.Write([]byte(name))
-	b := h.Sum(nil)[:16]
-	b[6] = b[6]&0x0f | 0x50
-	b[8] = b[8]&0x3f | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-}
 
 // Silence sweeps every tenant's devices for agent.silent alerts.
 type Silence struct {

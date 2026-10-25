@@ -69,6 +69,17 @@ func TestValidate(t *testing.T) {
 		{"resumed", "agent-silent", func(e *event.Event) { e.Detail["state"] = "resumed" }, ""},
 		{"silent without state", "agent-silent", func(e *event.Event) { delete(e.Detail, "state") }, "detail.state"},
 		{"silent with user", "agent-silent", func(e *event.Event) { e.User = &event.User{LocalName: "jdoe"} }, "no session_id or user"},
+		{"enrollment pending", "agent-enrollment-pending", func(e *event.Event) {}, ""},
+		{"enrollment enrolled", "agent-enrollment-enrolled", func(e *event.Event) {}, ""},
+		{"enrollment replaced", "agent-enrollment-enrolled", func(e *event.Event) { e.Detail["state"] = "replaced" }, ""},
+		{"enrollment with a bogus state", "agent-enrollment-pending", func(e *event.Event) { e.Detail["state"] = "bogus" },
+			"agent.enrollment requires detail.state (enrolled, pending or replaced) and detail.device_id"},
+		{"enrollment without a state", "agent-enrollment-pending", func(e *event.Event) { delete(e.Detail, "state") },
+			"agent.enrollment requires detail.state (enrolled, pending or replaced) and detail.device_id"},
+		{"enrollment without a device id", "agent-enrollment-pending", func(e *event.Event) { delete(e.Detail, "device_id") },
+			"agent.enrollment requires detail.state (enrolled, pending or replaced) and detail.device_id"},
+		{"enrollment with an empty device id", "agent-enrollment-pending", func(e *event.Event) { e.Detail["device_id"] = "" },
+			"agent.enrollment requires detail.state (enrolled, pending or replaced) and detail.device_id"},
 		{"nil detail defaults", "agent-health", func(e *event.Event) { e.Detail = nil }, ""},
 		{"persistence", "persistence-detected", func(e *event.Event) {}, ""},
 		{"persistence without session", "persistence-detected", func(e *event.Event) { e.SessionID = nil }, "requires session_id"},
@@ -94,8 +105,20 @@ func TestValidate(t *testing.T) {
 }
 
 func TestServerRaised(t *testing.T) {
-	if !event.AgentSilent.IsServerRaised() || event.AgentTamper.IsServerRaised() {
-		t.Fatal("only agent.silent is raised by the server")
+	if !event.AgentSilent.IsServerRaised() || !event.AgentEnrollment.IsServerRaised() || event.AgentTamper.IsServerRaised() {
+		t.Fatal("only agent.silent and agent.enrollment are raised by the server")
+	}
+}
+
+// The namespace and the algorithm must not change: agent.silent event IDs come from them.
+// The vector is the version 5 UUID of the name.
+func TestRaisedID(t *testing.T) {
+	const name = "t1/C02XK0AAJGH5/silent/2026-10-16T10:05:00Z"
+	if got, want := event.RaisedID(name), "3d87c4bd-d502-50eb-8f02-c12fdd45687f"; got != want {
+		t.Fatalf("RaisedID(%q) = %s, want %s", name, got, want)
+	}
+	if event.RaisedID(name) == event.RaisedID(name+"x") {
+		t.Fatal("two names share an ID")
 	}
 }
 

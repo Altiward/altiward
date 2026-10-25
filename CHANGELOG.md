@@ -16,7 +16,8 @@ Every section has the four headings below, with "None." under any that don't app
 Deploy this release's `corp.sap.privileges.plist` keys to your Privileges profile with the
 package: its `PostChangeExecutableChecksum` is this build's hook. With the old checksum,
 Privileges stops running the hook and Altiward raises "SAP Privileges no longer reports to
-Altiward".
+Altiward". Upgrade the server to 0.8.0 first, so it can tell an agent that its key belongs
+to another Mac.
 
 ### Breaking changes
 
@@ -31,12 +32,26 @@ None.
 - A give-back claim cannot close an open session while the account is still an admin.
   The agent retains the original expiry and retries membership confirmation on its next
   heartbeat, so a contradictory claim cannot bypass timed enforcement.
+- The agent stores its Mac's serial and hardware UUID with its device key. A key found on
+  a different Mac, such as a store copied by Migration Assistant, a clone or a restore,
+  is dropped and the Mac enrols afresh instead of signing as the first Mac. A key stored
+  by an earlier agent is given this Mac's identity and stays enrolled. If the Mac won't
+  report its serial or hardware UUID at the time, the agent keeps its key and checks on a
+  later run.
+- When the server rejects this Mac's own events because the agent's key belongs to another
+  Mac, the agent keeps the events, drops the key and enrols again, instead of deleting
+  them. Events that name another Mac are still deleted. This needs Server 0.8.0, which
+  says why it rejected them.
 
 ### Changes
 
 - An empty file the persistence check reads, such as an empty `~/.ssh/authorized_keys`,
   no longer counts as unreadable, so it doesn't mark the Mac **Partly checked** in Fleet
   (#115).
+- When the server's enrolment limits refuse the Mac (HTTP 429), the agent doesn't ask again
+  until the time `Retry-After` gives, or for an hour when it gives none, and never waits
+  more than a day. Earlier agents asked about once a minute. The wait is kept in memory,
+  so an agent that restarts asks once more.
 
 ## Server 0.8.0 - unreleased
 
@@ -66,6 +81,22 @@ None.
 - Compose and Azure use the same digest-pinned Caddy 2.11.7 proxy rebuilt with patched
   Go and HTTP/2 dependencies. Each server release verifies and scans both platform
   binaries before publishing the exact reviewed image.
+- The server reports each new enrolment to your SIEM as an `agent.enrollment` event, in the
+  state `enrolled`, `pending` (a new key waiting for approval) or `replaced`. It carries the
+  Mac, the key's device ID, SHA-256 fingerprint and storage, the enrolment token's name and,
+  when a key was active before, that key and whether the hardware UUID matched.
+- The enrolment token can no longer add Macs or keys without end. Each organisation may
+  add 1000 Macs it hasn't enrolled before in an hour, and one Mac may enrol 5 keys in 24
+  hours; the server answers 429 with `Retry-After` and logs `enrolment rate limited`. Agent
+  0.8.0 waits that long before it asks again; earlier agents ask about once a minute. A Mac
+  sending a key that is already enrolled is never refused. Set
+  `ALTIWARD_ENROLL_NEW_MACS_PER_HOUR` and `ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY` in `.env`
+  (`0` turns one off), or on the Azure container app; raise the first before enrolling more
+  than 1000 Macs in an hour.
+- A new key whose hardware UUID differs from the Mac's active key waits for approval even
+  when **Approve Macs that enrol again** is off, and its `agent.enrollment` event shows
+  `hardware_uuid_matches` as false. The UUID is the agent's own claim, so this catches a key
+  made on another Mac, not someone who sets it by hand.
 
 ### Changes
 
@@ -87,6 +118,10 @@ None.
   (#111).
 - The console's sidebar stays in view on long pages such as Overview, so who is signed
   in, **Sign out** and the server version show on every page (#112).
+- A rejected event whose `device.serial` isn't the signing Mac's carries `code`:
+  `device_mismatch` in the ingest response. Other rejections have no `code`.
+- **Enrollments** shows, for a key waiting for approval, when the Mac last checked in with
+  its current key, and warns when the new key reports a different hardware UUID.
 
 ## Agent 0.5.0 - 2026-10-25
 

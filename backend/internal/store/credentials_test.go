@@ -8,6 +8,8 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,12 +24,19 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 	setup := func(t *testing.T) (Store, string, string) {
 		return newStore(t), "tenant-" + randomHex(t), "C02" + randomHex(t)
 	}
+	// enrollLimited enrols a key for a Mac whose hardware UUID is hardware, under limits.
+	enrollLimited := func(s Store, tenant, serial, hardware string, key []byte, at time.Time, limits EnrollLimits) (EnrollResult, error) {
+		id, err := NewDeviceID()
+		if err != nil {
+			return EnrollResult{}, err
+		}
+		return s.Enroll(ctx, DeviceCredential{
+			DeviceID: id, TenantID: tenant, Serial: serial, HardwareUUID: hardware, PublicKey: key, CreatedAt: at,
+		}, limits)
+	}
 	enroll := func(t *testing.T, s Store, tenant, serial string, key []byte, at time.Time) EnrollResult {
 		t.Helper()
-		res, err := s.Enroll(ctx, DeviceCredential{
-			DeviceID: newUUID(t), TenantID: tenant, Serial: serial, HardwareUUID: "HW-" + serial,
-			PublicKey: key, CreatedAt: at,
-		})
+		res, err := enrollLimited(s, tenant, serial, "HW-"+serial, key, at, EnrollLimits{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -70,7 +79,7 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		res, err := s.Enroll(ctx, DeviceCredential{
 			DeviceID: newUUID(t), TenantID: tenant, Serial: serial, HardwareUUID: "HW", PublicKey: key,
 			KeyStorage: KeyStorageSecureEnclave, CreatedAt: t0,
-		})
+		}, EnrollLimits{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -81,7 +90,7 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		again, err := s.Enroll(ctx, DeviceCredential{
 			DeviceID: newUUID(t), TenantID: tenant, Serial: serial, HardwareUUID: "HW", PublicKey: key,
 			KeyStorage: KeyStorageSoftware, CreatedAt: t0.Add(time.Minute),
-		})
+		}, EnrollLimits{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -100,7 +109,7 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		enroll(t, s, tenant, serial, key, t0)
 		_, err := s.Enroll(ctx, DeviceCredential{
 			DeviceID: newUUID(t), TenantID: tenant + "-other", Serial: serial, HardwareUUID: "HW", PublicKey: key, CreatedAt: t0,
-		})
+		}, EnrollLimits{})
 		if !errors.Is(err, ErrConflict) {
 			t.Fatalf("err = %v", err)
 		}
@@ -153,6 +162,63 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 		if _, err := s.ApproveCredential(ctx, tenant, res.Credential.DeviceID, t0, auditFor(t, tenant, AuditApproveEnrollment)); !errors.Is(err, ErrInvalidState) {
 			t.Fatalf("second approval err = %v", err)
+		}
+	})
+
+	t.Run("enrollment reports the previous active credential", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		enrollStored := func(key []byte, hardware string, storage KeyStorage, at time.Time) EnrollResult {
+			t.Helper()
+			res, err := s.Enroll(ctx, DeviceCredential{
+				DeviceID: newUUID(t), TenantID: tenant, Serial: serial, HardwareUUID: hardware, PublicKey: key,
+				KeyStorage: storage, CreatedAt: at,
+			}, EnrollLimits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return res
+		}
+		first := enrollStored(newKey(t), "HW-FIRST", KeyStorageSecureEnclave, t0)
+		if first.Previous != nil {
+			t.Fatalf("a first key has no previous credential: %+v", first.Previous)
+		}
+
+		// With approval on, the new key waits and the active one is still in use.
+		pendingKey := newKey(t)
+		pending := enrollStored(pendingKey, "HW-OTHER", KeyStorageSoftware, t0.Add(time.Hour))
+		if pending.Credential.Status != CredentialPending || pending.Previous == nil {
+			t.Fatalf("pending = %+v previous = %+v", pending.Credential, pending.Previous)
+		}
+		if p := pending.Previous; p.DeviceID != first.Credential.DeviceID || p.HardwareUUID != "HW-FIRST" ||
+			p.KeyStorage != KeyStorageSecureEnclave || p.Status != CredentialActive {
+			t.Fatalf("previous = %+v, want the first credential as it was", p)
+		}
+		// A retry of the pending key is not a new enrolment, so it reports nothing.
+		if again := enrollStored(pendingKey, "HW-OTHER", KeyStorageSoftware, t0.Add(90*time.Minute)); again.Previous != nil {
+			t.Fatalf("a retry reported a previous credential: %+v", again.Previous)
+		}
+
+		// With approval off, the new key replaces the active one, and Previous names it.
+		if err := s.PutTenantSettings(ctx, tenant, TenantSettings{ReenrollmentRequiresApproval: false}, auditFor(t, tenant, AuditChangeSettings)); err != nil {
+			t.Fatal(err)
+		}
+		replaced := enrollStored(newKey(t), "HW-FIRST", KeyStorageSoftware, t0.Add(2*time.Hour))
+		if replaced.Replaced != first.Credential.DeviceID || replaced.Previous == nil ||
+			replaced.Previous.DeviceID != first.Credential.DeviceID || replaced.Previous.KeyStorage != KeyStorageSecureEnclave ||
+			replaced.Previous.Status != CredentialActive {
+			t.Fatalf("replaced = %+v previous = %+v", replaced, replaced.Previous)
+		}
+
+		// Once nothing is active, a new key has no previous credential to report.
+		if _, err := s.RevokeCredential(ctx, tenant, replaced.Credential.DeviceID, t0.Add(3*time.Hour), auditFor(t, tenant, AuditRevokeEnrollment)); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.PutTenantSettings(ctx, tenant, TenantSettings{ReenrollmentRequiresApproval: true}, auditFor(t, tenant, AuditChangeSettings)); err != nil {
+			t.Fatal(err)
+		}
+		afterRevoke := enrollStored(newKey(t), "HW-FIRST", KeyStorageSoftware, t0.Add(4*time.Hour))
+		if afterRevoke.Credential.Status != CredentialPending || afterRevoke.Previous != nil {
+			t.Fatalf("after revoke = %+v previous = %+v", afterRevoke.Credential, afterRevoke.Previous)
 		}
 	})
 
@@ -278,6 +344,325 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("approve: %+v, %v", approved, err)
 		}
 	})
+
+	// A tenant's enrolment token can add Macs without end, so a tenant may add only so many
+	// new serials an hour. A serial is new when the tenant has no credential of any status
+	// for it, and counts for the hour after its first key.
+	t.Run("new Macs per hour are limited for each tenant", func(t *testing.T) {
+		s, tenant, _ := setup(t)
+		limits := EnrollLimits{NewMacsPerHour: 2}
+		serial := func(n int) string { return fmt.Sprintf("C02NEW%d%s", n, randomHex(t)) }
+		first, second, third, fourth := serial(1), serial(2), serial(3), serial(4)
+
+		for i, sn := range []string{first, second} {
+			if _, err := enrollLimited(s, tenant, sn, "HW-"+sn, newKey(t), t0.Add(time.Duration(i)*10*time.Minute), limits); err != nil {
+				t.Fatalf("Mac %d: %v", i+1, err)
+			}
+		}
+		if _, err := enrollLimited(s, tenant, third, "HW-"+third, newKey(t), t0.Add(20*time.Minute), limits); !errors.Is(err, ErrRateLimited) {
+			t.Fatalf("a third new Mac in the hour: err = %v, want ErrRateLimited", err)
+		}
+		if creds, err := s.ListCredentials(ctx, tenant, CredentialFilter{Serial: third}); err != nil || len(creds) != 0 {
+			t.Fatalf("a refused enrolment left %d credentials, %v", len(creds), err)
+		}
+		// Another tenant has its own count.
+		other := tenant + "-other"
+		if _, err := enrollLimited(s, other, third, "HW-"+third, newKey(t), t0.Add(20*time.Minute), limits); err != nil {
+			t.Fatalf("another tenant: %v", err)
+		}
+		// A Mac that already enrolled is not a new one, whatever the count: its next key is
+		// held for approval, not refused.
+		if res, err := enrollLimited(s, tenant, first, "HW-"+first, newKey(t), t0.Add(25*time.Minute), limits); err != nil || res.Credential.Status != CredentialPending {
+			t.Fatalf("a known Mac's new key = %+v, %v", res.Credential, err)
+		}
+		// The hour rolls: the first Mac is an hour old, so only the second still counts.
+		if _, err := enrollLimited(s, tenant, third, "HW-"+third, newKey(t), t0.Add(time.Hour), limits); err != nil {
+			t.Fatalf("an hour after the first Mac: %v", err)
+		}
+		if _, err := enrollLimited(s, tenant, fourth, "HW-"+fourth, newKey(t), t0.Add(time.Hour), limits); !errors.Is(err, ErrRateLimited) {
+			t.Fatalf("a fourth new Mac: err = %v, want ErrRateLimited", err)
+		}
+	})
+
+	// A Mac counts as new by its first key, so its later keys don't use up the allowance.
+	t.Run("only a serial's first key counts as a new Mac", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		limits := EnrollLimits{NewMacsPerHour: 2}
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0.Add(-3*time.Hour), limits); err != nil {
+			t.Fatal(err)
+		}
+		if res, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0, limits); err != nil || res.Credential.Status != CredentialPending {
+			t.Fatalf("an old Mac's new key = %+v, %v", res.Credential, err)
+		}
+		for i := 0; i < 2; i++ {
+			sn := fmt.Sprintf("C02ONLY%d%s", i, randomHex(t))
+			if _, err := enrollLimited(s, tenant, sn, "HW-"+sn, newKey(t), t0, limits); err != nil {
+				t.Fatalf("new Mac %d: %v", i+1, err)
+			}
+		}
+		sn := "C02ONLY3" + randomHex(t)
+		if _, err := enrollLimited(s, tenant, sn, "HW-"+sn, newKey(t), t0, limits); !errors.Is(err, ErrRateLimited) {
+			t.Fatalf("a third new Mac: err = %v, want ErrRateLimited", err)
+		}
+	})
+
+	// A shared token could also pile keys onto one serial, so a serial may take only so many
+	// in 24 hours, in any status.
+	t.Run("keys per Mac per day are limited", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		limits := EnrollLimits{KeysPerMacPerDay: 2}
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0, limits); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0.Add(time.Hour), limits); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0.Add(2*time.Hour), limits); !errors.Is(err, ErrRateLimited) {
+			t.Fatalf("a third key in the day: err = %v, want ErrRateLimited", err)
+		}
+		if creds, err := s.ListCredentials(ctx, tenant, CredentialFilter{Serial: serial}); err != nil || len(creds) != 2 {
+			t.Fatalf("%d credentials after a refusal, %v", len(creds), err)
+		}
+		// Another Mac of the same tenant has its own count.
+		other := "C02OTHER" + randomHex(t)
+		if _, err := enrollLimited(s, tenant, other, "HW", newKey(t), t0.Add(2*time.Hour), limits); err != nil {
+			t.Fatalf("another Mac: %v", err)
+		}
+		// Revoking a key doesn't give its slot back.
+		first, err := s.ListCredentials(ctx, tenant, CredentialFilter{Serial: serial, Status: CredentialActive})
+		if err != nil || len(first) != 1 {
+			t.Fatalf("active = %d, %v", len(first), err)
+		}
+		if _, err := s.RevokeCredential(ctx, tenant, first[0].DeviceID, t0.Add(3*time.Hour), auditFor(t, tenant, AuditRevokeEnrollment)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0.Add(4*time.Hour), limits); !errors.Is(err, ErrRateLimited) {
+			t.Fatalf("after a revoke: err = %v, want ErrRateLimited", err)
+		}
+		// The day rolls: the first key is 24 hours old, so only the second still counts.
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0.Add(24*time.Hour), limits); err != nil {
+			t.Fatalf("24 hours after the first key: %v", err)
+		}
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0.Add(24*time.Hour+time.Minute), limits); !errors.Is(err, ErrRateLimited) {
+			t.Fatalf("a third key in the new day: err = %v, want ErrRateLimited", err)
+		}
+	})
+
+	// The Mac that retries is the one already enrolled, so a limit never turns it away.
+	t.Run("a retry is never limited", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		limits := EnrollLimits{NewMacsPerHour: 1, KeysPerMacPerDay: 2}
+		activeKey, pendingKey := newKey(t), newKey(t)
+		active, err := enrollLimited(s, tenant, serial, "HW", activeKey, t0, limits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pending, err := enrollLimited(s, tenant, serial, "HW", pendingKey, t0.Add(time.Minute), limits)
+		if err != nil || pending.Credential.Status != CredentialPending {
+			t.Fatalf("pending = %+v, %v", pending.Credential, err)
+		}
+		// The tenant is at its new-Mac limit and the serial at its key limit.
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0.Add(2*time.Minute), limits); !errors.Is(err, ErrRateLimited) {
+			t.Fatalf("a third key: err = %v, want ErrRateLimited", err)
+		}
+		for name, c := range map[string]struct {
+			key  []byte
+			want DeviceCredential
+		}{"active": {activeKey, active.Credential}, "pending": {pendingKey, pending.Credential}} {
+			again, err := enrollLimited(s, tenant, serial, "HW", c.key, t0.Add(3*time.Minute), limits)
+			if err != nil || again.Credential.DeviceID != c.want.DeviceID || again.Credential.Status != c.want.Status {
+				t.Fatalf("%s retry = %+v, %v", name, again.Credential, err)
+			}
+		}
+		// Another tenant's key is a conflict, which is decided before any limit.
+		if _, err := enrollLimited(s, tenant+"-other", "C02ELSE"+randomHex(t), "HW", activeKey, t0.Add(3*time.Minute), EnrollLimits{NewMacsPerHour: 1, KeysPerMacPerDay: 1}); !errors.Is(err, ErrConflict) {
+			t.Fatalf("another tenant's key: err = %v, want ErrConflict", err)
+		}
+	})
+
+	t.Run("zero means no limit", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		limits := EnrollLimits{}
+		for i := 0; i < 40; i++ {
+			sn := fmt.Sprintf("C02ZERO%02d%s", i, randomHex(t))
+			if _, err := enrollLimited(s, tenant, sn, "HW-"+sn, newKey(t), t0, limits); err != nil {
+				t.Fatalf("Mac %d: %v", i+1, err)
+			}
+		}
+		for i := 0; i < 12; i++ {
+			if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0, limits); err != nil {
+				t.Fatalf("key %d: %v", i+1, err)
+			}
+		}
+		// Each limit stands alone: one at 0 leaves the other in force.
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0, EnrollLimits{NewMacsPerHour: 1}); err != nil {
+			t.Fatalf("only the new-Mac limit set: %v", err)
+		}
+		sn := "C02ZERO-X" + randomHex(t)
+		if _, err := enrollLimited(s, tenant, sn, "HW", newKey(t), t0, EnrollLimits{KeysPerMacPerDay: 1}); err != nil {
+			t.Fatalf("only the key limit set, a first key: %v", err)
+		}
+	})
+
+	// The limits are counted under the database's locks, so requests made at once can't
+	// all see room for one more.
+	t.Run("limits hold when Macs enrol at the same moment", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		const attempts = 12
+		race := func(limits EnrollLimits, serialFor func(i int) string) (ok, limited int) {
+			var wg sync.WaitGroup
+			var mu sync.Mutex
+			for i := 0; i < attempts; i++ {
+				key, sn := newKey(t), serialFor(i)
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					_, err := enrollLimited(s, tenant, sn, "HW", key, t0, limits)
+					mu.Lock()
+					defer mu.Unlock()
+					switch {
+					case err == nil:
+						ok++
+					case errors.Is(err, ErrRateLimited):
+						limited++
+					default:
+						t.Errorf("enrol: %v", err)
+					}
+				}()
+			}
+			wg.Wait()
+			return ok, limited
+		}
+		ok, limited := race(EnrollLimits{NewMacsPerHour: 3}, func(i int) string { return fmt.Sprintf("C02RACE%02d%s", i, randomHex(t)) })
+		if ok != 3 || limited != attempts-3 {
+			t.Fatalf("new Macs: %d enrolled and %d refused, want 3 and %d", ok, limited, attempts-3)
+		}
+		ok, limited = race(EnrollLimits{KeysPerMacPerDay: 4}, func(int) string { return serial })
+		if ok != 4 || limited != attempts-4 {
+			t.Fatalf("keys for one Mac: %d enrolled and %d refused, want 4 and %d", ok, limited, attempts-4)
+		}
+	})
+
+	// A key from different hardware is a different Mac claiming the serial, which an admin
+	// should see even when the tenant has turned approval off for reinstalls.
+	t.Run("a key from different hardware waits even with approval off", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		if err := s.PutTenantSettings(ctx, tenant, TenantSettings{ReenrollmentRequiresApproval: false}, auditFor(t, tenant, AuditChangeSettings)); err != nil {
+			t.Fatal(err)
+		}
+		first, err := enrollLimited(s, tenant, serial, "HW-ORIGINAL", newKey(t), t0, EnrollLimits{})
+		if err != nil || first.Credential.Status != CredentialActive {
+			t.Fatalf("first = %+v, %v", first.Credential, err)
+		}
+		other, err := enrollLimited(s, tenant, serial, "HW-SOMEONE-ELSE", newKey(t), t0.Add(time.Hour), EnrollLimits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if other.Credential.Status != CredentialPending || other.Credential.ActivatedAt != nil || other.Replaced != "" {
+			t.Fatalf("other hardware = %+v replaced = %q, want pending and nothing replaced", other.Credential, other.Replaced)
+		}
+		if other.Previous == nil || other.Previous.DeviceID != first.Credential.DeviceID {
+			t.Fatalf("previous = %+v, want the first credential", other.Previous)
+		}
+		if lookup(t, s, first.Credential.DeviceID).Status != CredentialActive {
+			t.Fatal("the active credential was replaced before approval")
+		}
+		// The same hardware still replaces, as the tenant chose.
+		same, err := enrollLimited(s, tenant, serial, "HW-ORIGINAL", newKey(t), t0.Add(2*time.Hour), EnrollLimits{})
+		if err != nil || same.Credential.Status != CredentialActive || same.Replaced != first.Credential.DeviceID {
+			t.Fatalf("same hardware = %+v replaced = %q, %v", same.Credential, same.Replaced, err)
+		}
+		if lookup(t, s, first.Credential.DeviceID).Status != CredentialRevoked {
+			t.Fatal("the first credential is still active")
+		}
+		// Approving the held key is the admin's call, and then it is the Mac.
+		approved, err := s.ApproveCredential(ctx, tenant, other.Credential.DeviceID, t0.Add(3*time.Hour), auditFor(t, tenant, AuditApproveEnrollment))
+		if err != nil || approved.Status != CredentialActive {
+			t.Fatalf("approved = %+v, %v", approved, err)
+		}
+		if lookup(t, s, same.Credential.DeviceID).Status != CredentialRevoked {
+			t.Fatal("the replaced key is still active after the approval")
+		}
+	})
+
+	// With nothing active there is no hardware to compare to, so approval alone decides.
+	t.Run("different hardware needs an active key to be compared with", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		if err := s.PutTenantSettings(ctx, tenant, TenantSettings{ReenrollmentRequiresApproval: false}, auditFor(t, tenant, AuditChangeSettings)); err != nil {
+			t.Fatal(err)
+		}
+		first, err := enrollLimited(s, tenant, serial, "HW-ORIGINAL", newKey(t), t0, EnrollLimits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.RevokeCredential(ctx, tenant, first.Credential.DeviceID, t0.Add(time.Minute), auditFor(t, tenant, AuditRevokeEnrollment)); err != nil {
+			t.Fatal(err)
+		}
+		res, err := enrollLimited(s, tenant, serial, "HW-SOMEONE-ELSE", newKey(t), t0.Add(time.Hour), EnrollLimits{})
+		if err != nil || res.Credential.Status != CredentialActive || res.Previous != nil {
+			t.Fatalf("after a revoke = %+v previous = %+v, %v", res.Credential, res.Previous, err)
+		}
+	})
+}
+
+// TestPostgresRefusesNewMacsWithoutTheTenantLock checks that a new Mac over the limit is
+// refused without waiting for the tenant's new-Mac lock, so a flood of refused serials
+// doesn't queue on it, and that a new Mac with room still waits for it.
+func TestPostgresRefusesNewMacsWithoutTheTenantLock(t *testing.T) {
+	url := os.Getenv("ALTIWARD_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("ALTIWARD_TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	p, err := OpenPostgres(ctx, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+	t0 := testfixture.Time(t, "2026-10-16T12:00:00Z")
+	tenant := "tenant-" + randomHex(t)
+	enrol := func(ctx context.Context, limits EnrollLimits) error {
+		sn := "C02LOCK" + randomHex(t)
+		_, err := p.Enroll(ctx, DeviceCredential{
+			DeviceID: newUUID(t), TenantID: tenant, Serial: sn, HardwareUUID: "HW-" + sn, PublicKey: newKey(t), CreatedAt: t0,
+		}, limits)
+		return err
+	}
+	for i := 0; i < 2; i++ {
+		if err := enrol(ctx, EnrollLimits{NewMacsPerHour: 2}); err != nil {
+			t.Fatalf("Mac %d: %v", i+1, err)
+		}
+	}
+
+	// Another enrolment holds the tenant's lock.
+	holder, err := p.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = holder.Rollback(ctx) }()
+	if err := lockTenantNewMacs(ctx, holder, tenant); err != nil {
+		t.Fatal(err)
+	}
+
+	short, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := enrol(short, EnrollLimits{NewMacsPerHour: 2}); !errors.Is(err, ErrNewMacsLimited) {
+		t.Fatalf("over the limit while the lock is held = %v, want %v", err, ErrNewMacsLimited)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- enrol(ctx, EnrollLimits{NewMacsPerHour: 5}) }()
+	select {
+	case err := <-done:
+		t.Fatalf("with room, enrolled without waiting for the lock: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err := holder.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("with room, after the lock is released: %v", err)
+	}
 }
 
 func newKey(t *testing.T) []byte {

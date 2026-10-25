@@ -4,6 +4,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -17,12 +18,22 @@ import (
 )
 
 // Codes on agent-facing errors. The agent re-enrolls on credentialInvalid, waits on
-// enrollmentPending and corrects its clock from the Date header on clockSkew.
+// enrollmentPending and corrects its clock from the Date header on clockSkew. It treats
+// enrollmentRateLimited, like any other refusal to enrol, as a reason to try again later.
 const (
-	codeCredentialInvalid = "credential_invalid"
-	codeEnrollmentPending = "enrollment_pending"
-	codeClockSkew         = "clock_skew"
+	codeCredentialInvalid     = "credential_invalid"
+	codeEnrollmentPending     = "enrollment_pending"
+	codeClockSkew             = "clock_skew"
+	codeEnrollmentRateLimited = "enrollment_rate_limited"
 )
+
+// enrollRetryAfter is the seconds a refused enrolment is told to wait. The shortest limit
+// counts over an hour.
+const enrollRetryAfter = "3600"
+
+// enrollEventTimeout bounds the write of an enrolment's event, which doesn't stop when the
+// request does.
+const enrollEventTimeout = 10 * time.Second
 
 // requireDevice authenticates a request signed by an enrolled Mac and hands the
 // handler a principal carrying its tenant, device ID and serial.
@@ -107,12 +118,23 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal
 		s.serverError(w, "device id", err)
 		return
 	}
+	now := s.now()
 	res, err := s.store.Enroll(r.Context(), store.DeviceCredential{
 		DeviceID: id, TenantID: p.TenantID, Serial: req.Serial, HardwareUUID: req.HardwareUUID,
-		PublicKey: spki, KeyStorage: store.ParseKeyStorage(req.KeyStorage), CreatedAt: s.now(),
-	})
+		PublicKey: spki, KeyStorage: store.ParseKeyStorage(req.KeyStorage), CreatedAt: now,
+	}, s.enrollLimits)
 	if errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "this key is enrolled elsewhere; generate a new one")
+		return
+	}
+	if errors.Is(err, store.ErrRateLimited) {
+		limit, msg := "keys_per_mac_per_day", "too many keys have been enrolled for this Mac in the last 24 hours; try again later"
+		if errors.Is(err, store.ErrNewMacsLimited) {
+			limit, msg = "new_macs_per_hour", "too many new Macs have been enrolled in the last hour; try again later"
+		}
+		s.log.Warn("enrolment rate limited", "tenant", p.TenantID, "serial", req.Serial, "limit", limit)
+		w.Header().Set("Retry-After", enrollRetryAfter)
+		writeCodedError(w, http.StatusTooManyRequests, codeEnrollmentRateLimited, msg)
 		return
 	}
 	if err != nil {
@@ -121,18 +143,22 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal
 		return
 	}
 	c := res.Credential
-	switch {
-	case res.Replaced != "":
-		s.log.Warn("device re-enrolled; previous credential revoked",
-			"tenant", p.TenantID, "serial", c.Serial, "device_id", c.DeviceID, "replaced", res.Replaced,
-			"key_storage", c.KeyStorage)
-	case c.DeviceID == id && c.Status == store.CredentialPending:
-		s.log.Warn("device enrollment awaiting approval", "tenant", p.TenantID, "serial", c.Serial, "device_id", c.DeviceID,
-			"key_storage", c.KeyStorage)
-	}
-	status := http.StatusOK // the same key again: a retry
+	status := http.StatusOK // the same key again: a retry, which raises nothing
 	if c.DeviceID == id {
 		status = http.StatusCreated
+		// The credential is stored either way; a Mac that can't be reported still enrols. The
+		// agent's retry gets the stored credential and raises nothing, so a client that gives
+		// up now must not stop the event being stored. A database that doesn't answer still
+		// mustn't hold the handler, so the write gets enrollEventTimeout.
+		e := enrollmentEvent(p.TenantID, res, r.UserAgent(), p.Actor, now)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), enrollEventTimeout)
+		_, err := s.store.Ingest(ctx, p.TenantID, []event.Event{e}, now)
+		cancel()
+		if err != nil {
+			s.log.Error("enrollment event not recorded", "tenant", p.TenantID, "serial", c.Serial, "device_id", c.DeviceID, "err", err)
+		}
+		s.log.Info("device enrolled", "tenant", p.TenantID, "serial", c.Serial, "device_id", c.DeviceID,
+			"state", e.Detail["state"], "key_storage", c.KeyStorage)
 	}
 	writeJSON(w, status, map[string]string{"device_id": c.DeviceID, "status": string(c.Status)})
 }

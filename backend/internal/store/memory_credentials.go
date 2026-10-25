@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func (m *Memory) Enroll(_ context.Context, c DeviceCredential) (EnrollResult, error) {
+func (m *Memory) Enroll(_ context.Context, c DeviceCredential, limits EnrollLimits) (EnrollResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.creds {
@@ -18,9 +18,16 @@ func (m *Memory) Enroll(_ context.Context, c DeviceCredential) (EnrollResult, er
 			return EnrollResult{Credential: existing}, nil
 		}
 	}
+	if err := m.enforceEnrollLimits(c, limits); err != nil {
+		return EnrollResult{}, err
+	}
 	var res EnrollResult
 	active, hasActive := m.activeFor(c.TenantID, c.Serial)
-	if m.tenantSettings(c.TenantID).ReenrollmentRequiresApproval && m.enrolledBefore(c.TenantID, c.Serial) {
+	if hasActive {
+		res.Previous = ptr(active)
+	}
+	if holdsForApproval(m.tenantSettings(c.TenantID).ReenrollmentRequiresApproval, m.enrolledBefore(c.TenantID, c.Serial),
+		res.Previous, c.HardwareUUID) {
 		c.Status = CredentialPending
 	} else {
 		c.Status = CredentialActive
@@ -118,6 +125,43 @@ func (m *Memory) activeFor(tenantID, serial string) (DeviceCredential, bool) {
 		}
 	}
 	return DeviceCredential{}, false
+}
+
+// enforceEnrollLimits expects m.mu held. It counts the tenant's serials by their earliest
+// credential, and the serial's own credentials, over the windows ending at c.CreatedAt.
+func (m *Memory) enforceEnrollLimits(c DeviceCredential, limits EnrollLimits) error {
+	if limits == (EnrollLimits{}) {
+		return nil
+	}
+	newMacsSince, keysSince := c.CreatedAt.Add(-newMacsWindow), c.CreatedAt.Add(-keysPerMacWindow)
+	firstKey := map[string]time.Time{}
+	keys := 0
+	for _, o := range m.creds {
+		if o.TenantID != c.TenantID {
+			continue
+		}
+		if first, ok := firstKey[o.Serial]; !ok || o.CreatedAt.Before(first) {
+			firstKey[o.Serial] = o.CreatedAt
+		}
+		if o.Serial == c.Serial && o.CreatedAt.After(keysSince) {
+			keys++
+		}
+	}
+	if _, known := firstKey[c.Serial]; !known {
+		newMacs := 0
+		for _, first := range firstKey {
+			if first.After(newMacsSince) {
+				newMacs++
+			}
+		}
+		if limits.refusesNewMac(newMacs) {
+			return ErrNewMacsLimited
+		}
+	}
+	if limits.refusesKey(keys) {
+		return ErrKeysPerMacLimited
+	}
+	return nil
 }
 
 func (m *Memory) enrolledBefore(tenantID, serial string) bool {

@@ -125,11 +125,13 @@ func NewDevice(tenantID, serial string) Device {
 }
 
 // Apply updates the device from any event; the newest reading wins. Events the backend
-// raises itself (agent.silent) are not a check-in, so they leave the seen times and the
-// versions alone.
+// raises itself are not a check-in, so they leave the seen times and the versions alone.
+// Only agent.silent changes the device, by its Silence.
 func (d *Device) Apply(e event.Event) {
-	if e.Type == event.AgentSilent {
-		d.applySilence(e)
+	if e.Type.IsServerRaised() {
+		if e.Type == event.AgentSilent {
+			d.applySilence(e)
+		}
 		return
 	}
 	if d.FirstSeenAt.IsZero() || e.Timestamp.Before(d.FirstSeenAt) {

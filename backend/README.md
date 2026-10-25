@@ -2,17 +2,18 @@
 
 `altiward-api` is one Go binary. It handles agent ingestion, serves the read API behind
 the console, and runs the SIEM export workers and the monitor that raises `agent.silent`
-when a Mac stops checking in.
+when a Mac stops checking in. The backend raises one other event itself, `agent.enrollment`,
+when a Mac enrols a key. Agents can't send either: the API refuses both types.
 
 | Package | Role |
 | --- | --- |
 | `internal/event` | Core event type, strict decoding, validation |
 | `internal/session` | Pure reducers: events → elevation sessions and device records |
 | `internal/store` | `Store` interface; Postgres (production) and in-memory (tests, dev) implementations |
-| `internal/api` | HTTP handlers |
+| `internal/api` | HTTP handlers. `enrollment_event.go` builds the `agent.enrollment` event stored when a key enrols |
 | `internal/ocsf` | Mapping to OCSF 1.9.0 for export |
 | `internal/export` | Outbox worker plus Splunk, Sentinel and syslog (CEF) sinks |
-| `internal/monitor` | Events the backend raises itself: `agent.silent` for a Mac that stops checking in |
+| `internal/monitor` | Raises `agent.silent` for a Mac that stops checking in |
 | `internal/retention` | Removes audit entries past `ALTIWARD_AUDIT_RETENTION_DAYS`, daily |
 | `internal/diagnose` | The `altiward-api diagnose` support report |
 | `internal/release` | `OldestSupportedAgent` and the agent version check |
@@ -49,8 +50,8 @@ token in `X-CSRF-Token`; requests with a token don't.
 
 | Method and path | Purpose |
 | --- | --- |
-| `POST /v1/agent/enroll` | Enrollment token. `{"serial", "hardware_uuid", "public_key"}` (base64 P-256 SubjectPublicKeyInfo). Responds `{"device_id", "status"}`: 201 for a new credential, 200 for the same key again. |
-| `POST /v1/agent/events` | Device signature. `{"events": [...]}`, up to 500. Responds `{"accepted": [], "duplicate": [], "rejected": [{"event_id", "error"}]}`. Events whose serial is not the signing Mac's are rejected. Auth failures carry `code`: `credential_invalid`, `enrollment_pending` or `clock_skew`. |
+| `POST /v1/agent/enroll` | Enrollment token. `{"serial", "hardware_uuid", "public_key"}` (base64 P-256 SubjectPublicKeyInfo). Responds `{"device_id", "status"}`: 201 for a new credential, 200 for the same key again. A new key is `pending` when the Mac enrolled before and approval is on, or when its `hardware_uuid` differs from the Mac's active key's, whatever the setting. Over a limit (`ALTIWARD_ENROLL_NEW_MACS_PER_HOUR` or `ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY`) it answers 429 with `Retry-After: 3600` and `code`: `enrollment_rate_limited`; the same key again is never limited. |
+| `POST /v1/agent/events` | Device signature. `{"events": [...]}`, up to 500. Responds `{"accepted": [], "duplicate": [], "rejected": [{"event_id", "error", "code"}]}`. Events whose serial is not the signing Mac's are rejected with `code`: `device_mismatch` (no other rejection has a `code`). Auth failures carry `code`: `credential_invalid`, `enrollment_pending` or `clock_skew`. |
 | `GET /v1/sessions` | Newest first. Query: `user`, `device`, `open=true`, `since`, `until` (RFC 3339, on start time), `limit` (≤ 500). Each session adds `open`, `allowed_seconds`, `actual_seconds` and `overran`. |
 | `GET /v1/sessions/{id}` | `{"session": ..., "events": [...]}`: the timeline, oldest first, with `received_at`. |
 | `GET /v1/devices` | Fleet inventory: versions, last check-in, current `admin_members` and `permanent_admins`, Privileges config. |
@@ -97,6 +98,8 @@ out-of-band session).
 | `ALTIWARD_CONSOLE_TOKENS` | None | Same format |
 | `ALTIWARD_EXPORT_INTERVAL` | `10s` | How often export workers poll |
 | `ALTIWARD_AUDIT_RETENTION_DAYS` | None | Remove audit entries older than this, daily; at least 365. Unset or `0` keeps them forever. Entries still waiting for export stay until sent, and the database refuses to delete any younger than 365 days. |
+| `ALTIWARD_ENROLL_NEW_MACS_PER_HOUR` | `1000` | How many serials new to a tenant may enrol in an hour. More are refused with 429 until the hour has passed. `0` turns the limit off. |
+| `ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY` | `5` | How many keys one serial may enrol in 24 hours, in any status. `0` turns the limit off. |
 | `ALTIWARD_UPDATE_CHECK` | `true` | `false` stops the console's browser asking `api.github.com` for newer releases, and drops it from the console's `connect-src`. The server never asks. |
 | `ALTIWARD_CONSOLE_DIR` | None | The built console (`console/dist`) to serve from the API's origin. Unset means API only. Start fails if it has no `index.html`. |
 | `ALTIWARD_OIDC_ISSUER` | None | The identity provider's issuer URL. Turns on console single sign-on; console tokens become break-glass logins. |

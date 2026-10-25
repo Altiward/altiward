@@ -27,6 +27,10 @@
 //	                              account signs in or uses an approval, sudo or su; Logoff when
 //	                              the Mac saw the sign-in end. A sign-in's two records share
 //	                              the use ID as metadata.correlation_uid
+//	agent.enrollment            → API Activity (6003), Create (1), like the console's approval and
+//	                              revoke of an enrolment: Informational when a Mac enrols,
+//	                              Medium (an alert) when it enrols again and waits for approval,
+//	                              High (an alert) when a new key replaced the old one unapproved
 //	agent.health, activity      → not exported (inventory and v2 telemetry)
 //	console actions             → API Activity (6003); see audit.go
 //
@@ -89,6 +93,8 @@ func Map(e store.StoredEvent, tenantID string) []Record {
 		return []Record{silent(e, tenantID)}
 	case event.AdminPermanentUse:
 		return []Record{permanentUse(e, tenantID)}
+	case event.AgentEnrollment:
+		return []Record{enrollment(e, tenantID)}
 	}
 	return nil
 }
@@ -335,6 +341,43 @@ func silent(e store.StoredEvent, tenantID string) Record {
 		"analytic": map[string]any{"name": "altiward.agent_silent", "type_id": 1, "type": "Rule"},
 	}
 	r["message"] = desc
+	return r
+}
+
+// enrollment maps an agent.enrollment event, raised by the server when a Mac registers a
+// key. It is an API Activity record like the console's approval and revoke of an
+// enrolment, so a SIEM sees the whole lifecycle in one class: the resource is the
+// enrolment (the device credential) and the actor is the enrolment token's fingerprint,
+// in the same field as a console token's.
+func enrollment(e store.StoredEvent, tenantID string) Record {
+	state, _ := e.Detail["state"].(string)
+	severity, alert := SeverityInformational, false
+	msg := fmt.Sprintf("%s enrolled a new key", e.Device.Serial)
+	switch state {
+	case event.EnrollmentStatePending:
+		severity, alert = SeverityMedium, true
+		msg = fmt.Sprintf("%s enrolled again with a new key, waiting for approval", e.Device.Serial)
+	case event.EnrollmentStateReplaced:
+		severity, alert = SeverityHigh, true
+		msg = fmt.Sprintf("%s enrolled again; the new key replaced the previous one without approval", e.Device.Serial)
+	}
+	r := base(e, tenantID, 6003, "API Activity", 6, "Application Activity", 1, "Create", severity)
+	if hostOS, ok := r["device"].(map[string]any)["os"].(map[string]any); ok && hostOS["version"] == "" {
+		delete(hostOS, "version") // the server doesn't know it
+	}
+	if token := detailString(e.Detail, "token"); token != "" {
+		r["actor"] = map[string]any{"user": map[string]any{"name": token}}
+	}
+	r["api"] = map[string]any{"operation": "enroll", "service": map[string]any{"name": "Altiward server"}}
+	r["src_endpoint"] = map[string]any{"uid": e.Device.HardwareUUID, "hw_info": map[string]any{"serial_number": e.Device.Serial}}
+	r["resources"] = []map[string]any{{
+		"type": "Enrollment", "uid": detailString(e.Detail, "device_id"), "name": e.Device.Serial,
+	}}
+	if alert {
+		r["is_alert"] = true
+	}
+	r["status_id"], r["status"] = 1, "Success"
+	r["message"] = msg
 	return r
 }
 

@@ -61,6 +61,7 @@ describe("Settings", () => {
     await waitFor(() => expect(approval).toBeEnabled());
     expect(approval).toBeChecked();
     expect(screen.getByText(/Turning this off lets anyone with the enrolment token/)).toBeInTheDocument();
+    expect(screen.getByText(/by naming its serial and hardware UUID\./)).toBeInTheDocument();
     await userEvent.click(approval);
     expect(api.putSettings).toHaveBeenCalledWith({
       reenrollment_requires_approval: false, silent_after_hours: 48, silent_alerts_off: false,

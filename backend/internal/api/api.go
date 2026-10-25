@@ -58,6 +58,7 @@ type Server struct {
 	// Where it runs, when that changes how to upgrade: "azure-container-apps", and the app's name.
 	platform, app string
 	sinks         []string // the configured SIEM export sinks
+	enrollLimits  store.EnrollLimits
 
 	sso           *sso.Provider // nil: console tokens only
 	secureCookies bool
@@ -78,6 +79,11 @@ func WithVersion(v string) Option { return func(s *Server) { s.version = v } }
 // releases; on without it. Pass the same value to WithConsole, whose CSP allows the check.
 func WithUpdateCheck(on bool) Option { return func(s *Server) { s.updateCheck = on } }
 
+// WithEnrollLimits sets how fast one tenant's enrolment token can add Macs and keys
+// (ALTIWARD_ENROLL_NEW_MACS_PER_HOUR and ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY); the
+// defaults, store.DefaultEnrollLimits, without it. A limit of 0 turns that one off.
+func WithEnrollLimits(l store.EnrollLimits) Option { return func(s *Server) { s.enrollLimits = l } }
+
 // WithAzureContainerApp says the server runs as the named Azure container app, so GET
 // /v1/about tells the console to show how to upgrade one.
 func WithAzureContainerApp(name string) Option {
@@ -85,7 +91,8 @@ func WithAzureContainerApp(name string) Option {
 }
 
 func New(s store.Store, tokens *auth.Tokens, log *slog.Logger, now func() time.Time, opts ...Option) http.Handler {
-	srv := &Server{store: s, tokens: tokens, log: log, now: now, version: "dev", updateCheck: true}
+	srv := &Server{store: s, tokens: tokens, log: log, now: now, version: "dev", updateCheck: true,
+		enrollLimits: store.DefaultEnrollLimits()}
 	for _, o := range opts {
 		o(srv)
 	}

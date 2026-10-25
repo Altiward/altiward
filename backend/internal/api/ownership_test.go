@@ -66,7 +66,8 @@ func TestSignedDeviceCannotChangeAnotherSessionsOwner(t *testing.T) {
 				t.Fatalf("victim session changed: %+v %v", got, err)
 			}
 			pending, _ := st.ExportStatus(ctx, "acme")
-			if len(pending) != 1 || pending[0].Pending != 1 {
+			// The two enrolments and the grant, and nothing from the refused batch.
+			if len(pending) != 1 || pending[0].Pending != 3 {
 				t.Fatalf("rejected batch exported: %+v", pending)
 			}
 		})

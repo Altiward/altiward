@@ -79,7 +79,7 @@ func TestPostgresUpgradesFromEveryMigration(t *testing.T) {
 			enrolled, err := s.Enroll(ctx, DeviceCredential{
 				DeviceID: newUUID(t), TenantID: "acme", Serial: "C02NEW000001", HardwareUUID: "HW-NEW", PublicKey: newKey(t),
 				KeyStorage: KeyStorageSecureEnclave, CreatedAt: now,
-			})
+			}, DefaultEnrollLimits()) // the limits count the old rows too
 			if err != nil || enrolled.Credential.KeyStorage != KeyStorageSecureEnclave {
 				t.Fatalf("enroll after upgrade: %+v, %v", enrolled, err)
 			}

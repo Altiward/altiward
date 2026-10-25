@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Command } from "./api";
 import {
-  agentOutdated, commandOutcome, dateTime, endReasonLabel, expiresAfter, flagLabel, formatDuration, gauge, integrityCheckLabel, permanentUseMethodLabel, persistenceLines, relativeTime, shortFingerprint, tamperStateLabel,
+  agentOutdated, commandOutcome, dateTime, endReasonLabel, expiresAfter, flagLabel, formatDuration, gauge, integrityCheckLabel, lastCheckIn, permanentUseMethodLabel, persistenceLines, relativeTime, shortFingerprint, tamperStateLabel,
 } from "./format";
 
 // A missing value is a word that says why (#105).
@@ -47,6 +47,15 @@ describe("relativeTime", () => {
     ["2026-10-16T10:00:00Z", "2 h ago"],
     ["2026-10-14T12:00:00Z", "2 d ago"],
   ])("%s is %s", (iso, want) => expect(relativeTime(iso, now)).toBe(want));
+});
+
+describe("lastCheckIn", () => {
+  const mac = { last_seen_at: "2026-10-16T09:00:00Z", last_health_at: "2026-10-16T10:00:00Z", last_received_at: "2026-10-16T11:00:00Z" };
+  it("prefers the server's clock, then the newest health reading, then the newest event", () => {
+    expect(lastCheckIn(mac)).toBe("2026-10-16T11:00:00Z");
+    expect(lastCheckIn({ ...mac, last_received_at: undefined })).toBe("2026-10-16T10:00:00Z");
+    expect(lastCheckIn({ ...mac, last_received_at: undefined, last_health_at: null })).toBe("2026-10-16T09:00:00Z");
+  });
 });
 
 describe("gauge", () => {

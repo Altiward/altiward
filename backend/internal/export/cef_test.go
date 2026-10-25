@@ -59,6 +59,21 @@ func TestCEFForAFindingKeysOnTheAnalytic(t *testing.T) {
 	}
 }
 
+func TestCEFForAnEnrollment(t *testing.T) {
+	got := export.CEF(record(t, "agent-enrollment-pending"))
+	if !strings.Contains(got, "|agent.enrollment|API Activity: Create|5|") {
+		t.Fatalf("header: %s", got)
+	}
+	for _, want := range []string{
+		"cat=API Activity", "act=Create", "dvchost=C02XK0AAJGH5",
+		"msg=C02XK0AAJGH5 enrolled again with a new key, waiting for approval", "cs6Label=eventType cs6=agent.enrollment",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in\n%s", want, got)
+		}
+	}
+}
+
 func TestCEFForAConsoleAction(t *testing.T) {
 	a := store.AuditEntry{ID: "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d", TenantID: "acme", Actor: "token:3f2a9c1b",
 		At: testfixture.Time(t, "2026-10-17T09:00:00Z"), Action: store.AuditRevokeSession, Target: "s1",

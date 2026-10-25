@@ -21,7 +21,11 @@ detection rules and searches are in [altiward-siem](https://github.com/Altiward/
 [the architecture guide](../docs/architecture.md#siem-boundaries).
 
 The server maps events to OCSF in `backend/internal/ocsf`. Console audit actions also
-export as OCSF API Activity (`class_uid` 6003), with event type `console.<action>`.
+export as OCSF API Activity (`class_uid` 6003), with event type `console.<action>`. So
+does `agent.enrollment`, which the server raises when a Mac enrols a key, as activity
+Create. Its severity says which state it is: Informational for `enrolled`, Medium (an
+alert) for `pending` and High (an alert) for `replaced`. In CEF, rules key on the
+signature `agent.enrollment` and the severity ([syslog](syslog/README.md#starter-rules)).
 `ocsf-examples/`: the server's OCSF output for sample events (and altiward-siem's
 fixtures), kept current by
 `TestGoldenExamples` (`go test ./backend/internal/ocsf -run Golden -update` rewrites it).

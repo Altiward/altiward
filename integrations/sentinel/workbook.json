@@ -304,7 +304,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "AltiwardOCSF_CL\n| where isnotempty(DeviceSerial) and not(tostring(Ocsf.unmapped.altiward.event_type) startswith \"console.\")\n| summarize arg_max(TimeGenerated, Version = tostring(Ocsf.metadata.product.version)) by DeviceSerial\n| summarize Macs = count() by Version\n| order by Version desc",
+        "query": "AltiwardOCSF_CL\n| extend Ev = tostring(Ocsf.unmapped.altiward.event_type)\n| where isnotempty(DeviceSerial) and not(Ev startswith \"console.\") and Ev !in (\"agent.enrollment\", \"agent.silent\")\n| summarize arg_max(TimeGenerated, Version = tostring(Ocsf.metadata.product.version)) by DeviceSerial\n| summarize Macs = count() by Version\n| order by Version desc",
         "size": 0,
         "title": "Agent versions (Macs that sent an event in the period)",
         "queryType": 0,

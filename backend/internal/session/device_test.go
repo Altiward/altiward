@@ -104,6 +104,28 @@ func TestDevicePermanentUseCountAndCheckIn(t *testing.T) {
 	}
 }
 
+// Events the backend raises say nothing about the Mac itself, so they are not a check-in:
+// they leave the seen times and the versions alone.
+func TestServerRaisedEventsLeaveTheDeviceAlone(t *testing.T) {
+	for _, name := range []string{"agent-enrollment-pending", "agent-enrollment-enrolled"} {
+		t.Run(name, func(t *testing.T) {
+			e := testfixture.Event(t, name)
+			d := session.NewDevice("t1", e.Device.Serial)
+			d.Apply(e)
+			d.Received(e, e.Timestamp)
+			if !d.FirstSeenAt.IsZero() || !d.LastSeenAt.IsZero() || !d.LastReceivedAt.IsZero() {
+				t.Fatalf("seen times moved: %+v", d)
+			}
+			if d.HardwareUUID != "" || d.OSVersion != "" || d.AgentVersion != "" || d.PrivilegesVersion != nil {
+				t.Fatalf("identity or versions moved: %+v", d)
+			}
+			if !reflect.DeepEqual(d, session.NewDevice("t1", e.Device.Serial)) {
+				t.Fatalf("device changed: %+v", d)
+			}
+		})
+	}
+}
+
 func TestDeviceStateWithoutPermanentUses(t *testing.T) {
 	var d session.Device
 	if err := json.Unmarshal([]byte(`{"serial":"C02XK0AAJGH5","last_seen_at":"2026-10-16T10:05:00Z"}`), &d); err != nil {

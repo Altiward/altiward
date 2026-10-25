@@ -18,7 +18,7 @@ things in Azure, then prints five lines for Altiward's `.env`:
 If the workspace uses Azure Monitor Private Link, the script also creates a Data
 Collection Endpoint (DCE), `dce-altiward`, and Altiward sends to that instead.
 
-You need Contributor and User Access Administrator (or Owner) on the workspace's resource
+You need Contributor and User Access Administrator (or Owner) on the workspace resource
 group, and the right to register apps in Entra ID. The Altiward server needs outbound HTTPS
 to `login.microsoftonline.com` and to the rule's `*.ingest.monitor.azure.com` host, which
 the script prints.
@@ -78,7 +78,7 @@ They look like this:
 ALTIWARD_SENTINEL_ENDPOINT=https://dcr-altiward-abcd.westeurope-1.ingest.monitor.azure.com
 ALTIWARD_SENTINEL_DCR_ID=dcr-0123456789abcdef0123456789abcdef
 ALTIWARD_SENTINEL_TENANT_ID=<your tenant ID>
-ALTIWARD_SENTINEL_CLIENT_ID=<the app's client ID>
+ALTIWARD_SENTINEL_CLIENT_ID=<the app client ID>
 ALTIWARD_SENTINEL_CLIENT_SECRET=<the secret>
 ```
 
@@ -179,7 +179,7 @@ of an app registration. There's no secret to store, and none that expires. Run t
 with the VM's name (and `--vm-resource-group` if the VM is in another resource group):
 
 ```sh
-bash setup.sh --resource-group <the workspace's resource group> --workspace <the workspace's name> --vm <the VM's name>
+bash setup.sh --resource-group <the workspace resource group> --workspace <the workspace name> --vm <the VM's name>
 ```
 
 It creates no app. It gives the VM a system-assigned managed identity, grants that
@@ -227,9 +227,9 @@ This does what the script does, if you'd rather run each command yourself. Run i
 Cloud Shell session: if Cloud Shell reconnects, its variables are gone, so set them again.
 
 ```sh
-az account set --subscription <the workspace's subscription>
-RG=<the workspace's resource group>
-LAW=<the workspace's name>
+az account set --subscription <the workspace subscription>
+RG=<the workspace resource group>
+LAW=<the workspace name>
 LAW_ID=$(az monitor log-analytics workspace show -g $RG -n $LAW --query id -o tsv)
 LOC=$(az monitor log-analytics workspace show -g $RG -n $LAW --query location -o tsv)
 DCR_ID=${LAW_ID%%/providers/*}/providers/Microsoft.Insights/dataCollectionRules/dcr-altiward
@@ -327,8 +327,8 @@ workbook, or updates it in place when you run it again after an upgrade:
 - **Azure CLI or Cloud Shell**, with `workbook.arm.json`:
 
   ```sh
-  az deployment group create -g <the workspace's resource group> \
-    --template-file workbook.arm.json --parameters workspaceName=<the workspace's name>
+  az deployment group create -g <the workspace resource group> \
+    --template-file workbook.arm.json --parameters workspaceName=<the workspace name>
   ```
 
 - **Azure portal:** open *Deploy a custom template*, choose *Build your own template in
@@ -344,7 +344,8 @@ Analytics Reader* on the workspace.
 
 What it can't show: *Now* looks back 90 days, or your retention if that's shorter, so
 rights granted before then and still held aren't counted. Agent versions list only the Macs
-that sent an event in the period, because health check-ins aren't exported. Whether
+that sent an event in the period, because health check-ins aren't exported; the events the
+server raises about a Mac (`agent.enrollment` and `agent.silent`) don't count. Whether
 each SIEM is keeping up is on the console's Overview.
 
 ## Analytics rules and hunting queries

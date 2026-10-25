@@ -4,6 +4,7 @@ package event
 
 import (
 	"bytes"
+	"crypto/sha1"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,12 +30,13 @@ const (
 	AgentTamper              Type = "agent.tamper"
 	AgentSilent              Type = "agent.silent"
 	AdminPermanentUse        Type = "admin.permanent_use"
+	AgentEnrollment          Type = "agent.enrollment"
 )
 
 var knownTypes = map[Type]bool{
 	ElevationGranted: true, ElevationRevoked: true, ElevationExpiredEnforced: true, ElevationOverdue: true,
 	AdminOutOfBand: true, AdminOutOfBandRemoved: true, Activity: true, PersistenceDetected: true, AgentHealth: true,
-	AgentTamper: true, AgentSilent: true, AdminPermanentUse: true,
+	AgentTamper: true, AgentSilent: true, AdminPermanentUse: true, AgentEnrollment: true,
 }
 
 // Silence states for agent.silent.
@@ -48,6 +50,14 @@ const (
 	UseStateStarted = "started"
 	UseStateEnded   = "ended"
 	UseStateSingle  = "single"
+)
+
+// States of a Mac's enrolment (agent.enrollment): its first key, a new key waiting for an
+// admin's approval, and a new key that took the place of the previous one without it.
+const (
+	EnrollmentStateEnrolled = "enrolled"
+	EnrollmentStatePending  = "pending"
+	EnrollmentStateReplaced = "replaced"
 )
 
 // Event is one record from the agent. Field names and nullability follow the JSON schema.
@@ -102,7 +112,24 @@ func (t Type) IsSessionEvent() bool {
 
 // IsServerRaised reports whether the backend raises events of this type itself. Agents may
 // not send them, and they say nothing about when the Mac was last seen.
-func (t Type) IsServerRaised() bool { return t == AgentSilent }
+func (t Type) IsServerRaised() bool { return t == AgentSilent || t == AgentEnrollment }
+
+// raisedNamespace scopes the name-based UUIDs of raised events.
+var raisedNamespace = [16]byte{0x6b, 0x1e, 0x2f, 0x9a, 0x3c, 0x4d, 0x4e, 0x8f, 0x9a, 0x0b, 0x1c, 0x2d, 0x3e, 0x4f, 0x50, 0x61}
+
+// RaisedID is the event ID of a server-raised event, a version 5 (SHA-1, name-based) UUID:
+// the same name always gives the same ID, so a repeat is stored once. The name says what the
+// event reports. Changing the namespace or the algorithm would give an alert that is already
+// stored a second ID.
+func RaisedID(name string) string {
+	h := sha1.New()
+	h.Write(raisedNamespace[:])
+	h.Write([]byte(name))
+	b := h.Sum(nil)[:16]
+	b[6] = b[6]&0x0f | 0x50
+	b[8] = b[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
 
 // DetailBool returns detail[key] when it is a JSON boolean.
 func (e Event) DetailBool(key string) (value, ok bool) {
@@ -228,6 +255,12 @@ func (e *Event) Validate(now time.Time) error {
 		}
 		if e.SessionID != nil || e.User != nil {
 			return fmt.Errorf("%s has no session_id or user", e.Type)
+		}
+	case AgentEnrollment:
+		st, _ := e.Detail["state"].(string)
+		id, _ := e.Detail["device_id"].(string)
+		if (st != EnrollmentStateEnrolled && st != EnrollmentStatePending && st != EnrollmentStateReplaced) || id == "" {
+			return fmt.Errorf("%s requires detail.state (enrolled, pending or replaced) and detail.device_id", e.Type)
 		}
 	}
 	if e.Detail == nil {

@@ -88,6 +88,17 @@ details. That includes every permanent admin use event the agent sends: sign-in
 times, terminals and SSH addresses, who approved prompts, and screen sharing viewers' addresses, as listed above. Console
 actions go there too, naming the person who made them.
 
+The server also raises an `agent.enrollment` event of its own each time a key enrols. Its
+state is `enrolled` for a Mac's first key, or its first after earlier ones were revoked
+with approval off, `pending` for a new key waiting for an admin's approval, and `replaced`
+for a new key that took the place of the active one without approval. It carries the Mac's
+serial, hardware UUID and agent version (from the agent's `User-Agent`), the new key's
+device ID, its SHA-256 fingerprint and where the Mac says it is kept, and the enrolment
+token's name (`token:` and a short fingerprint, never the token). When a key was active
+before, it also carries that key's device ID and storage and whether the two keys came
+from the same hardware UUID. It holds no public key. A Mac that sends its key again, as a
+retry, raises nothing new.
+
 In the example deployment, Caddy also asks Let's Encrypt for TLS certificates unless you
 provide your own. If you pull the image from the registry instead of loading the file,
 Docker connects to `ghcr.io`. With the Deploy to Azure template, Azure pulls the images
@@ -128,7 +139,7 @@ Everything is in your Postgres database.
 
 | Data | Kept |
 | --- | --- |
-| Every event from every Mac, in full | Forever, for now |
+| Every event from every Mac, in full, and each `agent.enrollment` event the server raises | Forever, for now |
 | Elevation sessions, including the person's UPN and reason | Forever, for now |
 | Each Mac's latest state: versions, admins, health, its open permanent admin sign-ins (up to 20) and its newest 20 other permanent admin uses (the console shows up to 10, open sign-ins first) | Forever, replaced as it changes |
 | Each Mac's enrollment: serial, hardware UUID, **public** key, and whether the Mac says its key is in its Secure Enclave | Forever; revoking stops the Mac reporting |
@@ -151,7 +162,8 @@ security records ([Backups](install.md#backups)).
 - **Mac keys.** Each Mac makes its own key pair when it enrolls. The private key stays
   on the Mac; the server stores only the public key. Every request after enrollment is
   signed with it, and the server refuses requests more than 5 minutes old or from a
-  revoked Mac.
+  revoked Mac. The agent stores the Mac's serial and hardware UUID with its key, and
+  enrols a new key if it finds the store on a different Mac.
 - **Where the Mac's key lives.** In the Mac's Secure Enclave, on Macs that have one
   (Apple silicon, and Intel Macs with a T2 chip) and enrolled with agent 0.2.0 or later.
   The agent keeps a handle to it in a file under `/Library/Application Support/Altiward/`
@@ -164,16 +176,20 @@ security records ([Backups](install.md#backups)).
   removing the agent with `--purge` leaves nothing behind.
 - **The enrolment token** lets a Mac enrol, and does nothing else. It is in the MDM
   profile, so anyone on a Mac can read it. A new enrolment shows in **Enrollments**, where
-  an admin can revoke it. **Approve Macs that enrol again** is on by default: a new
-  key for a serial that enrolled before waits for approval, even after its earlier key
-  was revoked. An earlier active key stays valid until approval. Server 0.8.0 also enables
-  approval once for existing tenants; admins can explicitly turn it off afterwards.
-  With approval off, anyone with the shared token can replace an enrolled Mac's identity
-  by naming its serial, even when the earlier key is protected by the Secure Enclave.
-  The shared token cannot verify ownership of a serial enrolling for the first time.
-  Check new enrolments against independently verified inventory; per-device bootstrap
-  credentials are needed for stronger first-enrolment assurance. Changing the token
-  doesn't affect Macs already enrolled.
+  an admin can revoke it. It also reaches your SIEM as an `agent.enrollment` event.
+  **Approve Macs that enrol again** is on by default: a new key for a serial that enrolled
+  before waits for approval, even after its earlier key was revoked. An earlier active key
+  stays valid until approval. Server 0.8.0 also enables approval once for existing
+  tenants; admins can explicitly turn it off afterwards. A new key whose hardware UUID
+  differs from the earlier active key's waits for approval whatever the setting. With
+  approval off, anyone with the shared token can replace an enrolled Mac's identity by
+  naming its serial and hardware UUID, even when the earlier key is protected by the
+  Secure Enclave. The hardware UUID is the agent's own claim, not a secret, so that rule
+  catches a key made on another Mac, not someone who names the UUID. The shared token
+  cannot verify ownership of a serial enrolling for the first time. Check new enrolments
+  against independently verified inventory; per-device bootstrap credentials are needed
+  for stronger first-enrolment assurance. Changing the token doesn't affect Macs already
+  enrolled.
 - **Console and agent tokens** are kept in the server's `.env` file (keep it `chmod 600`).
   The server holds only their SHA-256 digests in memory and records each by a fingerprint,
   never the token.

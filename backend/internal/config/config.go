@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Altiward/altiward/backend/internal/store"
 )
 
 type Config struct {
@@ -27,6 +29,10 @@ type Config struct {
 	// ALTIWARD_UPDATE_CHECK: whether the console's browser asks GitHub for newer releases
 	// to tell admins about. Default true; "false" turns it off. The server itself never asks.
 	UpdateCheck bool
+	// ALTIWARD_ENROLL_NEW_MACS_PER_HOUR and ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY: how many
+	// Macs new to a tenant may enrol in an hour (default 1000), and how many keys one Mac
+	// may enrol in a day (default 5). 0 turns a limit off.
+	EnrollLimits store.EnrollLimits
 	// ALTIWARD_TRUSTED_CAS_FILE (optional): PEM certificates trusted on top of the system's
 	// roots for the SIEMs and the identity provider, when one has an internal CA's certificate
 	TrustedCAsFile string
@@ -110,6 +116,7 @@ func Load(getenv func(string) string) (Config, error) {
 		ConsoleDir:     getenv("ALTIWARD_CONSOLE_DIR"),
 		UpdateCheck:    true,
 		TrustedCAsFile: getenv("ALTIWARD_TRUSTED_CAS_FILE"),
+		EnrollLimits:   store.DefaultEnrollLimits(),
 	}
 	if v := getenv("ALTIWARD_EXPORT_INTERVAL"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -124,6 +131,21 @@ func Load(getenv func(string) string) (Config, error) {
 			return c, fmt.Errorf("ALTIWARD_AUDIT_RETENTION_DAYS: want 0 (keep forever) or at least %d, got %q", MinAuditRetentionDays, v)
 		}
 		c.AuditRetentionDays = days
+	}
+	for _, l := range []struct {
+		name string
+		into *int
+	}{
+		{"ALTIWARD_ENROLL_NEW_MACS_PER_HOUR", &c.EnrollLimits.NewMacsPerHour},
+		{"ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY", &c.EnrollLimits.KeysPerMacPerDay},
+	} {
+		if v := getenv(l.name); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				return c, fmt.Errorf("%s: want 0 (no limit) or a positive whole number, got %q", l.name, v)
+			}
+			*l.into = n
+		}
 	}
 	switch v := getenv("ALTIWARD_UPDATE_CHECK"); v {
 	case "", "true":

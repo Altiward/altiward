@@ -51,8 +51,9 @@ Set *Index* at the top to the index the HEC token writes to (`main` unless you s
 
 What it can't show: *Now* looks back 90 days, so rights granted before then and still held
 aren't counted. Agent versions list only the Macs that sent an event in the period,
-because health check-ins aren't exported. Whether each SIEM is keeping up is on the
-console's Overview.
+because health check-ins aren't exported; the events the server raises about a Mac
+(`agent.enrollment` and `agent.silent`) don't count. Whether each SIEM is keeping up is
+on the console's Overview.
 
 ## Saved searches
 

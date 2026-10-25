@@ -21,12 +21,14 @@ final class FakeServer: HTTPTransport, Sendable {
         var requests: [Request] = []
         var keys: [String: P256.Signing.PublicKey] = [:]  // device ID → key
         var enrollStatus = "active"
+        var enrollRefusal: (status: Int, headers: [String: String])?
         var dropNextEnrollResponse = false
         var revoked: Set<String> = []
         var pending: Set<String> = []
         var commands: [AgentCommand] = []
         var results: [String: CommandResult] = [:]
         var failResults = 0
+        var eventRejections: [String: IngestResponse.Rejection] = [:]  // event ID → answer once
     }
 
     let clock: TestClock
@@ -41,11 +43,20 @@ final class FakeServer: HTTPTransport, Sendable {
     var requests: [Request] { state.withLock { $0.requests } }
     var enrollments: [Request] { requests.filter { $0.path == "/v1/agent/enroll" } }
     func setEnrollStatus(_ s: String) { state.withLock { $0.enrollStatus = s } }
+    /// Answers every enrolment with `status` and `headers` until ``acceptEnrollments()``.
+    func refuseEnrollments(status: Int, headers: [String: String] = [:]) {
+        state.withLock { $0.enrollRefusal = (status, headers) }
+    }
+    func acceptEnrollments() { state.withLock { $0.enrollRefusal = nil } }
     func dropNextEnrollResponse() { state.withLock { $0.dropNextEnrollResponse = true } }
     func revoke(_ id: String) { state.withLock { _ = $0.revoked.insert(id) } }
     func approve(_ id: String) { state.withLock { _ = $0.pending.remove(id) } }
     func queueCommand(_ c: AgentCommand) { state.withLock { $0.commands.append(c) } }
     func failResults(times: Int) { state.withLock { $0.failResults = times } }
+    /// Rejects the event with this ID the next time it is posted; any other event is accepted.
+    func rejectEvent(_ id: String, error: String, code: String? = nil) {
+        state.withLock { $0.eventRejections[id] = IngestResponse.Rejection(eventID: id, error: error, code: code) }
+    }
     var results: [String: CommandResult] { state.withLock { $0.results } }
 
     struct Dropped: Error {}
@@ -68,6 +79,9 @@ final class FakeServer: HTTPTransport, Sendable {
         let serverNow = clock.now.addingTimeInterval(serverOffset)
         if r.path == "/v1/agent/enroll" {
             guard r.headers["Authorization"] == "Bearer enroll-token-0001" else { return (401, [:], Data()) }
+            if let (status, headers) = s.enrollRefusal {
+                return (status, headers, Data(#"{"error":"try again later","code":"enrollment_rate_limited"}"#.utf8))
+            }
             let body = try JSONSerialization.jsonObject(with: r.body) as! [String: String]
             let key = try P256.Signing.PublicKey(derRepresentation: Data(base64Encoded: body["public_key"]!)!)
             let id =
@@ -113,6 +127,21 @@ final class FakeServer: HTTPTransport, Sendable {
             let result = try AltiwardJSON.decoder().decode(CommandResult.self, from: r.body)
             if s.results[String(commandID)] == nil { s.results[String(commandID)] = result }
             return (200, [:], Data(#"{"status":"\#(result.status.rawValue)"}"#.utf8))
+        }
+        if r.method == "POST", r.path == "/v1/agent/events" {
+            struct Posted: Decodable {
+                struct Event: Decodable { let event_id: String }
+                let events: [Event]
+            }
+            var verdicts = IngestResponse()
+            for event in try JSONDecoder().decode(Posted.self, from: r.body).events {
+                if let rejection = s.eventRejections.removeValue(forKey: event.event_id) {
+                    verdicts.rejected.append(rejection)
+                } else {
+                    verdicts.accepted.append(event.event_id)
+                }
+            }
+            return (200, [:], try JSONEncoder().encode(verdicts))
         }
         return (200, [:], Data(#"{"accepted":[],"duplicate":[],"rejected":[]}"#.utf8))
     }
@@ -241,11 +270,20 @@ struct DeviceAuthenticatorTests {
 
     func authenticator(
         _ store: AgentStore, _ server: FakeServer, url: URL? = nil, keys: FakeKeys? = nil,
-        role: DeviceAuthenticator.Role = .daemon
+        role: DeviceAuthenticator.Role = .daemon, device: DeviceInfo = testDevice,
+        log: @escaping @Sendable (String) -> Void = { _ in }
     ) -> DeviceAuthenticator {
         DeviceAuthenticator(
-            store: store, serverURL: url ?? serverURL, enrollmentToken: "enroll-token-0001", device: { testDevice },
-            transport: server, keys: keys ?? self.keys, role: role, now: { clock.now })
+            store: store, serverURL: url ?? serverURL, enrollmentToken: "enroll-token-0001", device: { device },
+            transport: server, keys: keys ?? self.keys, role: role, now: { clock.now }, log: log)
+    }
+
+    /// This test's Mac, with another serial and hardware UUID.
+    func mac(_ serial: String, _ hardwareUUID: String) -> DeviceInfo {
+        var d = testDevice
+        d.serial = serial
+        d.hardwareUUID = hardwareUUID
+        return d
     }
 
     func enrolledStorage(_ r: FakeServer.Request) throws -> String? {
@@ -347,6 +385,76 @@ struct DeviceAuthenticatorTests {
         await #expect(throws: DeliveryError.enrollmentPending) { try await postEvents(auth) }
         await #expect(throws: DeliveryError.enrollmentPending) { try await postEvents(auth) }
         #expect(server.enrollments.count == 1)
+    }
+
+    /// A Mac the server's enrolment limits refuse waits as long as the server says before
+    /// it asks again, rather than on every poll and heartbeat.
+    @Test func aRefusedEnrolmentWaitsForRetryAfter() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        server.refuseEnrollments(status: 429, headers: ["Retry-After": "3600"])
+        let auth = authenticator(store, server)
+        let until = clock.now.addingTimeInterval(3600)
+        await #expect(throws: DeliveryError.enrollmentRateLimited(until: until)) { try await postEvents(auth) }
+        #expect(server.enrollments.count == 1)
+
+        server.acceptEnrollments()
+        await #expect(throws: DeliveryError.enrollmentRateLimited(until: until)) { try await postEvents(auth) }
+        clock.advance(3599)
+        await #expect(throws: DeliveryError.enrollmentRateLimited(until: until)) { try await postEvents(auth) }
+        #expect(server.requests.count == 1)
+
+        clock.advance(2)
+        #expect(try await postEvents(auth) == 200)
+        #expect(server.enrollments.count == 2)
+        #expect(try enrolledKey(server.enrollments[0]) == enrolledKey(server.enrollments[1]))
+    }
+
+    @Test(arguments: [nil, "soon", "-60"] as [String?])
+    func aRefusedEnrolmentWithoutRetryAfterWaitsAnHour(_ retryAfter: String?) async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        server.refuseEnrollments(status: 429, headers: retryAfter.map { ["Retry-After": $0] } ?? [:])
+        let auth = authenticator(store, server)
+        let until = clock.now.addingTimeInterval(3600)
+        await #expect(throws: DeliveryError.enrollmentRateLimited(until: until)) { try await postEvents(auth) }
+
+        server.acceptEnrollments()
+        clock.advance(3599)
+        await #expect(throws: DeliveryError.enrollmentRateLimited(until: until)) { try await postEvents(auth) }
+        #expect(server.enrollments.count == 1)
+        clock.advance(2)
+        #expect(try await postEvents(auth) == 200)
+    }
+
+    /// Retry-After can be a date, by the server's clock, and the agent waits at most a day.
+    @Test func aRefusedEnrolmentReadsADateAndWaitsAtMostADay() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        server.refuseEnrollments(status: 429, headers: ["Retry-After": httpDate(clock.now.addingTimeInterval(7200))])
+        let auth = authenticator(store, server)
+        await #expect(throws: DeliveryError.enrollmentRateLimited(until: clock.now.addingTimeInterval(7200))) {
+            try await postEvents(auth)
+        }
+
+        clock.advance(7201)
+        server.refuseEnrollments(status: 429, headers: ["Retry-After": "604800"])
+        await #expect(throws: DeliveryError.enrollmentRateLimited(until: clock.now.addingTimeInterval(86400))) {
+            try await postEvents(auth)
+        }
+        #expect(server.enrollments.count == 2)
+    }
+
+    /// Only a 429 means "wait": another refusal is tried again on the next send, as before.
+    @Test func anotherEnrolmentRefusalDoesNotWait() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        server.refuseEnrollments(status: 503, headers: ["Retry-After": "3600"])
+        let auth = authenticator(store, server)
+        await #expect(throws: (any Error).self) { try await postEvents(auth) }
+        server.acceptEnrollments()
+        #expect(try await postEvents(auth) == 200)
+        #expect(server.enrollments.count == 2)
     }
 
     @Test func correctsClockFromServerDate() async throws {
@@ -514,6 +622,149 @@ struct DeviceAuthenticatorTests {
         #expect(try enrolledStorage(server.enrollments[1]) == "secure_enclave")
     }
 
+    // MARK: Which Mac the key was made on
+
+    /// The parts of a stored credential that say which Mac it belongs to.
+    struct StoredIdentity: Decodable {
+        var privateKey: Data
+        var serial: String?
+        var hardwareUUID: String?
+    }
+
+    func storedIdentity(_ store: AgentStore, _ key: String) throws -> StoredIdentity? {
+        try store.value(forKey: key).map { try JSONDecoder().decode(StoredIdentity.self, from: Data($0.utf8)) }
+    }
+
+    /// A store copied to another Mac (Migration Assistant, a clone, a restore) that holds a
+    /// file key: the copy would otherwise go on signing as the first Mac.
+    @Test func aCredentialMadeOnAnotherMacEnrollsAgain() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        #expect(try await postEvents(authenticator(store, server, device: mac("C02AAA", "U1"))) == 200)
+        let first = try #require(try storedIdentity(store, "device_credential_se"))
+        #expect(first.serial == "C02AAA")
+        #expect(first.hardwareUUID == "U1")
+
+        let copy = authenticator(store, server, device: mac("C02BBB", "U2"))
+        #expect(try await postEvents(copy) == 200)
+        let enrollments = server.enrollments
+        try #require(enrollments.count == 2)
+        let body = try JSONSerialization.jsonObject(with: enrollments[1].body) as! [String: String]
+        #expect(body["serial"] == "C02BBB")
+        #expect(try enrolledKey(enrollments[0]) != enrolledKey(enrollments[1]))
+
+        // Only the new key is left, and it is bound to this Mac.
+        let second = try #require(try storedIdentity(store, "device_credential_se"))
+        #expect(second.privateKey != first.privateKey)
+        #expect(second.serial == "C02BBB")
+        #expect(second.hardwareUUID == "U2")
+        #expect(try keys.publicKey(second.privateKey, .secureEnclave).base64EncodedString() == enrolledKey(enrollments[1]))
+        #expect(try store.value(forKey: "device_credential") == nil)
+    }
+
+    @Test func aChangedHardwareUUIDEnrollsAgain() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        #expect(try await postEvents(authenticator(store, server, device: mac("C02AAA", "U1"))) == 200)
+        #expect(try await postEvents(authenticator(store, server, device: mac("C02AAA", "U2"))) == 200)
+        #expect(server.enrollments.count == 2)
+    }
+
+    /// After a downgrade and upgrade the store holds a Secure Enclave key and a file key.
+    /// Dropping the first must not leave the Mac signing with the second.
+    @Test func everyKeyMadeOnAnotherMacIsDropped() async throws {
+        let store = try makeStore()
+        let other = try makeStore()
+        let server = FakeServer(clock: clock)
+        let first = mac("C02AAA", "U1")
+        #expect(try await postEvents(authenticator(store, server, device: first)) == 200)
+        #expect(try await postEvents(authenticator(other, server, keys: FakeKeys(secureEnclave: false), device: first)) == 200)
+        try store.setValue(other.value(forKey: "device_credential"), forKey: "device_credential")
+
+        let copy = authenticator(store, server, device: mac("C02BBB", "U2"))
+        #expect(try await postEvents(copy) == 200)
+        #expect(server.enrollments.count == 3)
+        #expect(try store.value(forKey: "device_credential") == nil)
+        #expect(await copy.keyStorage == .secureEnclave)
+    }
+
+    /// When the Mac won't say which it is (IOKit failed), the agent can't tell a copy from
+    /// the original, so it keeps signing with the key it has and checks on a later run.
+    @Test func anUnreadableIdentityKeepsTheKey() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let first = mac("C02AAA", "U1")
+        #expect(try await postEvents(authenticator(store, server, device: first)) == 200)
+        let before = try store.value(forKey: "device_credential_se")
+
+        let logged = OSAllocatedUnfairLock(initialState: [String]())
+        let unreadable = authenticator(
+            store, server, device: mac(DeviceIdentity.unreadable, "U1"), log: { line in logged.withLock { $0.append(line) } })
+        #expect(try await postEvents(unreadable) == 200)
+        #expect(server.enrollments.count == 1)
+        #expect(try store.value(forKey: "device_credential_se") == before)
+        #expect(logged.withLock { $0 } == ["couldn't read this Mac's serial or hardware UUID; keeping the stored key"])
+
+        // Once the Mac can say, the check goes on as usual.
+        #expect(try await postEvents(authenticator(store, server, device: first)) == 200)
+        #expect(server.enrollments.count == 1)
+        #expect(try await postEvents(authenticator(store, server, device: mac("C02BBB", "U2"))) == 200)
+        #expect(server.enrollments.count == 2)
+    }
+
+    @Test func anUnreadableIdentityDoesNotBindAnOldRecord() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        _ = try await enrollAsAgent01(store, server)
+        let before = try store.value(forKey: "device_credential")
+
+        let auth = authenticator(store, server, device: mac(DeviceIdentity.unreadable, DeviceIdentity.unreadable))
+        #expect(try await postEvents(auth) == 200)
+        #expect(server.enrollments.count == 1)
+        #expect(try store.value(forKey: "device_credential") == before)
+        let after = try #require(try storedIdentity(store, "device_credential"))
+        #expect(after.serial == nil)
+        #expect(after.hardwareUUID == nil)
+    }
+
+    /// A key made while the Mac won't say which it is records no Mac, rather than "unknown",
+    /// and takes the Mac's identity on the first run that can read it.
+    @Test func aKeyMadeWhileTheIdentityIsUnreadableIsBoundLater() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        #expect(try await postEvents(authenticator(store, server, device: mac(DeviceIdentity.unreadable, "U1"))) == 200)
+        let made = try #require(try storedIdentity(store, "device_credential_se"))
+        #expect(made.serial == nil)
+        #expect(made.hardwareUUID == nil)
+
+        #expect(try await postEvents(authenticator(store, server, device: mac("C02AAA", "U1"))) == 200)
+        #expect(server.enrollments.count == 1)
+        let bound = try #require(try storedIdentity(store, "device_credential_se"))
+        #expect(bound.privateKey == made.privateKey)
+        #expect(bound.serial == "C02AAA")
+        #expect(bound.hardwareUUID == "U1")
+    }
+
+    /// A credential stored by an earlier agent has no serial. Re-enrolling it would send
+    /// every upgraded Mac to console approval, so it is bound to the Mac it is on.
+    @Test func aCredentialFromBeforeThisVersionIsBoundToThisMac() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let id = try await enrollAsAgent01(store, server)
+        let before = try #require(try storedIdentity(store, "device_credential"))
+        #expect(before.serial == nil)
+        #expect(before.hardwareUUID == nil)
+
+        let auth = authenticator(store, server)
+        #expect(try await postEvents(auth) == 200)
+        #expect(server.enrollments.count == 1)
+        #expect(await auth.deviceID == id)
+        let after = try #require(try storedIdentity(store, "device_credential"))
+        #expect(after.privateKey == before.privateKey)
+        #expect(after.serial == testDevice.serial)
+        #expect(after.hardwareUUID == testDevice.hardwareUUID)
+    }
+
     @Test func aBusySecureEnclaveKeepsTheKey() async throws {
         let store = try makeStore()
         let server = FakeServer(clock: clock)
@@ -585,5 +836,149 @@ struct DeviceAuthenticatorTests {
         #expect(try await postEvents(auth) == 200)
         #expect(await auth.keyStorage == .secureEnclave)
         #expect(server.enrollments.count == 1)
+    }
+}
+
+struct HTTPEventSinkTests {
+    let clock = TestClock()
+    let serverURL = URL(string: "https://api.altiward.test")!
+    let mismatch = "device.serial does not match the sending device"
+    let logged = OSAllocatedUnfairLock(initialState: [String]())
+
+    func sink(_ store: AgentStore, _ server: FakeServer, device: DeviceInfo = testDevice) -> (HTTPEventSink, DeviceAuthenticator) {
+        let auth = DeviceAuthenticator(
+            store: store, serverURL: serverURL, enrollmentToken: "enroll-token-0001", device: { device },
+            transport: server, keys: FakeKeys(), now: { clock.now }, log: { line in logged.withLock { $0.append(line) } })
+        return (HTTPEventSink(authenticator: auth), auth)
+    }
+
+    /// An event naming `serial`, which the test's Mac sends when it is the Mac's own.
+    func event(serial: String = testDevice.serial) -> AltiwardEvent {
+        var e = sampleEvent()
+        e.device.serial = serial
+        return e
+    }
+
+    func enrolledKey(_ r: FakeServer.Request) throws -> String {
+        let body = try JSONSerialization.jsonObject(with: r.body) as! [String: String]
+        return try #require(body["public_key"])
+    }
+
+    /// The server says the key belongs to another Mac, but these events name this one: the
+    /// key is what is wrong, so the events stay queued and the next send enrols a new key.
+    @Test func aMismatchForThisMacsEventsKeepsThemAndEnrollsAgain() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (sink, auth) = sink(store, server)
+        let own = event()
+        server.rejectEvent(own.eventID, error: mismatch, code: "device_mismatch")
+
+        let response = try await sink.send([own])
+        #expect(response.rejected.isEmpty)
+        #expect(response.accepted.isEmpty)
+        #expect(server.enrollments.count == 1)
+        #expect(await auth.deviceID == nil)
+        #expect(logged.withLock { $0 } == ["the server says this key belongs to another Mac; enrolling again"])
+
+        let retry = try await sink.send([own])
+        #expect(retry.accepted == [own.eventID])
+        let enrollments = server.enrollments
+        try #require(enrollments.count == 2)
+        #expect(try enrolledKey(enrollments[0]) != enrolledKey(enrollments[1]))
+    }
+
+    /// Events naming another Mac are stale copies of its queue. That Mac delivers its own,
+    /// so these are dropped, and this Mac's key is fine.
+    @Test func aMismatchForAnotherMacsEventsDropsThem() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (sink, auth) = sink(store, server)
+        let stale = event(serial: "OTHER")
+        server.rejectEvent(stale.eventID, error: mismatch, code: "device_mismatch")
+
+        let response = try await sink.send([stale])
+        #expect(response.rejected.map(\.eventID) == [stale.eventID])
+        #expect(response.rejected.first?.code == "device_mismatch")
+        let id = try #require(await auth.deviceID)
+
+        #expect(try await sink.send([event()]).accepted.count == 1)
+        #expect(server.enrollments.count == 1)
+        #expect(await auth.deviceID == id)
+        #expect(logged.withLock { $0 }.isEmpty)
+    }
+
+    @Test func aMixedBatchDropsStaleEventsAndKeepsOwn() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (sink, auth) = sink(store, server)
+        _ = try await sink.send([])  // enrols, so the sink knows the ID it signs with
+        let firstID = try #require(await auth.deviceID)
+
+        let own = event()
+        let stale = event(serial: "OTHER")
+        server.rejectEvent(own.eventID, error: mismatch, code: "device_mismatch")
+        server.rejectEvent(stale.eventID, error: mismatch, code: "device_mismatch")
+
+        let response = try await sink.send([own, stale])
+        #expect(response.rejected.map(\.eventID) == [stale.eventID])
+        #expect(server.enrollments.count == 1)
+        #expect(await auth.deviceID == nil)
+
+        let retry = try await sink.send([own])
+        #expect(retry.accepted == [own.eventID])
+        #expect(retry.rejected.isEmpty)
+        #expect(server.enrollments.count == 2)
+        #expect(await auth.deviceID != firstID)
+    }
+
+    /// A rejection that names no code is about the event itself, whoever sent it.
+    @Test func aRejectionWithoutTheCodeKeepsTheKeyAndDropsTheEvent() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (sink, auth) = sink(store, server)
+        let bad = event()
+        server.rejectEvent(bad.eventID, error: "schema_version must be 1")
+
+        let response = try await sink.send([bad])
+        #expect(response.rejected.map(\.eventID) == [bad.eventID])
+        #expect(response.rejected.first?.code == nil)
+        #expect(await auth.deviceID != nil)
+        #expect(server.enrollments.count == 1)
+    }
+
+    /// A Mac that won't say which it is can't tell its own events from another's, so it
+    /// neither keeps them nor throws its key away.
+    @Test func anUnreadableIdentityTakesNoMismatchAsItsOwn() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        var unreadable = testDevice
+        unreadable.serial = DeviceIdentity.unreadable
+        let (sink, auth) = sink(store, server, device: unreadable)
+        var e = sampleEvent()
+        e.device = unreadable
+        server.rejectEvent(e.eventID, error: mismatch, code: "device_mismatch")
+
+        let response = try await sink.send([e])
+        #expect(response.rejected.map(\.eventID) == [e.eventID])
+        #expect(await auth.deviceID != nil)
+        #expect(server.enrollments.count == 1)
+        #expect(logged.withLock { $0 }.isEmpty)
+    }
+
+    @Test func discardingAnIDThatIsNotStoredKeepsTheCredential() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (sink, auth) = sink(store, server)
+        _ = try await sink.send([])
+        let id = try #require(await auth.deviceID)
+
+        // Another process sharing the store has already replaced the key that was signed with.
+        try await auth.discardCredential(ifDeviceID: "not-this-one")
+        #expect(await auth.deviceID == id)
+        #expect(logged.withLock { $0 }.isEmpty)
+
+        try await auth.discardCredential(ifDeviceID: id)
+        #expect(await auth.deviceID == nil)
+        #expect(await auth.keyStorage == nil)
     }
 }

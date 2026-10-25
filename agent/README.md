@@ -144,7 +144,9 @@ other Macs, and on Macs that enrolled before agent 0.2.0, the key is in the agen
 under the root-only data directory. `altiward-agent status` shows the device ID and where
 the key is kept. Only the daemon can use a Secure Enclave key, so on such a Mac
 `altiward-agent heartbeat`, `flush`, `commands` and `simulate-hook` do their local part
-and leave the sending to the daemon.
+and leave the sending to the daemon. When the server's enrolment limits refuse the Mac
+(HTTP 429), the agent doesn't try to enrol again until `Retry-After` says, an hour if it
+doesn't say, and at most a day; it remembers that until it restarts.
 
 Remote commands are fetched by a long poll the server holds for up to 50 seconds, so a
 revoke lands within about a second; also after each heartbeat and when the network
@@ -309,10 +311,13 @@ behind to do it later; the tamper checks and the persistence snapshot are what l
 that. The key is usable from the first unlock after boot, with nobody signed in, and only
 in the session that made it, so the daemon makes it and only the daemon uses it. A key the
 Secure Enclave can't use while a throwaway key works (the store came from another Mac or a
-backup) is dropped and the Mac enrolls again. A file key and a Secure Enclave key have
-separate records, so agent 0.1 installed over this one finds no key it can't read and
-enrolls again with a file key. Where the Mac says its key is kept is its own claim: the
-server can't check it.
+backup) is dropped and the Mac enrols again. The store also records the serial and
+hardware UUID of the Mac that made the key, so a file key copied to another Mac (by
+Migration Assistant, a clone or a restore) is dropped there the same way, instead of
+signing as the first Mac; a key stored by an earlier agent is given this Mac's identity
+and stays enrolled. A file key and a Secure Enclave key have separate records, so agent
+0.1 installed over this one finds no key it can't read and enrols again with a file key.
+Where the Mac says its key is kept is its own claim: the server can't check it.
 
 **Privileges stays at the edge.** Altiward depends on a project it doesn't control, and
 must keep working when Privileges' timer is stopped or Privileges is removed. So expiry,
