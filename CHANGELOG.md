@@ -36,6 +36,11 @@ None.
   app's managed identity. It shows placeholders only. SIEM settings stay in the server's
   environment, so changing where events go still takes access to the server, not just the
   console.
+- The install guide runs the server from a directory of its own, such as `/opt/altiward`,
+  so it doesn't stay in one named for the release first installed. It gives the commands
+  to download a release and make the tokens, a nightly backup, and a new Enforcement
+  section for `ExpiryEnforcement` and `OutOfBandEnforcement`, which step 2 now points to
+  (#111).
 
 ## Agent 0.5.0 - 2026-10-25
 

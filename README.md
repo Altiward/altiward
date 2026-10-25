@@ -98,7 +98,7 @@ Known limits:
   holding admin through a Privileges grant doesn't count). It pauses while the
   **Privileges reports to Altiward** check fails; a removed Privileges grant whose hook
   never reached the agent can be requested again. Pilot it on a small group first
-  ([the settings](docs/install.md#2-deploy-the-agent)).
+  ([Enforcement](docs/install.md#enforcement)).
 - Expiry comes from Privileges. A grant Privileges gives no expiry never counts as past
   its expiry, and `ExpiryEnforcement` defaults to `alert`: rights are removed only if you
   set it to `enforce`.
@@ -150,16 +150,17 @@ subscription instead, on Azure Container Apps, with no VM to look after:
 ```sh
 docker load -i altiward-api-0.6.0-linux-amd64.tar.gz   # or pull ghcr.io/altiward/altiward-api:0.6.0
 tar xzf altiward-server-0.6.0.tar.gz
-cd altiward-server-0.6.0/deploy/compose
+sudo mkdir /opt/altiward && sudo chown "$(id -un)" /opt/altiward
+cp -R altiward-server-0.6.0/deploy/compose/. /opt/altiward/ && cd /opt/altiward
 cp env.example .env && chmod 600 .env
-# In .env: ALTIWARD_VERSION=0.6.0, your two hostnames, the networks allowed to open the
-# console, a Postgres password, and an agent token and a console token.
+# In .env: your two hostnames, the networks allowed to open the console, a Postgres
+# password, and an agent token and a console token.
 docker compose up -d
 ```
 
 Caddy gets certificates for both hostnames, and you sign in to the console with the
 console token until you set up single sign-on. To upgrade later, put the new release's
-files in a directory and run `./upgrade.sh ~/altiward-0.6.1` from the same directory: it
+files in a directory and run `./upgrade.sh ~/altiward-0.6.1` from `/opt/altiward`: it
 checks the signature, backs up the database and asks before changing anything.
 
 **2. The agent.** From the agent release (tagged `agent-v0.5.0`), deploy through your MDM,
@@ -169,8 +170,8 @@ to a pilot group first:
    `profiles/`, with at least `ServerURL`, `EnrollmentToken` and `PermanentAdmins`. Set
    `ExpiryEnforcement` to `enforce` if the agent should remove rights past their expiry;
    by default it only alerts. `OutOfBandEnforcement` works the same way for admins nobody
-   granted, and needs server 0.3.0, altiward-siem 0.3.0 and a `PermanentAdmins` list that
-   covers your MDM's admin accounts.
+   granted, and needs a `PermanentAdmins` list that covers your MDM's admin accounts
+   ([Enforcement](docs/install.md#enforcement)).
 2. The login items profile, `altiward-login-items.mobileconfig`.
 3. The keys from `corp.sap.privileges.plist` in the **matching agent release** added
    to your Privileges profile, so Privileges reports each change to the agent.
