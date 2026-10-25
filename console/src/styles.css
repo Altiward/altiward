@@ -130,8 +130,8 @@ h1, h2, h3, p { margin: 0; }
 .label { font-size: 11px; line-height: 16px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
 .secondary { color: var(--muted); }
 
-/* Window: sidebar | main. The window never scrolls: long pages such as Overview scroll
-   inside .main, so the sidebar, with the account and version at its foot, stays in view. */
+/* Window: sidebar | main. The window never scrolls: each page scrolls inside its own pane
+   (or .main), so the sidebar, with the account and version at its foot, stays in view. */
 .window { display: grid; grid-template-columns: 232px 1fr; grid-template-rows: minmax(0, 1fr); height: 100%; }
 .sidebar {
   display: flex; flex-direction: column;
