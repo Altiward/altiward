@@ -151,7 +151,8 @@ security records ([Backups](install.md#backups)).
 - **Mac keys.** Each Mac makes its own key pair when it enrolls. The private key stays
   on the Mac; the server stores only the public key. Every request after enrollment is
   signed with it, and the server refuses requests more than 5 minutes old or from a
-  revoked Mac.
+  revoked Mac. The agent stores the Mac's serial and hardware UUID with its key, and
+  enrols a new key if it finds the store on a different Mac.
 - **Where the Mac's key lives.** In the Mac's Secure Enclave, on Macs that have one
   (Apple silicon, and Intel Macs with a T2 chip) and enrolled with agent 0.2.0 or later.
   The agent keeps a handle to it in a file under `/Library/Application Support/Altiward/`

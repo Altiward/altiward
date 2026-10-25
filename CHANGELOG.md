@@ -31,6 +31,10 @@ None.
 - A give-back claim cannot close an open session while the account is still an admin.
   The agent retains the original expiry and retries membership confirmation on its next
   heartbeat, so a contradictory claim cannot bypass timed enforcement.
+- The agent stores its Mac's serial and hardware UUID with its device key. A key found on
+  a different Mac, such as a store copied by Migration Assistant, a clone or a restore,
+  is dropped and the Mac enrols afresh instead of signing as the first Mac. A key stored
+  by an earlier agent is given this Mac's identity and stays enrolled.
 
 ### Changes
 

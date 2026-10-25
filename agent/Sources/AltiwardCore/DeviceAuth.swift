@@ -153,6 +153,12 @@ public actor DeviceAuthenticator {
         var serverURL: String
         var privateKey: Data  // the raw P256 key, or the Secure Enclave's handle
         var deviceID: String?
+        /// The Mac the key was made on. A store copied to another Mac (Migration Assistant,
+        /// a clone, a restore) keeps a file key that works there, so without these the
+        /// copy would go on signing as the first Mac. Nil in a record from before agent
+        /// 0.8.0, which is given this Mac's the first time it is used.
+        var serial: String?
+        var hardwareUUID: String?
     }
 
     /// A credential and the record it came from.
@@ -260,12 +266,12 @@ public actor DeviceAuthenticator {
     }
 
     private func enrolled() async throws -> Stored {
-        var c = try load() ?? makeCredential()
+        let info = device()
+        var c = try boundToThisMac(info) ?? makeCredential(info)
         if role == .command, c.storage == .secureEnclave { throw DeviceKeyError.heldByDaemon }
         if c.credential.deviceID != nil { return c }
 
         let publicKey = try withKey(c) { try keys.publicKey($0, c.storage) }
-        let info = device()
         var request = URLRequest(url: serverURL.appendingPathComponent("v1/agent/enroll"), timeoutInterval: 30)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -301,7 +307,7 @@ public actor DeviceAuthenticator {
     /// sharing the store stored one first. The key is made outside the transaction:
     /// the Secure Enclave can take seconds while someone signs in, and the store
     /// mustn't wait on it.
-    private func makeCredential() throws -> Stored {
+    private func makeCredential(_ info: DeviceInfo) throws -> Stored {
         var storage = KeyStorage.software
         if keys.secureEnclaveAvailable {
             guard role == .daemon else { throw DeviceKeyError.notEnrolled }
@@ -318,12 +324,43 @@ public actor DeviceAuthenticator {
         }
         return try store.transaction {
             if let stored = try load() { return stored }
-            let fresh = Stored(credential: Credential(serverURL: serverURL.absoluteString, privateKey: key), storage: storage)
+            let fresh = Stored(
+                credential: Credential(
+                    serverURL: serverURL.absoluteString, privateKey: key, serial: info.serial,
+                    hardwareUUID: info.hardwareUUID),
+                storage: storage)
             try save(fresh)
             // Neither record is for this server, so the other one is for an old one.
             try store.setValue(nil, forKey: Self.storeKey(storage == .software ? .secureEnclave : .software))
             return fresh
         }
+    }
+
+    /// The credential for the configured server that was made on this Mac, if any. One
+    /// made on another Mac is dropped, so the Mac enrolls its own key; one from before
+    /// agent 0.8.0 has no Mac recorded, so it gets this Mac's and stays enrolled, rather
+    /// than sending every upgraded Mac to approval. Checks both records, since a downgrade
+    /// and upgrade can leave a Secure Enclave key and a file key.
+    private func boundToThisMac(_ info: DeviceInfo) throws -> Stored? {
+        while var c = try load() {
+            guard let serial = c.credential.serial, let hardwareUUID = c.credential.hardwareUUID else {
+                c.credential.serial = info.serial
+                c.credential.hardwareUUID = info.hardwareUUID
+                try store.transaction {
+                    // Unless another process has replaced the key meanwhile.
+                    if var current = try record(c.storage), current.privateKey == c.credential.privateKey {
+                        current.serial = info.serial
+                        current.hardwareUUID = info.hardwareUUID
+                        try save(Stored(credential: current, storage: c.storage))
+                    }
+                }
+                return c
+            }
+            if serial == info.serial, hardwareUUID == info.hardwareUUID { return c }
+            log("this Mac's stored key was made on another Mac (serial \(serial)); enrolling again")
+            try discard(c)
+        }
+        return nil
     }
 
     /// Runs `body` with `c`'s key. When the Secure Enclave can't use a key it holds, a

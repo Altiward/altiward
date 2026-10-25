@@ -241,11 +241,19 @@ struct DeviceAuthenticatorTests {
 
     func authenticator(
         _ store: AgentStore, _ server: FakeServer, url: URL? = nil, keys: FakeKeys? = nil,
-        role: DeviceAuthenticator.Role = .daemon
+        role: DeviceAuthenticator.Role = .daemon, device: DeviceInfo = testDevice
     ) -> DeviceAuthenticator {
         DeviceAuthenticator(
-            store: store, serverURL: url ?? serverURL, enrollmentToken: "enroll-token-0001", device: { testDevice },
+            store: store, serverURL: url ?? serverURL, enrollmentToken: "enroll-token-0001", device: { device },
             transport: server, keys: keys ?? self.keys, role: role, now: { clock.now })
+    }
+
+    /// This test's Mac, with another serial and hardware UUID.
+    func mac(_ serial: String, _ hardwareUUID: String) -> DeviceInfo {
+        var d = testDevice
+        d.serial = serial
+        d.hardwareUUID = hardwareUUID
+        return d
     }
 
     func enrolledStorage(_ r: FakeServer.Request) throws -> String? {
@@ -512,6 +520,92 @@ struct DeviceAuthenticatorTests {
         #expect(try await postEvents(auth) == 200)
         #expect(server.enrollments.count == 2)
         #expect(try enrolledStorage(server.enrollments[1]) == "secure_enclave")
+    }
+
+    // MARK: Which Mac the key was made on
+
+    /// The parts of a stored credential that say which Mac it belongs to.
+    struct StoredIdentity: Decodable {
+        var privateKey: Data
+        var serial: String?
+        var hardwareUUID: String?
+    }
+
+    func storedIdentity(_ store: AgentStore, _ key: String) throws -> StoredIdentity? {
+        try store.value(forKey: key).map { try JSONDecoder().decode(StoredIdentity.self, from: Data($0.utf8)) }
+    }
+
+    /// A store copied to another Mac (Migration Assistant, a clone, a restore) that holds a
+    /// file key: the copy would otherwise go on signing as the first Mac.
+    @Test func aCredentialMadeOnAnotherMacEnrollsAgain() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        #expect(try await postEvents(authenticator(store, server, device: mac("C02AAA", "U1"))) == 200)
+        let first = try #require(try storedIdentity(store, "device_credential_se"))
+        #expect(first.serial == "C02AAA")
+        #expect(first.hardwareUUID == "U1")
+
+        let copy = authenticator(store, server, device: mac("C02BBB", "U2"))
+        #expect(try await postEvents(copy) == 200)
+        let enrollments = server.enrollments
+        try #require(enrollments.count == 2)
+        let body = try JSONSerialization.jsonObject(with: enrollments[1].body) as! [String: String]
+        #expect(body["serial"] == "C02BBB")
+        #expect(try enrolledKey(enrollments[0]) != enrolledKey(enrollments[1]))
+
+        // Only the new key is left, and it is bound to this Mac.
+        let second = try #require(try storedIdentity(store, "device_credential_se"))
+        #expect(second.privateKey != first.privateKey)
+        #expect(second.serial == "C02BBB")
+        #expect(second.hardwareUUID == "U2")
+        #expect(try keys.publicKey(second.privateKey, .secureEnclave).base64EncodedString() == enrolledKey(enrollments[1]))
+        #expect(try store.value(forKey: "device_credential") == nil)
+    }
+
+    @Test func aChangedHardwareUUIDEnrollsAgain() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        #expect(try await postEvents(authenticator(store, server, device: mac("C02AAA", "U1"))) == 200)
+        #expect(try await postEvents(authenticator(store, server, device: mac("C02AAA", "U2"))) == 200)
+        #expect(server.enrollments.count == 2)
+    }
+
+    /// After a downgrade and upgrade the store holds a Secure Enclave key and a file key.
+    /// Dropping the first must not leave the Mac signing with the second.
+    @Test func everyKeyMadeOnAnotherMacIsDropped() async throws {
+        let store = try makeStore()
+        let other = try makeStore()
+        let server = FakeServer(clock: clock)
+        let first = mac("C02AAA", "U1")
+        #expect(try await postEvents(authenticator(store, server, device: first)) == 200)
+        #expect(try await postEvents(authenticator(other, server, keys: FakeKeys(secureEnclave: false), device: first)) == 200)
+        try store.setValue(other.value(forKey: "device_credential"), forKey: "device_credential")
+
+        let copy = authenticator(store, server, device: mac("C02BBB", "U2"))
+        #expect(try await postEvents(copy) == 200)
+        #expect(server.enrollments.count == 3)
+        #expect(try store.value(forKey: "device_credential") == nil)
+        #expect(await copy.keyStorage == .secureEnclave)
+    }
+
+    /// A credential stored by an earlier agent has no serial. Re-enrolling it would send
+    /// every upgraded Mac to console approval, so it is bound to the Mac it is on.
+    @Test func aCredentialFromBeforeThisVersionIsBoundToThisMac() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let id = try await enrollAsAgent01(store, server)
+        let before = try #require(try storedIdentity(store, "device_credential"))
+        #expect(before.serial == nil)
+        #expect(before.hardwareUUID == nil)
+
+        let auth = authenticator(store, server)
+        #expect(try await postEvents(auth) == 200)
+        #expect(server.enrollments.count == 1)
+        #expect(await auth.deviceID == id)
+        let after = try #require(try storedIdentity(store, "device_credential"))
+        #expect(after.privateKey == before.privateKey)
+        #expect(after.serial == testDevice.serial)
+        #expect(after.hardwareUUID == testDevice.hardwareUUID)
     }
 
     @Test func aBusySecureEnclaveKeepsTheKey() async throws {
