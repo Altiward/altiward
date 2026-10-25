@@ -137,7 +137,9 @@ func makeEnvironment(
     privilegesDaemonLines: @escaping @Sendable (_ since: Date) -> [PrivilegesDaemonLine] = { _ in [] },
     processIdentity: @escaping @Sendable (_ pid: Int32) -> ProcessIdentity? = { _ in nil },
     privilegesExtensionPID: @escaping @Sendable () -> Int32? = { nil },
-    userID: @escaping @Sendable (_ shortName: String) -> UInt32? = { _ in nil }
+    userID: @escaping @Sendable (_ shortName: String) -> UInt32? = { _ in nil },
+    privilegesRenewals: @escaping @Sendable (_ since: Date) -> [PrivilegesRenewalLine] = { _ in [] },
+    privilegesAgentImageUUIDs: @escaping @Sendable () -> Set<String> = { [] }
 ) -> AgentEnvironment {
     AgentEnvironment(
         device: device,
@@ -155,7 +157,8 @@ func makeEnvironment(
         loginHistory: loginHistory,
         permanentUseLog: permanentUseLog, fullName: fullName, accountExists: accountExists,
         privilegesLogAvailability: privilegesLogAvailability, privilegesDaemonLines: privilegesDaemonLines,
-        processIdentity: processIdentity, privilegesExtensionPID: privilegesExtensionPID, userID: userID)
+        processIdentity: processIdentity, privilegesExtensionPID: privilegesExtensionPID, userID: userID,
+        privilegesRenewals: privilegesRenewals, privilegesAgentImageUUIDs: privilegesAgentImageUUIDs)
 }
 
 /// Writes a store as agent 0.2 left it: the 0.1.0 tables at schema version 1.

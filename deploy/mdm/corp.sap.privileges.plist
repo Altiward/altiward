@@ -23,9 +23,10 @@
   the profile doesn't set them (docs/install.md, step 2):
   - ExpirationIntervalMax caps how long a grant lasts. Use your own policy's value, or
     a fixed ExpirationInterval instead if your profile already sets one.
-  - AllowPrivilegeRenewal false: a renewal doesn't reach Altiward, so expiry
-    enforcement would remove renewed rights early. Don't set AutoRenewalProcessPaths,
-    which renews whatever this says.
+  - AllowPrivilegeRenewal false: Privileges reports a renewal only in a log line from
+    a process the user runs, which Altiward can't always check, so expiry enforcement
+    may remove renewed rights early. Don't set AutoRenewalProcessPaths, which renews
+    whatever this says.
   - PostChangeActionOnGrantOnly false: Privileges then runs the hook when rights are
     given back too, and a user can't tick "Run only if administrator privileges have
     been granted".

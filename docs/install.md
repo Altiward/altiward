@@ -216,12 +216,13 @@ Create these in your MDM and scope them to a pilot group first.
      once the minute has passed (or at once if the log becomes unavailable while the claim
      waits), it is refused in every mode and reported as a renewal, and the expiry doesn't
      move, so running the hook again can't keep rights past `ExpiryEnforcement`.
-     Privileges sends no claim for a real renewal, so nothing real is lost. Altiward doesn't
-     see a real renewal either, so with `ExpiryEnforcement` on `enforce` it removes the
-     rights at the original expiry while Privileges says they last longer
-     ([#90](https://github.com/Altiward/altiward/issues/90)). Until that is fixed, set
-     Privileges' `AllowPrivilegeRenewal` to `false` in its profile, as the release's
-     `corp.sap.privileges.plist` does (step 3).
+     Privileges sends no claim for a real renewal, so nothing real is lost. From agent 0.5.0
+     the agent reads a real renewal from the line SAP's `PrivilegesAgent` logs, checks that
+     SAP's agent logged it, and moves the expiry. That process runs as the user, so the check
+     is weaker than for a grant, and a line whose process has gone is ignored, leaving the
+     original expiry. Setting Privileges' `AllowPrivilegeRenewal` to `false`, as the
+     release's `corp.sap.privileges.plist` does (step 3), is still the stricter choice: the
+     agent then ignores renewal lines altogether.
    - A real grant that the person gives back within seconds is still confirmed: only
      changes to `admin` made before the claim arrived count against it.
 
@@ -283,7 +284,7 @@ Create these in your MDM and scope them to a pilot group first.
    | Setting | In the file | Why | Check |
    |---|---|---|---|
    | `ExpirationIntervalMax` | 60 minutes: use your own policy's value. A fixed `ExpirationInterval` works too, and is stricter | Without a cap, a user can choose to keep admin rights with no expiry, and expiry enforcement has nothing to enforce | **Privileges expiry cap**, medium severity |
-   | `AllowPrivilegeRenewal` | `false`. Don't set `AutoRenewalProcessPaths`, which renews whatever this says | A renewal doesn't reach Altiward ([#90](https://github.com/Altiward/altiward/issues/90)), so with `ExpiryEnforcement` on `enforce` the agent removes renewed rights at the original expiry | **Privileges renewals off**, medium, only while `ExpiryEnforcement` is `enforce` |
+   | `AllowPrivilegeRenewal` | `false`. Don't set `AutoRenewalProcessPaths`, which renews whatever this says | Privileges reports a renewal only in a log line from a process the user runs. The agent checks it came from SAP's agent and moves the expiry, but it can't check a line whose process has gone, and then removes renewed rights at the original expiry. With renewals off, it ignores renewal lines altogether | **Privileges renewals off**, medium, only while `ExpiryEnforcement` is `enforce` |
    | `PostChangeActionOnGrantOnly` | `false` | Unset, a user can tick "Run only if administrator privileges have been granted", and Privileges stops telling Altiward when rights are given back | **Privileges reports give-backs**, medium |
    | `RevokePrivilegesAtLogin` with `RevokeAtLoginExcludedUsers` | Suggested, in a comment | Rights never survive a restart | **Privileges spares permanent admins**, medium |
    | `RevokePrivilegesAfterSystemTimeChange` with `RevokeAfterTimeChangeExcludedUsers` (Privileges 2.4.1 or later) | Suggested, in a comment | Nobody can stretch an expiry by setting the clock back | The same check |

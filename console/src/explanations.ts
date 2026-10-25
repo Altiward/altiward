@@ -82,7 +82,7 @@ export const checkTips: Record<string, string> = {
   privileges_expiry_cap:
     "Privileges’ profile caps how long a grant lasts (ExpirationIntervalMax or ExpirationInterval), so nobody can choose to keep admin rights with no expiry.",
   privileges_renewal:
-    "Privileges’ profile turns renewals off (AllowPrivilegeRenewal), which Altiward doesn’t see, so expiry enforcement doesn’t remove renewed rights early.",
+    "Privileges’ profile turns renewals off (AllowPrivilegeRenewal). Altiward reads a renewal only from a log line a process of the user’s writes, so with renewals off, expiry enforcement can’t remove renewed rights early.",
   privileges_give_back_hook:
     "Privileges’ profile sets PostChangeActionOnGrantOnly to false, so Privileges runs Altiward’s hook when rights are given back, not only when they are granted.",
   privileges_revoke_exclusions:

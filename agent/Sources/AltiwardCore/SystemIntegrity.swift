@@ -156,13 +156,13 @@ public struct SystemIntegrity: Sendable {
             results[.privilegesRenewal] =
                 settings.autoRenewalConfigured
                 ? .failed(
-                    "AutoRenewalProcessPaths renews admin rights, and Altiward doesn't see a renewal, "
-                        + "so ExpiryEnforcement removes renewed rights at the original expiry")
+                    "AutoRenewalProcessPaths renews admin rights, and Altiward sees a renewal only in a log line "
+                        + "a user's process writes, so ExpiryEnforcement may remove renewed rights at the original expiry")
                 : settings.allowPrivilegeRenewal == false
                     ? .ok
                     : .failed(
-                        "MDM doesn't set AllowPrivilegeRenewal to false, and Altiward doesn't see a renewal, "
-                            + "so ExpiryEnforcement removes renewed rights at the original expiry")
+                        "MDM doesn't set AllowPrivilegeRenewal to false, and Altiward sees a renewal only in a log line "
+                            + "a user's process writes, so ExpiryEnforcement may remove renewed rights at the original expiry")
         }
         results[.privilegesGiveBackHook] =
             switch settings.postChangeActionOnGrantOnly {

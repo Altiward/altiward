@@ -7,8 +7,8 @@ import Testing
 /// which the Go backend tests against too.
 struct EventCodingTests {
     static let fixtures = [
-        "elevation-granted", "elevation-revoked", "elevation-overdue", "elevation-expired-enforced",
-        "admin-out-of-band", "admin-out-of-band-removed", "agent-health", "agent-tamper", "agent-silent", "persistence-detected",
+        "elevation-granted", "elevation-granted-renewal", "elevation-revoked", "elevation-overdue",
+        "elevation-expired-enforced", "admin-out-of-band", "admin-out-of-band-removed", "agent-health", "agent-tamper", "agent-silent", "persistence-detected",
         "elevation-revoked-permanent-admin", "agent-tamper-retired", "elevation-revoked-privileges-grant",
         "agent-tamper-privileges-blocked", "admin-permanent-use-started", "admin-permanent-use-ended",
         "admin-permanent-use-prompt", "agent-tamper-grant-claim",
