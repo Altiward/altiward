@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { ApiContext, MeContext } from "../context";
 import { fakeApi, githubFetch, release, signedIn } from "../test/fixtures";
@@ -10,9 +10,45 @@ import { dateTime } from "../format";
 import { setLook } from "../theme";
 import { SettingsView } from "./Settings";
 
-function renderView(api: ReturnType<typeof fakeApi>) {
-  render(<ApiContext.Provider value={api}><MemoryRouter><SettingsView /></MemoryRouter></ApiContext.Provider>);
+/** Settings at one of its tabs' addresses, as the app routes it. */
+function settingsAt(path: string) {
+  return <MemoryRouter initialEntries={[path]}><Routes><Route path="/settings/*" element={<SettingsView />} /></Routes></MemoryRouter>;
 }
+
+function renderView(api: ReturnType<typeof fakeApi>, path = "/settings") {
+  render(<ApiContext.Provider value={api}>{settingsAt(path)}</ApiContext.Provider>);
+}
+
+describe("Settings tabs", () => {
+  it("shows every tab to an admin, each at its own address, the current one marked", async () => {
+    renderView(fakeApi(), "/settings/siem");
+    const tabs = screen.getByRole("navigation", { name: "Settings sections" });
+    const links = within(tabs).getAllByRole("link");
+    expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
+      ["General", "/settings"], ["SIEM export", "/settings/siem"], ["Sign-ins", "/settings/sign-ins"],
+      ["Updates", "/settings/updates"],
+    ]);
+    expect(within(tabs).getByRole("link", { name: "SIEM export" })).toHaveAttribute("aria-current", "page");
+    expect(within(tabs).getByRole("link", { name: "General" })).not.toHaveAttribute("aria-current");
+    expect(await screen.findByRole("heading", { name: "SIEM export" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Enrollment" })).not.toBeInTheDocument();
+  });
+
+  it("shows operators and viewers General and SIEM export only, and sends them back from the others", async () => {
+    render(<ApiContext.Provider value={fakeApi()}><MeContext.Provider value={signedIn("viewer")}>
+      {settingsAt("/settings/updates")}
+    </MeContext.Provider></ApiContext.Provider>);
+    const tabs = screen.getByRole("navigation", { name: "Settings sections" });
+    expect(within(tabs).getAllByRole("link").map((l) => l.textContent)).toEqual(["General", "SIEM export"]);
+    expect(await screen.findByRole("heading", { name: "Enrollment" })).toBeInTheDocument();
+    expect(within(tabs).getByRole("link", { name: "General" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("opens General for an address it doesn't know", async () => {
+    renderView(fakeApi(), "/settings/nowhere");
+    expect(await screen.findByRole("heading", { name: "Enrollment" })).toBeInTheDocument();
+  });
+});
 
 describe("Settings", () => {
   it("shows the default silence limit and saves a new one without touching the rest", async () => {
@@ -37,7 +73,7 @@ describe("Settings", () => {
 
   it("changes the theme and light or dark for this browser, whatever the role", async () => {
     render(<ApiContext.Provider value={fakeApi()}><MeContext.Provider value={signedIn("viewer")}>
-      <MemoryRouter><SettingsView /></MemoryRouter>
+      {settingsAt("/settings")}
     </MeContext.Provider></ApiContext.Provider>);
     const theme = screen.getByRole("group", { name: "Theme" });
     expect(within(theme).getByRole("button", { name: "Mono" })).toHaveAttribute("aria-pressed", "true");
@@ -53,7 +89,7 @@ describe("Settings", () => {
   it("lets only admins change settings", async () => {
     const api = fakeApi();
     render(<ApiContext.Provider value={api}><MeContext.Provider value={signedIn("operator")}>
-      <MemoryRouter><SettingsView /></MemoryRouter>
+      {settingsAt("/settings")}
     </MeContext.Provider></ApiContext.Provider>);
     expect(await screen.findByDisplayValue("72")).toBeDisabled();
     for (const s of screen.getAllByRole("switch")) expect(s).toBeDisabled();
@@ -119,7 +155,7 @@ describe("Settings", () => {
         ]),
         endConsoleSession: vi.fn(async () => undefined),
       });
-      renderView(api);
+      renderView(api, "/settings/sign-ins");
       const bob = await screen.findByRole("group", { name: "Bob" });
       expect(bob).toHaveTextContent("bob@example.com · viewer");
       const jane = screen.getByRole("group", { name: "Jane Doe (you)" });
@@ -134,7 +170,7 @@ describe("Settings", () => {
     it("isn't shown to operators and viewers", async () => {
       const api = fakeApi({ consoleSessions: vi.fn(async () => [signIn({})]) });
       render(<ApiContext.Provider value={api}><MeContext.Provider value={signedIn("operator")}>
-        <MemoryRouter><SettingsView /></MemoryRouter>
+        {settingsAt("/settings/sign-ins")}
       </MeContext.Provider></ApiContext.Provider>);
       await screen.findByDisplayValue("72");
       expect(screen.queryByText("Signed in to the console")).not.toBeInTheDocument();
@@ -157,7 +193,7 @@ describe("Settings", () => {
         exports: vi.fn(async () => [failing, upToDate]),
         retryExports: vi.fn(async () => ({ retried: 3 })),
       });
-      renderView(api);
+      renderView(api, "/settings/siem");
       const sentinel = await screen.findByRole("group", { name: "Microsoft Sentinel" });
       expect(sentinel).toHaveTextContent("Failing");
       expect(sentinel).toHaveTextContent("3 waiting");
@@ -178,21 +214,21 @@ describe("Settings", () => {
         exports: vi.fn(async () => [upToDate]),
         testExport: vi.fn(async () => ({ queued_for: ["splunk"] })),
       });
-      renderView(api);
+      renderView(api, "/settings/siem");
       await userEvent.click(await screen.findByRole("button", { name: "Send test event" }));
       expect(api.testExport).toHaveBeenCalled();
       expect(await screen.findByRole("status")).toHaveTextContent("Test event queued for Splunk");
     });
 
     it("says how to connect a SIEM when there is none", async () => {
-      renderView(fakeApi({ exports: vi.fn(async () => []) }));
+      renderView(fakeApi({ exports: vi.fn(async () => []) }), "/settings/siem");
       expect(await screen.findByText(/No SIEM is connected/)).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Send test event" })).not.toBeInTheDocument();
       expect(screen.getByRole("heading", { name: "Connect a SIEM" })).toBeInTheDocument();
       expect(screen.getByText(/go in the server’s .env/)).toBeInTheDocument();
       const splunk = screen.getByText("Splunk", { selector: "summary" }).closest("details")!;
-      expect(within(splunk).getByRole("list", { name: "Splunk settings" })).toHaveTextContent("ALTIWARD_SPLUNK_HEC_TOKENRequired");
       expect(splunk).toHaveTextContent("ALTIWARD_SPLUNK_HEC_TOKEN=<the HEC token>");
+      expect(splunk).toHaveTextContent("# Optional. The index to write to. Unset, the token’s default index.");
       expect(splunk).toHaveTextContent("# ALTIWARD_SPLUNK_INDEX=<an index>");
       // The guide for the server that's running.
       await waitFor(() => expect(within(splunk).getByRole("link", { name: "Splunk setup guide" }))
@@ -202,7 +238,7 @@ describe("Settings", () => {
     });
 
     it("offers only the SIEMs that aren't connected", async () => {
-      renderView(fakeApi({ exports: vi.fn(async () => [failing, upToDate]) }));
+      renderView(fakeApi({ exports: vi.fn(async () => [failing, upToDate]) }), "/settings/siem");
       expect(await screen.findByRole("heading", { name: "Connect another SIEM" })).toBeInTheDocument();
       const offered = [...document.querySelectorAll(".siem-guide summary")].map((s) => s.textContent);
       expect(offered).toHaveLength(1);
@@ -216,7 +252,7 @@ describe("Settings", () => {
           version: "0.7.0", oldest_supported_agent: "0.4", update_check: false,
           platform: "azure-container-apps" as const, app: "altiward-app",
         })),
-      }));
+      }), "/settings/siem");
       expect(await screen.findByText(/environment variables on the container app/)).toBeInTheDocument();
       const sentinel = screen.getByText("Microsoft Sentinel", { selector: "summary" }).closest("details")!;
       expect(sentinel).toHaveTextContent("az containerapp update --name altiward-app");
@@ -224,12 +260,14 @@ describe("Settings", () => {
       expect(sentinel).not.toHaveTextContent("CLIENT_SECRET");
       const splunk = screen.getByText("Splunk", { selector: "summary" }).closest("details")!;
       expect(splunk).toHaveTextContent("ALTIWARD_SPLUNK_HEC_TOKEN=secretref:splunk-hec-token");
+      expect(within(splunk).getByRole("list", { name: "Optional Splunk settings" }))
+        .toHaveTextContent("ALTIWARD_SPLUNK_INDEX. The index to write to.");
     });
 
     it("lets only admins test or retry", async () => {
       const api = fakeApi({ exports: vi.fn(async () => [failing]) });
       render(<ApiContext.Provider value={api}><MeContext.Provider value={signedIn("viewer")}>
-        <MemoryRouter><SettingsView /></MemoryRouter>
+        {settingsAt("/settings/siem")}
       </MeContext.Provider></ApiContext.Provider>);
       expect(await screen.findByRole("button", { name: "Retry now" })).toBeDisabled();
       expect(screen.getByRole("button", { name: "Send test event" })).toBeDisabled();
@@ -240,7 +278,7 @@ describe("Settings", () => {
 describe("Settings SIEM queue", () => {
   it("shows what is waiting as sending", async () => {
     const api = fakeApi({ exports: vi.fn(async () => [{ sink: "splunk", pending: 4, failing: 0, max_attempts: 0, oldest_queued_at: null, last_delivered_at: null }]) });
-    renderView(api);
+    renderView(api, "/settings/siem");
     const row = await screen.findByRole("group", { name: "Splunk" });
     expect(row).toHaveTextContent("4 waiting to be sent.");
     expect(row).toHaveTextContent("Sending");
@@ -255,7 +293,7 @@ describe("Settings updates", () => {
 
   it("shows the latest versions, when they were checked, and how to upgrade", async () => {
     githubFetch();
-    renderView(withCheck());
+    renderView(withCheck(), "/settings/updates");
     const group = await screen.findByRole("group", { name: "Updates" });
     const server = await within(group).findByRole("group", { name: "Server" });
     expect(within(server).getByText("You’re running 0.1.0. The latest release is 0.2.0.")).toBeInTheDocument();
@@ -272,7 +310,7 @@ describe("Settings updates", () => {
     renderView(fakeApi({
       about: vi.fn(async () => ({ version: "0.1.0", oldest_supported_agent: "0.1", update_check: true,
         platform: "azure-container-apps" as const, app: "altiwardlab" })),
-    }));
+    }), "/settings/updates");
     const group = await screen.findByRole("group", { name: "Updates" });
     expect(await within(group).findByText("ghcr.io/altiward/altiward-api:0.2.0")).toBeInTheDocument();
     expect(within(group).queryByText(/upgrade\.sh/)).toBeNull();
@@ -281,14 +319,14 @@ describe("Settings updates", () => {
 
   it("says when the server is up to date", async () => {
     githubFetch();
-    renderView(withCheck("0.2.0"));
+    renderView(withCheck("0.2.0"), "/settings/updates");
     const server = await screen.findByRole("group", { name: "Server" });
     expect(within(server).getByText("Up to date")).toBeInTheDocument();
   });
 
   it("says a server newer than the latest release is newer, not up to date", async () => {
     githubFetch();
-    renderView(withCheck("0.2.1"));
+    renderView(withCheck("0.2.1"), "/settings/updates");
     const server = await screen.findByRole("group", { name: "Server" });
     expect(within(server).getByText("You’re running 0.2.1, newer than the latest release, 0.2.0.")).toBeInTheDocument();
     expect(within(server).queryByText("Up to date")).toBeNull();
@@ -296,7 +334,7 @@ describe("Settings updates", () => {
 
   it("shows release candidates once an admin turns on Show pre-releases", async () => {
     githubFetch();
-    renderView(withCheck("0.2.0"));
+    renderView(withCheck("0.2.0"), "/settings/updates");
     const group = await screen.findByRole("group", { name: "Updates" });
     const server = await within(group).findByRole("group", { name: "Server" });
     expect(within(server).getByText("You’re running 0.2.0. The latest release is 0.2.0.")).toBeInTheDocument();
@@ -314,7 +352,7 @@ describe("Settings updates", () => {
 
   it("names the release and the candidate for a server running one", async () => {
     githubFetch();
-    renderView(withCheck("0.3.0-rc.1"));
+    renderView(withCheck("0.3.0-rc.1"), "/settings/updates");
     const server = await screen.findByRole("group", { name: "Server" });
     expect(within(server).getByText("You’re running 0.3.0-rc.1. The latest release is 0.2.0. The newest release candidate is 0.3.0-rc.1."))
       .toBeInTheDocument();
@@ -325,7 +363,7 @@ describe("Settings updates", () => {
     githubFetch();
     const before = await checkReleases(Date.now() - 2 * 24 * 60 * 60 * 1000);
     githubFetch("offline");
-    renderView(withCheck());
+    renderView(withCheck(), "/settings/updates");
     const group = await screen.findByRole("group", { name: "Updates" });
     expect(await within(group).findByText("Couldn’t check for updates")).toBeInTheDocument();
     expect(within(group).getByText(`Last checked ${dateTime(before.checkedAt!)}.`)).toBeInTheDocument();
@@ -336,7 +374,7 @@ describe("Settings updates", () => {
     githubFetch([release("server-v0.1.0"), release("agent-v0.1.2")]);
     await checkReleases(Date.now() - 2 * 60_000);
     const fetch = githubFetch();
-    renderView(withCheck());
+    renderView(withCheck(), "/settings/updates");
     const server = await screen.findByRole("group", { name: "Server" });
     expect(within(server).getByText("Up to date")).toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalled();
@@ -348,7 +386,7 @@ describe("Settings updates", () => {
   it("offers Check now after a failed check", async () => {
     githubFetch("offline");
     await checkReleases(Date.now() - 2 * 60_000);
-    renderView(withCheck());
+    renderView(withCheck(), "/settings/updates");
     const group = await screen.findByRole("group", { name: "Updates" });
     await within(group).findByText("Couldn’t check for updates");
     githubFetch();
@@ -359,7 +397,7 @@ describe("Settings updates", () => {
   it("says the check is off when the server turned it off", async () => {
     const fetch = githubFetch();
     const api = fakeApi();
-    renderView(api);
+    renderView(api, "/settings/updates");
     const group = await screen.findByRole("group", { name: "Updates" });
     expect(await within(group).findByText(/ALTIWARD_UPDATE_CHECK=false/)).toBeInTheDocument();
     expect(within(group).getByText(/is set in the server’s \.env/)).toBeInTheDocument();
@@ -370,7 +408,7 @@ describe("Settings updates", () => {
     renderView(fakeApi({
       about: vi.fn(async () => ({ version: "0.1.0", oldest_supported_agent: "0.1", update_check: false,
         platform: "azure-container-apps" as const, app: "altiwardlab" })),
-    }));
+    }), "/settings/updates");
     const group = await screen.findByRole("group", { name: "Updates" });
     expect(await within(group).findByText(/is set in the container app’s environment variables/)).toBeInTheDocument();
   });
@@ -379,7 +417,7 @@ describe("Settings updates", () => {
     const fetch = githubFetch();
     const api = withCheck();
     render(<ApiContext.Provider value={api}><MeContext.Provider value={signedIn("operator")}>
-      <MemoryRouter><SettingsView /></MemoryRouter>
+      {settingsAt("/settings/updates")}
     </MeContext.Provider></ApiContext.Provider>);
     await screen.findByDisplayValue("72");
     await waitFor(() => expect(api.settings).toHaveBeenCalled());

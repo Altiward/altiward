@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { NavLink, Navigate, Route, Routes } from "react-router";
 import type { ConsoleSignIn, ExportSink, Settings } from "../api";
 import { Banner, RoleNote, Segmented, Toolbar } from "../components/Chrome";
 import { StateBadge } from "../components/StateBadge";
@@ -13,7 +14,44 @@ import { useLoad } from "../useLoad";
 const DEFAULT_SILENT_HOURS = 72;
 const MAX_SILENT_HOURS = 720;
 
+/** Settings' tabs, as in a Mac app's Settings window. Each has its own address under
+ *  /settings, so the install guide and other pages can link to one. Sign-ins and Updates are
+ *  for admins only. */
+const TABS = [
+  { to: "/settings", title: "General" },
+  { to: "/settings/siem", title: "SIEM export" },
+  { to: "/settings/sign-ins", title: "Sign-ins", admin: true },
+  { to: "/settings/updates", title: "Updates", admin: true },
+];
+
 export function SettingsView() {
+  const admin = useCan("admin");
+  return (
+    <>
+      <Toolbar title="Settings">
+        <nav className="segmented" aria-label="Settings sections">
+          {TABS.filter((t) => admin || !t.admin).map((t) => (
+            <NavLink key={t.to} to={t.to} end>{t.title}</NavLink>
+          ))}
+        </nav>
+      </Toolbar>
+      <div className="pane">
+        <div className="form">
+          <Routes>
+            <Route index element={<GeneralSettings />} />
+            <Route path="siem" element={<SiemExport />} />
+            {admin && <Route path="sign-ins" element={<ConsoleSignIns />} />}
+            {admin && <Route path="updates" element={<Updates />} />}
+            <Route path="*" element={<Navigate to="/settings" replace />} />
+          </Routes>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** Enrollment and alert settings, which only admins change, and this browser's appearance. */
+function GeneralSettings() {
   const api = useApi();
   const { data, error, reload } = useLoad(() => api.settings(), []);
   const [saving, setSaving] = useState(false);
@@ -46,72 +84,64 @@ export function SettingsView() {
 
   return (
     <>
-      <Toolbar title="Settings" />
-      <div className="pane">
-        {(error || saveError) && <Banner>{saveError ?? error}</Banner>}
-        <div className="form">
-          {!canChange && <RoleNote>Changing settings needs the admin role.</RoleNote>}
-          <div className="group" style={{ marginTop: 0 }}>
-            <h3>Enrollment</h3>
-            <div className="box">
-              <label className="row">
-                <span>
-                  <span>Approve Macs that enroll again</span>
-                  <p className="hint">
-                    When a Mac that already enrolled shows up with a new key, for example after a reinstall, its
-                    reports wait until you approve it in Enrollments. Off: the new key replaces the old one at once.
-                  </p>
-                </span>
-                <input type="checkbox" role="switch" disabled={!data || saving || !canChange}
-                  checked={data?.reenrollment_requires_approval ?? false}
-                  onChange={(e) => save({ reenrollment_requires_approval: e.target.checked })} />
-              </label>
-            </div>
-          </div>
-          <div className="group">
-            <h3>Alerts</h3>
-            <div className="box">
-              <label className="row">
-                <span>
-                  <span>Alert when a Mac stops checking in</span>
-                  <p className="hint">
-                    Off: no new alerts, for example if your SIEM already watches for quiet Macs. A Mac already
-                    reported still sends a resolved alert when it checks in again.
-                  </p>
-                </span>
-                <input type="checkbox" role="switch" disabled={!data || saving || !canChange}
-                  checked={!(data?.silent_alerts_off ?? false)}
-                  onChange={(e) => save({ silent_alerts_off: !e.target.checked })} />
-              </label>
-              <form className="row" onSubmit={(e) => { e.preventDefault(); if (hoursChanged) save({ silent_after_hours: parsed }); }}>
-                <label htmlFor="silent-hours">
-                  <span>Raise it after</span>
-                  <p className="hint">
-                    Hours without a check-in before Altiward raises an alert and sends it to your SIEM. Laptops that are
-                    closed stop checking in too, so the default of {DEFAULT_SILENT_HOURS} hours rides out a weekend.
-                    Macs whose enrollments you revoked never alert.
-                  </p>
-                </label>
-                <span className="inline-field">
-                  <input id="silent-hours" type="number" inputMode="numeric" min={1} max={MAX_SILENT_HOURS}
-                    disabled={!data || saving || !canChange || data.silent_alerts_off} value={hours} aria-invalid={!hoursValid}
-                    onChange={(e) => setHours(e.target.value)} />
-                  <span className="secondary">hours</span>
-                  <button type="submit" className="button" disabled={!hoursChanged || saving || !canChange || data?.silent_alerts_off}>Save</button>
-                </span>
-              </form>
-              {!hoursValid && <p className="hint" role="alert">Enter a whole number of hours from 1 to {MAX_SILENT_HOURS}.</p>}
-            </div>
-          </div>
-          <SiemExport />
-          {canChange && <ConsoleSignIns />}
-          {canChange && <Updates />}
-          <AppearanceGroup />
-          <p className="hint">
-            Altiward includes open-source software. <a href="/third-party-notices.txt">Third-party notices</a>
-          </p>
+      {(error || saveError) && <Banner>{saveError ?? error}</Banner>}
+      {!canChange && <RoleNote>Changing settings needs the admin role.</RoleNote>}
+      <div className="group" style={{ marginTop: 0 }}>
+        <h3>Enrollment</h3>
+        <div className="box">
+          <label className="row">
+            <span>
+              <span>Approve Macs that enroll again</span>
+              <p className="hint">
+                When a Mac that already enrolled shows up with a new key, for example after a reinstall, its
+                reports wait until you approve it in Enrollments. Off: the new key replaces the old one at once.
+              </p>
+            </span>
+            <input type="checkbox" role="switch" disabled={!data || saving || !canChange}
+              checked={data?.reenrollment_requires_approval ?? false}
+              onChange={(e) => save({ reenrollment_requires_approval: e.target.checked })} />
+          </label>
         </div>
       </div>
+      <div className="group">
+        <h3>Alerts</h3>
+        <div className="box">
+          <label className="row">
+            <span>
+              <span>Alert when a Mac stops checking in</span>
+              <p className="hint">
+                Off: no new alerts, for example if your SIEM already watches for quiet Macs. A Mac already
+                reported still sends a resolved alert when it checks in again.
+              </p>
+            </span>
+            <input type="checkbox" role="switch" disabled={!data || saving || !canChange}
+              checked={!(data?.silent_alerts_off ?? false)}
+              onChange={(e) => save({ silent_alerts_off: !e.target.checked })} />
+          </label>
+          <form className="row" onSubmit={(e) => { e.preventDefault(); if (hoursChanged) save({ silent_after_hours: parsed }); }}>
+            <label htmlFor="silent-hours">
+              <span>Raise it after</span>
+              <p className="hint">
+                Hours without a check-in before Altiward raises an alert and sends it to your SIEM. Laptops that are
+                closed stop checking in too, so the default of {DEFAULT_SILENT_HOURS} hours rides out a weekend.
+                Macs whose enrollments you revoked never alert.
+              </p>
+            </label>
+            <span className="inline-field">
+              <input id="silent-hours" type="number" inputMode="numeric" min={1} max={MAX_SILENT_HOURS}
+                disabled={!data || saving || !canChange || data.silent_alerts_off} value={hours} aria-invalid={!hoursValid}
+                onChange={(e) => setHours(e.target.value)} />
+              <span className="secondary">hours</span>
+              <button type="submit" className="button" disabled={!hoursChanged || saving || !canChange || data?.silent_alerts_off}>Save</button>
+            </span>
+          </form>
+          {!hoursValid && <p className="hint" role="alert">Enter a whole number of hours from 1 to {MAX_SILENT_HOURS}.</p>}
+        </div>
+      </div>
+      <AppearanceGroup />
+      <p className="hint">
+        Altiward includes open-source software. <a href="/third-party-notices.txt">Third-party notices</a>
+      </p>
     </>
   );
 }
@@ -227,27 +257,26 @@ function ConnectSiem({ connected, where, version }: { connected: string[]; where
 
 function SiemGuideDetails({ guide, where, docs }: { guide: SiemGuide; where: Where; docs: string }) {
   const name = sinkName(guide.sink);
+  const azure = where.azureApp !== undefined;
+  const optional = guide.settings.filter((s) => !s.required);
   return (
     <details className="siem-guide">
       <summary>{name}</summary>
       <p className="hint">{guide.intro} <a href={docs} target="_blank" rel="noreferrer">{name} setup guide</a>.</p>
-      <div className="box">
-        <ul className="entries" aria-label={`${name} settings`}>
-          {guide.settings.map((s) => (
-            <li key={s.name}>
-              <code>{s.name}</code>
-              <span className="secondary">{s.required ? "Required" : s.value.startsWith("<") ? "Optional" : `Optional, default ${s.value}`}</span>
-              <span className="detail secondary">{s.what}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
       <p className="hint">
-        {where.azureApp !== undefined
-          ? "Run these with the Azure CLI, after filling in the values in angle brackets. Add an optional setting the same way."
+        {azure
+          ? "Run these with the Azure CLI, after filling in the values in angle brackets."
           : "Add these lines to .env, after filling in the values in angle brackets. Uncomment an optional one to change it."}
       </p>
       <Command text={siemSnippet(guide, where)} />
+      {azure && optional.length > 0 && (
+        <>
+          <p className="hint">Optional settings, added the same way:</p>
+          <ul className="hint siem-optional" aria-label={`Optional ${name} settings`}>
+            {optional.map((s) => <li key={s.name}><code>{s.name}</code>. {s.what}.</li>)}
+          </ul>
+        </>
+      )}
     </details>
   );
 }

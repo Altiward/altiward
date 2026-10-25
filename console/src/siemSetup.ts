@@ -95,11 +95,14 @@ export function secretName(setting: string): string {
   return setting.replace(/^ALTIWARD_/, "").toLowerCase().replaceAll("_", "-");
 }
 
-/** What to copy: .env lines, with the optional settings commented out at their defaults, or on
- *  Azure Container Apps the commands that set the required ones, secrets as app secrets. */
+/** What to copy: .env lines, each optional setting commented out at its default under what it
+ *  does, or on Azure Container Apps the commands that set the required ones, secrets as app
+ *  secrets (the console lists the optional ones under them). */
 export function siemSnippet(guide: SiemGuide, where: Where): string {
   if (where.azureApp === undefined) {
-    return guide.settings.map((s) => `${s.required ? "" : "# "}${s.name}=${s.value}`).join("\n");
+    return guide.settings
+      .map((s) => (s.required ? `${s.name}=${s.value}` : `# Optional. ${s.what}.\n# ${s.name}=${s.value}`))
+      .join("\n");
   }
   const app = `--name ${where.azureApp || "<the app>"} --resource-group <its resource group>`;
   const required = guide.settings.filter((s) => s.required);

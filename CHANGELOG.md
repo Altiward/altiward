@@ -25,9 +25,13 @@ None.
 
 ### Changes
 
+- Settings is split into tabs, each at its own address: **General** (`/settings`:
+  enrollment, alerts, appearance), **SIEM export** (`/settings/siem`), and for admins
+  **Sign-ins** (`/settings/sign-ins`) and **Updates** (`/settings/updates`). Overview's SIEM
+  tile opens SIEM export.
 - **Settings › SIEM export** shows how to connect each SIEM that isn't connected yet (#37):
-  the settings it needs, which are required and the defaults of the rest, and lines to copy.
-  On Docker Compose they're `.env` lines; on Azure Container Apps, `az containerapp`
+  lines to copy and its setup guide. On Docker Compose they're `.env` lines, each optional
+  setting commented out under what it does; on Azure Container Apps, `az containerapp`
   commands for the app, with secrets kept as app secrets and Sentinel signing in as the
   app's managed identity. It shows placeholders only. SIEM settings stay in the server's
   environment, so changing where events go still takes access to the server, not just the

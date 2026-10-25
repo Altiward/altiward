@@ -3,11 +3,12 @@ import { secretName, siemGuides, siemSnippet } from "./siemSetup";
 
 describe("SIEM setup help", () => {
   // backend/internal/config checks the names against the settings the server reads.
-  it("gives .env lines, with optional settings commented out at their defaults", () => {
+  it("gives .env lines, each optional setting commented out under what it does", () => {
     const [splunk] = siemGuides({});
     expect(siemSnippet(splunk, {})).toBe(
       "ALTIWARD_SPLUNK_HEC_URL=https://<your Splunk>:8088\n" +
         "ALTIWARD_SPLUNK_HEC_TOKEN=<the HEC token>\n" +
+        "# Optional. The index to write to. Unset, the token’s default index.\n" +
         "# ALTIWARD_SPLUNK_INDEX=<an index>");
   });
 

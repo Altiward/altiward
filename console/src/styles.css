@@ -206,6 +206,13 @@ a.button.primary { color: var(--on-action); }
 }
 .segmented button + button { border-left: 1px solid var(--line); }
 .segmented button[aria-pressed="true"] { background: var(--ink); color: var(--surface-100); font-weight: 600; }
+/* Links as tabs, such as Settings' sections: the current one looks pressed. */
+.segmented a { display: inline-flex; align-items: center; min-height: 30px; padding: 0 var(--space-3); font-size: 13px; color: var(--ink); text-decoration: none; }
+.segmented a + a { border-left: 1px solid var(--line); }
+.segmented a[aria-current="page"] { background: var(--ink); color: var(--surface-100); font-weight: 600; }
+.segmented a:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+/* A tab's first group sits at the top of its pane. */
+.form > .group:first-child { margin-top: 0; }
 
 /* Table: dense, square, hairline rows */
 table.list { width: 100%; border-collapse: collapse; }
@@ -362,8 +369,8 @@ dialog.sheet .buttons { display: flex; justify-content: flex-end; gap: var(--spa
 .siem-connect h4 { font-size: 13px; line-height: 18px; font-weight: 600; margin: 0; }
 .siem-guide { border-top: 1px solid var(--hairline); padding: var(--space-2) 0; margin-top: var(--space-2); }
 .siem-guide summary { cursor: pointer; font-size: 13px; line-height: 18px; }
-.siem-guide .box { margin-top: var(--space-2); }
-.siem-guide .entries code { overflow-wrap: anywhere; }
+.siem-optional { padding-left: var(--space-4); }
+.siem-optional code { overflow-wrap: anywhere; }
 
 /* Overview */
 .overview { padding: var(--space-4) var(--space-6) var(--space-8); max-width: 1200px; }
