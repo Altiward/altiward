@@ -1,7 +1,32 @@
 import { describe, expect, it } from "vitest";
+import type { Command } from "./api";
 import {
-  agentOutdated, endReasonLabel, expiresAfter, flagLabel, formatDuration, gauge, integrityCheckLabel, permanentUseMethodLabel, persistenceLines, relativeTime, shortFingerprint, tamperStateLabel,
+  agentOutdated, commandOutcome, dateTime, endReasonLabel, expiresAfter, flagLabel, formatDuration, gauge, integrityCheckLabel, permanentUseMethodLabel, persistenceLines, relativeTime, shortFingerprint, tamperStateLabel,
 } from "./format";
+
+// A missing value is a word that says why (#105).
+describe("missing values", () => {
+  it("a missing date says so, in the caller's words when it knows why", () => {
+    expect(dateTime(null)).toBe("Unknown");
+    expect(dateTime(undefined, "Not yet")).toBe("Not yet");
+  });
+
+  const command = (over: Partial<Command>): Command => ({
+    command_id: "c1", serial: "C02XK0AAJGH5", type: "revoke_admin", user: "jdoe", session_id: null,
+    issued_by: "admin", created_at: "2026-10-25T10:00:00Z", expires_at: "2026-10-26T10:00:00Z",
+    delivered_at: null, result_at: null, result: null, status: "pending", ...over,
+  });
+
+  it("a command with no outcome yet says where it is", () => {
+    expect(commandOutcome(command({}))).toBe("Waiting to be sent");
+    expect(commandOutcome(command({ delivered_at: "2026-10-25T10:00:01Z" }))).toBe("Sent to the Mac");
+  });
+
+  it("a command that changed nothing says so", () => {
+    const result = { status: "completed" as const, error: null, revoked: [], failed: [], skipped: [], completed_at: "2026-10-25T10:00:02Z" };
+    expect(commandOutcome(command({ status: "completed", result }))).toBe("Nothing to do");
+  });
+});
 
 describe("formatDuration", () => {
   it.each([
@@ -178,6 +203,6 @@ describe("expiresAfter", () => {
     [{ expiry_capped: false }, "No cap"],
     // An older agent doesn't say whether MDM set it.
     [{ expiration_interval_max_minutes: 60 }, "Up to 60 min"],
-    [{}, "—"],
+    [{}, null],
   ])("%j is %s", (p, want) => expect(expiresAfter(p)).toBe(want));
 });

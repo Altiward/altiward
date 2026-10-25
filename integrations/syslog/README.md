@@ -13,7 +13,7 @@ failed batch is retried whole, so a receiver can see a message twice; use `exter
 
 | Variable | Default | |
 | --- | --- | --- |
-| `ALTIWARD_SYSLOG_ADDR` | — | `host:port` of the receiver. Enables the sink. 6514 is the usual TLS port. |
+| `ALTIWARD_SYSLOG_ADDR` | None | `host:port` of the receiver. Enables the sink. 6514 is the usual TLS port. |
 | `ALTIWARD_SYSLOG_TLS` | `true` | `false` sends plain TCP. Use it only on a network you trust. |
 | `ALTIWARD_SYSLOG_CA_FILE` | system roots | PEM file of the CA that signed the receiver's certificate |
 | `ALTIWARD_SYSLOG_FORMAT` | `cef` | `cef`, or `json` for the OCSF record |

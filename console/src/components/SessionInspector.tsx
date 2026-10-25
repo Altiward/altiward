@@ -7,7 +7,7 @@ import {
 } from "../format";
 import { useCommandResult } from "../useCommandResult";
 import { useLoad } from "../useLoad";
-import { Banner, Details, Explain, RoleNote } from "./Chrome";
+import { Banner, Details, Explain, Missing, RoleNote } from "./Chrome";
 import { CloseIcon, ElevatedGlyph, EndedGlyph, NotGrantedGlyph } from "./Icons";
 import { ConfirmSheet } from "./Sheet";
 import { StateBadge } from "./StateBadge";
@@ -144,11 +144,13 @@ export function SessionInspector({ session, onClose, onChanged }: {
             ? <Explain tip={sourceTips[session.source]} align="end">{sourceLabel(session.source)}</Explain>
             : sourceLabel(session.source)],
           ["Started", dateTime(session.started_at)],
-          ["Expires", dateTime(session.expires_at)],
-          ["Ended", dateTime(session.ended_at)],
-          ["Time used", session.actual_seconds == null ? "—" : <span className="data">{formatDuration(session.actual_seconds)}</span>],
+          ["Expires", session.expires_at ? dateTime(session.expires_at) : <Missing key="expires">No expiry known</Missing>],
+          ["Ended", session.ended_at ? dateTime(session.ended_at) : <Missing key="ended">Not yet</Missing>],
+          ["Time used", session.actual_seconds == null
+            ? <Missing key="used">Unknown</Missing>
+            : <span className="data">{formatDuration(session.actual_seconds)}</span>],
           ["Renewals", String(session.renewals)],
-          ["Reason", session.reason ?? "—"],
+          ["Reason", session.reason ?? <Missing key="reason">None given</Missing>],
         ]} />
       </div>
 

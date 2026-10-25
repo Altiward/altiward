@@ -112,6 +112,11 @@ None.
   doesn't set it.
 - A session's timeline notes a renewal read from Privileges' log as "Renewed in
   Privileges".
+- The console says why a value is missing (#105): "Not set" for a
+  Privileges setting MDM doesn't set, "Not reported" for what an older agent doesn't send,
+  "None given" for a session without a reason, "Not yet" for a session still open or an
+  enrollment not yet activated, "No expiry known", "Waiting to be sent" and "Nothing to do"
+  for commands, and "Unknown" otherwise. A screen reader reads the word.
 
 ## Agent 0.4.0 - 2026-10-25
 
