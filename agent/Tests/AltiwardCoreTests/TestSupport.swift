@@ -132,7 +132,12 @@ func makeEnvironment(
     loginHistory: @escaping @Sendable (_ since: Date) -> [LoginRecord] = { _ in [] },
     permanentUseLog: @escaping @Sendable (_ since: Date) -> [PermanentUseLogRecord] = { _ in [] },
     fullName: @escaping @Sendable (_ shortName: String) -> String? = { _ in nil },
-    accountExists: @escaping @Sendable (_ shortName: String) -> Bool = { _ in false }
+    accountExists: @escaping @Sendable (_ shortName: String) -> Bool = { _ in false },
+    privilegesLogAvailability: @escaping @Sendable () -> PrivilegesLogAvailability = { .unavailable("not checked") },
+    privilegesDaemonLines: @escaping @Sendable (_ since: Date) -> [PrivilegesDaemonLine] = { _ in [] },
+    processIdentity: @escaping @Sendable (_ pid: Int32) -> ProcessIdentity? = { _ in nil },
+    privilegesExtensionPID: @escaping @Sendable () -> Int32? = { nil },
+    userID: @escaping @Sendable (_ shortName: String) -> UInt32? = { _ in nil }
 ) -> AgentEnvironment {
     AgentEnvironment(
         device: device,
@@ -148,7 +153,9 @@ func makeEnvironment(
         logins: logins,
         processExists: processExists,
         loginHistory: loginHistory,
-        permanentUseLog: permanentUseLog, fullName: fullName, accountExists: accountExists)
+        permanentUseLog: permanentUseLog, fullName: fullName, accountExists: accountExists,
+        privilegesLogAvailability: privilegesLogAvailability, privilegesDaemonLines: privilegesDaemonLines,
+        processIdentity: processIdentity, privilegesExtensionPID: privilegesExtensionPID, userID: userID)
 }
 
 /// Writes a store as agent 0.2 left it: the 0.1.0 tables at schema version 1.
@@ -184,6 +191,26 @@ func writeVersion1Store(in dir: URL) throws {
             reported_at REAL
         );
         PRAGMA user_version = 1;
+        """)
+}
+
+/// Writes a store as agent 0.3 left it: the version 1 tables plus `permanent_uses`, at schema version 2.
+func writeVersion2Store(in dir: URL) throws {
+    try writeVersion1Store(in: dir)
+    let db = try SQLiteConnection(path: dir.appendingPathComponent("agent.sqlite").path)
+    try db.execute(
+        """
+        CREATE TABLE permanent_uses (
+            use_id TEXT PRIMARY KEY,
+            user TEXT NOT NULL,
+            method TEXT NOT NULL,
+            tty TEXT NOT NULL,
+            host TEXT NOT NULL,
+            pid INTEGER NOT NULL,
+            started_at REAL NOT NULL,
+            ended_at REAL
+        );
+        PRAGMA user_version = 2;
         """)
 }
 

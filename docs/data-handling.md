@@ -36,7 +36,8 @@ what people do with them otherwise.
 | Who is admin | Every human account in the Mac's `admin` group (any member with a UID of 500 or more, and any other direct member apart from `root` and `_` accounts, hidden ones included), checked every 5 minutes, and admin rights that appear without an elevation |
 | Health | Whether the agent, SAP Privileges and their settings are intact (including Privileges' daily admin budget, if set), and how many events are waiting to send. While someone holds rights from SAP Privileges, this includes whether Privileges' timer is still running for them: the agent looks for its process in the Mac's process list and sends only the answer |
 | Revokes | The results of revokes sent from the console, and, when `OutOfBandEnforcement` is `enforce`, each admin nobody granted that the agent removed |
-| From SAP Privileges' system extension | Only with Privileges 2.6 or later and its system extension on. For admin rights nobody granted, the process that added the account to `admin`; for each attempt the extension blocked on Privileges, the item and the process that tried. For each process: its path, signing ID, team ID, whether it is part of macOS, its process and parent IDs, and its terminal. Read from the records the extension keeps in the Mac's unified log |
+| From SAP Privileges' system extension | Only with Privileges 2.6 or later and its system extension on. For admin rights nobody granted, the process that added the account to `admin`; for each attempt the extension blocked on Privileges, the item and the process that tried. For each process: its path, signing ID, team ID, whether it is part of macOS, its process and parent IDs, and its terminal. Read from the records the extension keeps in the Mac's unified log. Each record is marked with whether it came from the real extension (`extension_verified`): the agent checks the code signature, user and start time of the process that logged it |
+| Whether Privileges backs a grant | Only with Privileges 2.6 or later and its system extension on (macOS 14 or later). The agent also reads the lines `PrivilegesDaemon` writes to the unified log when it grants or ends admin rights, as well as the extension's records, to check that a grant claimed through the hook really came from Privileges. Before it trusts a line it looks at the process that logged it in the Mac's process list: its code signature (signing ID and team), the user it runs as and when it started. It sends only the result: on each grant, whether Privileges' log confirmed it (`privileges_log`), when, and which source (`daemon`, `extension`); and, when a claim is refused or accepted without that confirmation, the account, what was claimed (`grant`, `renewal` or `give_back`), the reason, the UID of the process that sent it and, if a line was found, when and from which source. It sends no log line and no process details of its own |
 | Permanent admin use: sign-ins | Only for accounts in `PermanentAdmins`, always on. Each sign-in at the Mac (login window or fast user switching), in Terminal or over interactive SSH: when it started and ended, the terminal, and for SSH the address it came from. A Terminal tab opened while the account is signed in at the Mac is part of that sign-in, not a sign-in of its own. Read from macOS's sign-in records (utmpx and wtmp) |
 | Permanent admin use: prompts and screen sharing | Each time one of these accounts' name and password is typed into an admin prompt on another user's session: whose session, the authorisation right, and the app that asked, when the log names it. Each screen sharing connection that signs in as one of these accounts: when the connection was authenticated (when it closes, for a shared screen) and the viewer's address, one event per connection |
 | Permanent admin use: how prompts and screen sharing are read | Uses that differ only in time are sent as one event, with a count and the time of the last, so a script approving 300 prompts within one heartbeat sends one; at most 20 events are sent for each heartbeat, and the last says how many more groups were left out. Read from the Mac's unified log at each heartbeat (every 5 minutes by default), so only as far as macOS keeps those lines |
@@ -178,8 +179,19 @@ The agent keeps one database, `/Library/Application Support/Altiward/agent.sqlit
 readable only by root. It holds events waiting to send (removed once your server
 confirms them), the elevations open now, the Mac's key (or the handle to it in the Secure
 Enclave), and revoke results (removed 30
-days after they are reported). It logs to the Mac's unified log under
-`com.altiward.agent`.
+days after they are reported). For checking grants against Privileges' log it also holds:
+
+- each grant claim from the hook while it waits, up to a minute, for the log: the account,
+  the reason the person typed, the UID of the process that sent it and when it arrived. It is
+  removed once the claim is confirmed or refused;
+- the process ID and start time of the last 20 processes it verified as Privileges'
+  extension, so it can check older records against the process that wrote them;
+- the time and logging process ID of the log lines that confirmed a claim, for 5 minutes,
+  so one line can't confirm two claims;
+- when it first found Privileges' log available, and whether the extension has logged a
+  grant the daemon's line confirmed.
+
+It logs to the Mac's unified log under `com.altiward.agent`.
 
 ## Network and transport
 

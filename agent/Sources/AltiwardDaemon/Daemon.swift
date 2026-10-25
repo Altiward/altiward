@@ -94,13 +94,7 @@ final class Daemon: Sendable {
             while true {
                 do {
                     let events = try tracker.heartbeat()
-                    for event in events where event.type == .agentTamper {
-                        var what = ""
-                        for key in ["check", "state", "problem"] {
-                            if case .string(let s) = event.detail[key] { what += " \(key)=\(s)" }
-                        }
-                        log.error("tamper:\(what, privacy: .public)")
-                    }
+                    Self.logTampers(events)
                     // Sign-ins the scan found, and prompts and screen sharing from the log.
                     Self.logPermanentUses(events.filter { $0.type == .adminPermanentUse })
                     for event in events
@@ -127,9 +121,11 @@ final class Daemon: Sendable {
             while true {
                 do {
                     let raised = try tracker.checkUntrackedAdmins()
-                    for event in raised {
+                    for event in raised where event.type == .adminOutOfBand {
                         log.notice("admin.out_of_band for \(event.user?.localName ?? "-", privacy: .public)")
                     }
+                    // Held grant claims the log didn't confirm, or accepted without it.
+                    Self.logTampers(raised)
                     if !raised.isEmpty {
                         Self.checkPersistence(tracker)
                         await delivery.flush()
@@ -182,6 +178,17 @@ final class Daemon: Sendable {
         log.info("altiward-agent \(AgentVersion.current, privacy: .public) started")
         withExtendedLifetime((listener, delegate, monitor)) {
             dispatchMain()
+        }
+    }
+
+    /// One line per `agent.tamper` event among `events`, as `tamper: check=… state=… problem=…`.
+    static func logTampers(_ events: [AltiwardEvent]) {
+        for event in events where event.type == .agentTamper {
+            var what = ""
+            for key in ["check", "state", "problem"] {
+                if case .string(let s) = event.detail[key] { what += " \(key)=\(s)" }
+            }
+            log.error("tamper:\(what, privacy: .public)")
         }
     }
 
@@ -300,12 +307,21 @@ final class HookHandler: NSObject, AltiwardAgentXPC, Sendable {
             var invocation = try AltiwardJSON.decoder().decode(HookInvocation.self, from: payload)
             // The caller runs as the user; time the event by the daemon's clock, not theirs.
             invocation.invokedAt = Date()
-            let event = try tracker.record(invocation, callerUID: callerUID)
-            log.info(
-                "\(event.type.rawValue, privacy: .public) for \(invocation.user, privacy: .public) (uid \(self.callerUID)), session \(event.sessionID ?? "-", privacy: .public)"
-            )
-            reply(true, nil)
-            onRecorded()
+            switch try tracker.submit(invocation, callerUID: callerUID) {
+            case .recorded(let event):
+                log.info(
+                    "\(event.type.rawValue, privacy: .public) for \(invocation.user, privacy: .public) (uid \(self.callerUID)), session \(event.sessionID ?? "-", privacy: .public)"
+                )
+                reply(true, nil)
+                onRecorded()
+            case .pending:
+                // Nothing is queued yet: the check loop confirms or refuses the claim once
+                // Privileges' log has been read, and sends what it records.
+                log.info(
+                    "grant claim for \(invocation.user, privacy: .public) held for Privileges' log"
+                )
+                reply(true, nil)
+            }
         } catch {
             log.error("rejected hook payload: \(String(describing: error), privacy: .public)")
             reply(false, String(describing: error))

@@ -43,6 +43,10 @@ function eventNote(e: TimelineEvent): string | null {
   if (d.trigger === "privileges_grant") return "Rights kept, now under a Privileges grant";
   if (d.trigger === "command") return "From the console";
   if (d.trigger === "heartbeat" && e.type === "elevation.revoked") return "Seen by the agent";
+  if (e.type === "elevation.granted") {
+    if (d.privileges_log === "confirmed") return "Confirmed by Privileges’ log";
+    if (d.privileges_log === "not_confirmed") return "Not confirmed by Privileges’ log";
+  }
   if (d.renewed === true) return "Renewal";
   if (d.verified === false) return "Claim didn’t match the admin group";
   if (e.type === "elevation.overdue" && d.enforcement_failed === true) return "Couldn’t remove rights";

@@ -13,6 +13,10 @@ public enum IntegrityCheck: String, Sendable, CaseIterable, Comparable {
     /// Someone holding Privileges rights stopped Privileges' agent, which runs their timer.
     /// Checked by the heartbeat, which knows the open sessions.
     case privilegesTimer = "privileges_timer"
+    /// Enforcement can't confirm Privileges grants against Privileges' own log: the log is
+    /// missing, or the system extension stopped recording grants. Checked by the heartbeat,
+    /// which knows the enforcement settings and what grants have confirmed.
+    case grantConfirmation = "grant_confirmation"
     /// Not a standing check: a downgrade is reported once, as `detected`.
     case agentVersion = "agent_version"
     /// Not a standing check: each attempt Privileges' system extension blocked is reported
@@ -51,16 +55,22 @@ public struct SystemIntegrity: Sendable {
     public var isForced: @Sendable (String) -> Bool
     public var privileges: @Sendable () -> PrivilegesSettings
     public var privilegesInstalled: @Sendable () -> Bool
+    /// What is wrong with Privileges' running system extension, or nil when SAP's extension is
+    /// running (``PrivilegesExtensionProcess/problem()``). The setting alone isn't protection:
+    /// an extension never approved, or killed, leaves it on.
+    public var privilegesExtensionProblem: @Sendable () -> String?
 
     public init(
         bundleURL: URL?, hasValue: @escaping @Sendable (String) -> Bool, isForced: @escaping @Sendable (String) -> Bool,
-        privileges: @escaping @Sendable () -> PrivilegesSettings, privilegesInstalled: @escaping @Sendable () -> Bool
+        privileges: @escaping @Sendable () -> PrivilegesSettings, privilegesInstalled: @escaping @Sendable () -> Bool,
+        privilegesExtensionProblem: @escaping @Sendable () -> String?
     ) {
         self.bundleURL = bundleURL
         self.hasValue = hasValue
         self.isForced = isForced
         self.privileges = privileges
         self.privilegesInstalled = privilegesInstalled
+        self.privilegesExtensionProblem = privilegesExtensionProblem
     }
 
     public static func live() -> SystemIntegrity {
@@ -71,7 +81,8 @@ public struct SystemIntegrity: Sendable {
             hasValue: { CFPreferencesCopyAppValue($0 as CFString, domain as CFString) != nil },
             isForced: { CFPreferencesAppValueIsForced($0 as CFString, domain as CFString) },
             privileges: { PrivilegesSettings.current() },
-            privilegesInstalled: { DeviceIdentity.current().privilegesVersion != nil })
+            privilegesInstalled: { DeviceIdentity.current().privilegesVersion != nil },
+            privilegesExtensionProblem: { PrivilegesExtensionProcess.problem() })
     }
 
     public func run() -> [IntegrityCheck: IntegrityResult] {
@@ -87,8 +98,11 @@ public struct SystemIntegrity: Sendable {
         if privilegesInstalled() {
             let settings = privileges()
             results[.privilegesTamperProtection] =
-                settings.systemExtensionEnabled == true
-                ? .ok : .failed("Privileges' tamper protection (EnableSystemExtension) is off")
+                settings.systemExtensionEnabled != true
+                ? .failed("Privileges' tamper protection (EnableSystemExtension) is off")
+                : privilegesExtensionProblem().map {
+                    .failed("Privileges' tamper protection is on, but its system extension \($0)")
+                } ?? .ok
             if let bundleURL {
                 // The altiward-hook product, installed as "Altiward": Privileges shows the file's
                 // name next to "Run after privilege change".

@@ -193,22 +193,60 @@ Create these in your MDM and scope them to a pilot group first.
    > right Team ID before turning `enforce` on.
 
    Someone holding admin rights nobody granted can run the hook by hand to claim a
-   Privileges grant, or to claim they gave the rights back. In `enforce` mode the agent
-   refuses, and logs on the Mac, a grant claimed on a Mac without SAP Privileges, a grant
-   claimed more than a minute after Altiward raised the rights, and a give-back claimed
-   while they are still an admin, and the rights are still removed; a real grant's hook
-   arrives well within that minute. Hand-run claims can still keep the rights in two ways:
-   a grant claimed before the agent raises them (in the 30 seconds or so before it does, or
-   between heartbeats), and an account with root that removes itself from `admin`, gives
-   the rights back, adds itself again and claims a grant. The hook is untrusted and an
-   admin can do this. A later release will accept a grant claim in `enforce` mode only when
-   Privileges' own log shows Privileges added the user.
+   Privileges grant, or to claim they gave the rights back. The agent checks a grant claim
+   against SAP Privileges' own log, which a hand-run claim leaves no line in. Full
+   protection needs **Privileges 2.6 or later with its system extension on, on macOS 14
+   or later** (the extension needs the system extension policy and Full Disk Access
+   below). Then, in `enforce` mode:
 
-   In `alert` mode a claimed grant still turns their session into a Privileges session. The
-   console shows it as **Followed rights without a grant** and the SIEM as "Replaced by a
-   Privileges grant". Once it is a Privileges session, with `ExpiryEnforcement` set to
-   `enforce` and an expiry from Privileges' settings, the rights end at expiry, unless they
-   run the hook again before then: each claim renews the grant, and each is reported as
+   - A grant claim waits up to a minute for Privileges' log to show it, usually a second or
+     two, and a grant logged up to two minutes before the claim arrived counts. The hook
+     returns at once, and nothing is recorded until the log backs the claim.
+     A claim the log doesn't confirm is refused and sent as `agent.tamper` with check
+     `grant_claim`, and the rights are removed after `OutOfBandGraceMinutes` as rights
+     nobody granted, counted from when the agent first saw them. A claim sent from
+     another person's account (neither the user nor root) is refused and sent the same way,
+     and a caller who sends more than 5 grant claims in a minute is ignored and logged on
+     the Mac, not sent, so a flood can't fill the outbox.
+   - A claim through the hook renews a Privileges session only when fresh log evidence
+     confirms it, that is, the log shows Privileges granted the rights again. Otherwise,
+     once the minute has passed (or at once if the log becomes unavailable while the claim
+     waits), it is refused in every mode and reported as a renewal, and the expiry doesn't
+     move, so running the hook again can't keep rights past `ExpiryEnforcement`.
+     Privileges sends no claim for a real renewal, so nothing real is lost. Altiward doesn't
+     see a real renewal either, so with `ExpiryEnforcement` on `enforce` it removes the
+     rights at the original expiry while Privileges says they last longer
+     ([#90](https://github.com/Altiward/altiward/issues/90)). Until that is fixed, set
+     Privileges' `AllowPrivilegeRenewal` to `false` in its profile
+     ([#92](https://github.com/Altiward/altiward/issues/92)).
+   - A real grant that the person gives back within seconds is still confirmed: only
+     changes to `admin` made before the claim arrived count against it.
+
+   Without the log (Privileges older than 2.6, its extension off or stopped, or macOS 13),
+   enforcement keeps removing rights nobody granted, and the agent accepts a grant claim as
+   it did before: marked `privileges_log: "unavailable"`, and with the checks below.
+   The Mac's details then show an integrity check failing, naming what's missing, whenever
+   `OutOfBandEnforcement` or `ExpiryEnforcement` is `enforce` and Privileges is installed.
+   Where the agent has read the log on a Mac before and can't now, each claim it accepts is
+   also sent as `grant_claim`, as someone may have stopped the extension to get one past.
+   In `enforce` mode, with or without the log, the agent refuses, logs on the Mac and sends
+   as `grant_claim` a grant claimed on a Mac without SAP Privileges, a grant claimed more
+   than a minute after Altiward raised the rights (without the log), and a give-back claimed
+   while they are still an admin, and the rights are still removed. Hand-run claims can still keep the rights there: a grant claimed before
+   the agent raises them (in the 30 seconds or so before it does, or between heartbeats),
+   and an account with root that removes itself from `admin`, gives the rights back, adds
+   itself again and claims a grant.
+
+   This stops the quiet routes, not someone with root: an admin has root, and with root a
+   forged log line is possible. Upgrade the server to 0.5.0 first, so the console labels the
+   new checks and events.
+
+   In `alert` mode a claimed grant still turns their session into a Privileges session. With
+   the log, a claim it doesn't confirm is accepted and marked not confirmed, and sent as
+   `grant_claim`; the console shows the session as **Followed rights without a grant** and
+   the SIEM as "Replaced by a Privileges grant". While the log is available, a claim through
+   the hook renews the session only when fresh log evidence confirms it, in either mode;
+   without the log, each claim renews it as before, and each is reported as
    `elevation.granted`.
 
    Deliver the profile through MDM rather than `defaults write`: Altiward reports
@@ -226,8 +264,8 @@ Create these in your MDM and scope them to a pilot group first.
    (`EnableSystemExtension`). That protection is a system extension, which also needs,
    from your MDM: a system extension policy allowing SAP's team `7R5ZEU67FQ` and Full Disk
    Access for `corp.sap.privileges.extension`. SAP's example
-   `Example_ApprovePrivileges.mobileconfig` has both. Until it's on, Altiward reports
-   *SAP Privileges tamper protection is off* for each Mac.
+   `Example_ApprovePrivileges.mobileconfig` has both. Until it's on and the extension is
+   running, Altiward reports *SAP Privileges tamper protection is off* for each Mac.
    We also suggest `ReasonRequired` (and `ReasonMinLength`), if your profile doesn't set them:
    Privileges keeps the reason someone gives only when it requires one, so without it Altiward
    records no reason.
@@ -673,7 +711,7 @@ Logs aren't included. If a maintainer asks for them:
 | The identity provider says the redirect URI doesn't match | Register `ALTIWARD_CONSOLE_URL` plus `/v1/auth/callback` exactly. |
 | A Mac never appears | `ServerURL` is wrong, the agent hostname isn't reachable from the Mac, or the enrollment token doesn't match ([A Mac never appears](#a-mac-never-appears)) |
 | A Privileges grant shows as **Without a grant** | Privileges didn't run Altiward's hook, usually because its checksum is from another agent release ([Rights show as "Without a grant"](#rights-show-as-without-a-grant)) |
-| **Privileges tamper protection** fails on a Mac | `EnableSystemExtension` is off, or the Mac hasn't got SAP's system extension policy and Full Disk Access ([step 2](#2-deploy-the-agent)) |
+| **Privileges tamper protection** fails on a Mac | `EnableSystemExtension` is off, or SAP's system extension isn't running: the Mac hasn't got SAP's system extension policy and Full Disk Access ([step 2](#2-deploy-the-agent)), or someone stopped it. The check names which |
 | **Settings › SIEM export** shows **Failing** | The SIEM is rejecting events or can't be reached. The row shows the last error; after a fix, **Retry now** ([step 4](#4-connect-your-siem)) |
 | A Mac waits in **Enrollments** | It enrolled again with a new key while approval is on: approve it. |
 | `upgrade.sh` stopped and left `compose.yaml.new` | You changed `compose.yaml` and so did the release: merge, then run it again with `--merged` ([Releases and updates](#releases-and-updates)) |

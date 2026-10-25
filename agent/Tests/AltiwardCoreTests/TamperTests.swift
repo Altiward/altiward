@@ -106,6 +106,21 @@ struct TamperTests {
         #expect(try tamper(tracker()).isEmpty)  // said once
     }
 
+    @Test func aFailingGrantConfirmationCheckIsRetiredWithWhy() throws {
+        // Left out without enforcement, which the test's configuration doesn't set.
+        results.withLock { $0 = [.launchDaemon: .ok] }
+        try store.setValue(#"{"grant_confirmation": false}"#, forKey: "integrity_state")
+        var events = try tamper(tracker())
+        #expect(events.map { $0.detail["check"] } == ["grant_confirmation"])
+        #expect(events.map { $0.detail["state"] } == ["retired"])
+        #expect(events.map { $0.detail["problem"] } == ["neither OutOfBandEnforcement nor ExpiryEnforcement is enforce now"])
+
+        try store.setValue(#"{"grant_confirmation": false}"#, forKey: "integrity_state")
+        privilegesVersion.withLock { $0 = nil }
+        events = try tamper(tracker())
+        #expect(events.map { $0.detail["problem"] } == ["SAP Privileges isn't installed now"])
+    }
+
     @Test func aPassingCheckThatStopsApplyingSaysNothing() throws {
         results.withLock { $0 = [.privilegesHook: .ok, .launchDaemon: .ok] }
         _ = try tamper(tracker())

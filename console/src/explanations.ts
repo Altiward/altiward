@@ -74,10 +74,11 @@ export const checkTips: Record<string, string> = {
   code_signature: "Altiward’s app still carries a valid signature from its developer, so nothing in it was changed.",
   settings_managed:
     "Altiward’s server, permanent admins, expiry enforcement and hook requirement settings come from a configuration profile, not a local file that someone with admin rights could edit.",
-  privileges_tamper_protection: "SAP Privileges’ own tamper protection is on.",
+  privileges_tamper_protection: "SAP Privileges’ own tamper protection is on, and its system extension is running.",
   privileges_hook: "Privileges is still set to run Altiward's hook, and its checksum matches, so Privileges reports each change of admin rights.",
   privileges_timer: "Privileges’ timer, which removes admin rights when they expire, is running while someone holds them.",
   agent_version: "The agent hasn’t been replaced with an older release.",
+  grant_confirmation: "Privileges’ own log can confirm each grant, so a grant claimed by hand is refused.",
 };
 
 export const persistenceCheckTip =

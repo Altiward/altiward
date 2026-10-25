@@ -12,9 +12,10 @@
   The hook is installed as "Altiward", the name Privileges shows in its settings.
 
   EnableSystemExtension turns on Privileges' own tamper protection (Privileges 2.5.0 or
-  later, macOS 13 or later). Altiward raises a High alert while it is off. The extension
-  also needs, from your MDM: a system extension policy allowing SAP's team 7R5ZEU67FQ
-  (Endpoint Security extension) and Full Disk Access for corp.sap.privileges.extension.
+  later, macOS 13 or later). Altiward raises a High alert while it is off or the extension
+  isn't running. The extension also needs, from your MDM: a system extension policy
+  allowing SAP's team 7R5ZEU67FQ (Endpoint Security extension) and Full Disk Access for
+  corp.sap.privileges.extension.
   SAP's Example_ApprovePrivileges.mobileconfig has both.
 -->
 <plist version="1.0">

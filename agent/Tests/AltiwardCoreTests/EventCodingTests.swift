@@ -11,7 +11,7 @@ struct EventCodingTests {
         "admin-out-of-band", "admin-out-of-band-removed", "agent-health", "agent-tamper", "agent-silent", "persistence-detected",
         "elevation-revoked-permanent-admin", "agent-tamper-retired", "elevation-revoked-privileges-grant",
         "agent-tamper-privileges-blocked", "admin-permanent-use-started", "admin-permanent-use-ended",
-        "admin-permanent-use-prompt",
+        "admin-permanent-use-prompt", "agent-tamper-grant-claim",
     ]
 
     @Test(arguments: fixtures)

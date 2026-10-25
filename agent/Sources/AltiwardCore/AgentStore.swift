@@ -60,6 +60,22 @@ public struct PermanentUseRow: Sendable, Equatable {
     }
 }
 
+/// A grant claim from the Privileges hook that is waiting for Privileges' own log to confirm
+/// it. The hook is untrusted, so nothing here is a fact until the log agrees.
+public struct PendingClaim: Sendable, Equatable {
+    public var claimID: String
+    /// Always `state: .admin`: only grants are held.
+    public var invocation: HookInvocation
+    /// The uid of the process that sent the claim, when the daemon could tell.
+    public var callerUID: UInt32?
+
+    public init(claimID: String, invocation: HookInvocation, callerUID: UInt32?) {
+        self.claimID = claimID
+        self.invocation = invocation
+        self.callerUID = callerUID
+    }
+}
+
 /// The agent's on-disk state: a durable, unbounded, ordered outbox plus the
 /// ledger of open elevation sessions. One SQLite file, every write fully synced.
 ///
@@ -147,6 +163,16 @@ public final class AgentStore: @unchecked Sendable {
             pid INTEGER NOT NULL,
             started_at REAL NOT NULL,
             ended_at REAL
+        );
+        """,
+        // 2 -> 3: grant claims waiting for Privileges' log (0.4.0).
+        """
+        CREATE TABLE pending_claims (
+            claim_id TEXT PRIMARY KEY,
+            user TEXT NOT NULL,
+            reason TEXT,
+            invoked_at REAL NOT NULL,
+            caller_uid INTEGER
         );
         """,
     ]
@@ -387,6 +413,47 @@ public final class AgentStore: @unchecked Sendable {
             tty: row.text(3)!, host: row.text(4)!, pid: Int32(truncatingIfNeeded: row.int(5)!),
             startedAt: Date(timeIntervalSince1970: row.double(6)!),
             endedAt: row.double(7).map(Date.init(timeIntervalSince1970:)))
+    }
+
+    // MARK: Pending grant claims
+
+    /// Holds a claim until Privileges' log confirms it. A claim already held is left as it is.
+    public func addPendingClaim(_ claim: PendingClaim) throws {
+        try locked {
+            try db.run(
+                """
+                INSERT OR IGNORE INTO pending_claims (claim_id, user, reason, invoked_at, caller_uid)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [
+                    .text(claim.claimID), .text(claim.invocation.user), .optional(claim.invocation.reason),
+                    .double(claim.invocation.invokedAt.timeIntervalSince1970),
+                    claim.callerUID.map { .int(Int64($0)) } ?? .null,
+                ])
+        }
+    }
+
+    /// Claims not yet confirmed or dropped, oldest `invokedAt` first.
+    public func pendingClaims() throws -> [PendingClaim] {
+        try locked {
+            try db.query(
+                "SELECT claim_id, user, reason, invoked_at, caller_uid FROM pending_claims ORDER BY invoked_at, claim_id"
+            ).map { row in
+                PendingClaim(
+                    claimID: row.text(0)!,
+                    invocation: HookInvocation(
+                        user: row.text(1)!, state: .admin, reason: row.text(2),
+                        invokedAt: Date(timeIntervalSince1970: row.double(3)!)),
+                    callerUID: row.int(4).map { UInt32(truncatingIfNeeded: $0) })
+            }
+        }
+    }
+
+    /// Drops a claim once it is confirmed or refused. A claim already gone is not an error.
+    public func removePendingClaim(id: String) throws {
+        try locked {
+            try db.run("DELETE FROM pending_claims WHERE claim_id = ?", [.text(id)])
+        }
     }
 
     // MARK: Command results

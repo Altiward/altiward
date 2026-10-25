@@ -88,6 +88,8 @@ describe("integrity labels", () => {
     ["privileges_hook", "Privileges reports to Altiward"],
     ["privileges_timer", "Privileges timer running"],
     ["privileges_blocked", "Privileges blocked tampering"],
+    ["grant_confirmation", "Grant confirmation"],
+    ["grant_claim", "Grant claim not confirmed"],
     ["something_new", "Something new"],
   ])("%s is %s", (check, want) => expect(integrityCheckLabel(check)).toBe(want));
 
@@ -97,6 +99,10 @@ describe("integrity labels", () => {
     ["retired", "privileges_hook", "No longer checked"],
     ["detected", "agent_version", "Downgraded"],
     ["detected", "privileges_blocked", "Blocked"],
+    ["detected", "grant_claim", "Not confirmed"],
+    ["failed", "grant_confirmation", "Failed"],
+    ["restored", "grant_confirmation", "Fixed"],
+    ["retired", "grant_confirmation", "No longer checked"],
   ])("%s %s is %s", (state, check, want) => expect(tamperStateLabel(state, check)).toBe(want));
 });
 

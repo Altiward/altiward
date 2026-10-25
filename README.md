@@ -183,7 +183,7 @@ relies on it to grant admin, and doesn't replace or modify it:
 - Altiward uses only Privileges' documented `corp.sap.privileges` settings. The example
   profile sets Altiward's hook as Privileges' post-change executable and turns on
   Privileges' own tamper protection, and Altiward reports any Mac where that protection
-  is off.
+  is off or its system extension isn't running.
 - Expiry, revoke and the heartbeat act on the `admin` group directly, never through
   Privileges, so they work whatever Privileges does.
 

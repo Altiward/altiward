@@ -25,11 +25,13 @@ struct SystemIntegrityTests {
 
     func integrity(
         bundle: URL?? = nil, local: Set<String> = [], forced: Set<String> = [],
-        privileges: PrivilegesSettings = PrivilegesSettings(), privilegesInstalled: Bool = false
+        privileges: PrivilegesSettings = PrivilegesSettings(), privilegesInstalled: Bool = false,
+        extensionProblem: String? = nil
     ) -> SystemIntegrity {
         var s = SystemIntegrity(
             bundleURL: bundle ?? self.bundle, hasValue: { local.union(forced).contains($0) },
-            isForced: { forced.contains($0) }, privileges: { privileges }, privilegesInstalled: { privilegesInstalled })
+            isForced: { forced.contains($0) }, privileges: { privileges }, privilegesInstalled: { privilegesInstalled },
+            privilegesExtensionProblem: { extensionProblem })
         s.launchDaemonsDirectory = daemons
         return s
     }
@@ -90,6 +92,38 @@ struct SystemIntegrityTests {
         let removed = integrity(privileges: bad, privilegesInstalled: false).run()
         #expect(removed[.privilegesHook] == nil)
         #expect(removed[.privilegesTamperProtection] == nil)
+    }
+
+    /// The setting alone isn't protection: the extension must be running, and be SAP's (#93).
+    @Test func tamperProtectionNeedsTheExtensionRunning() {
+        let on = PrivilegesSettings(systemExtensionEnabled: true)
+        #expect(
+            integrity(privileges: on, privilegesInstalled: true, extensionProblem: "isn't running").run()[
+                .privilegesTamperProtection]
+                == .failed("Privileges' tamper protection is on, but its system extension isn't running"))
+        #expect(
+            integrity(privileges: on, privilegesInstalled: true, extensionProblem: "isn't signed by SAP").run()[
+                .privilegesTamperProtection]
+                == .failed("Privileges' tamper protection is on, but its system extension isn't signed by SAP"))
+        // Switched off in the settings fails as before, whether or not the extension still runs.
+        let off = PrivilegesSettings(systemExtensionEnabled: false)
+        #expect(
+            integrity(privileges: off, privilegesInstalled: true).run()[.privilegesTamperProtection]
+                == .failed("Privileges' tamper protection (EnableSystemExtension) is off"))
+    }
+
+    @Test func theExtensionsProblemNamesWhatIsWrong() {
+        let sap = ProcessIdentity(
+            signingID: PrivilegesSigning.systemExtension, teamID: PrivilegesSigning.teamID, startedAt: Date(), uid: 0)
+        #expect(PrivilegesExtensionProcess.problem(pid: nil, identity: { _ in sap }) == "isn't running")
+        #expect(PrivilegesExtensionProcess.problem(pid: 42, identity: { _ in sap }) == nil)
+        #expect(PrivilegesExtensionProcess.problem(pid: 42, identity: { _ in nil }) == "isn't signed by SAP")
+        var other = sap
+        other.teamID = "ABCDE12345"
+        #expect(PrivilegesExtensionProcess.problem(pid: 42, identity: { _ in other }) == "isn't signed by SAP")
+        var user = sap
+        user.uid = 501
+        #expect(PrivilegesExtensionProcess.problem(pid: 42, identity: { _ in user }) == "isn't signed by SAP")
     }
 
     @Test func theHookChecksumMustMatchWhenPrivilegesHasOne() throws {

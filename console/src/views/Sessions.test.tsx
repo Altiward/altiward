@@ -160,6 +160,33 @@ describe("Sessions", () => {
     expect(within(inspector).getAllByText("New persistence")).toHaveLength(2); // the flag and the event
   });
 
+  it("says whether Privileges’ own log confirmed a grant", async () => {
+    const s = session();
+    const grant = (id: string, detail: Record<string, unknown>) => ({
+      event_id: id, type: "elevation.granted", timestamp: "2026-10-16T09:31:47Z",
+      received_at: "2026-10-16T09:31:48Z", delayed: false, user: { local_name: "jdoe", upn: null },
+      elevation: { reason: null, expires: null, source: "privileges" }, detail,
+    });
+    renderWith(fakeApi({
+      sessions: vi.fn(async () => [s]),
+      session: vi.fn(async () => ({
+        session: s,
+        events: [
+          grant("e1", { privileges_log: "confirmed" }),
+          grant("e2", { privileges_log: "not_confirmed", renewed: true }),
+          grant("e3", { privileges_log: "unavailable", renewed: true }),
+          grant("e4", {}),
+        ],
+      })),
+    }));
+    await userEvent.click(await screen.findByText("jane.doe@example.com"));
+    const inspector = screen.getByRole("complementary", { name: "Session details" });
+    expect(await within(inspector).findByText("Confirmed by Privileges’ log")).toBeInTheDocument();
+    expect(within(inspector).getByText("Not confirmed by Privileges’ log")).toBeInTheDocument();
+    // Placed before the renewal note, which then gives way; unavailable falls through to it.
+    expect(within(inspector).getAllByText("Renewal")).toHaveLength(1);
+  });
+
   it("filters to active sessions", async () => {
     renderWith(fakeApi({ sessions: vi.fn(async () => [session(), ended]) }));
     await screen.findByText("alice");

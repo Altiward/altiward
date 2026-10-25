@@ -12,7 +12,9 @@ struct ExpiryEnforcementTests {
     func tracker(_ mode: ExpiryEnforcement, grace: TimeInterval = 300, permanent: Set<String> = [], privileges: PrivilegesSettings = PrivilegesSettings(expirationIntervalMinutes: 20)) throws -> (ElevationTracker, AgentStore) {
         let store = try makeStore()
         let config = AgentConfiguration(permanentAdmins: permanent, expiryEnforcement: mode, expiryGracePeriod: grace)
-        let env = makeEnvironment(admins: admins, clock: clock, privileges: privileges, config: config)
+        // Privileges' log is available: these tests don't look at the grant_confirmation check.
+        let env = makeEnvironment(
+            admins: admins, clock: clock, privileges: privileges, config: config, privilegesLogAvailability: { .available })
         return (ElevationTracker(store: store, environment: env), store)
     }
 

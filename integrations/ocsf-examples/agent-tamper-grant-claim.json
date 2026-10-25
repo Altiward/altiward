@@ -1,0 +1,73 @@
+[
+  {
+    "activity_id": 1,
+    "activity_name": "Create",
+    "category_name": "Findings",
+    "category_uid": 2,
+    "class_name": "Detection Finding",
+    "class_uid": 2004,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "27.0.1"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "finding_info": {
+      "analytic": {
+        "name": "altiward.tamper.grant_claim",
+        "type": "Rule",
+        "type_id": 1
+      },
+      "created_time": 1792938068000,
+      "desc": "A SAP Privileges grant claim was refused or not confirmed by Privileges' log on C02XK0AAJGH5: a Privileges grant claimed for jdoe, which Privileges' own log does not confirm",
+      "first_seen_time": 1792938068000,
+      "title": "A SAP Privileges grant claim was refused or not confirmed by Privileges' log",
+      "types": [
+        "Defense Evasion"
+      ],
+      "uid": "c3f1a8e4-6b2d-4d7f-9a05-1e8b7c6d5f42"
+    },
+    "is_alert": true,
+    "message": "A SAP Privileges grant claim was refused or not confirmed by Privileges' log on C02XK0AAJGH5: a Privileges grant claimed for jdoe, which Privileges' own log does not confirm",
+    "metadata": {
+      "logged_time": 1792938068000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "0.4.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "c3f1a8e4-6b2d-4d7f-9a05-1e8b7c6d5f42",
+      "version": "1.9.0"
+    },
+    "severity": "High",
+    "severity_id": 4,
+    "status": "New",
+    "status_id": 1,
+    "time": 1792938068000,
+    "type_name": "Detection Finding: Create",
+    "type_uid": 200401,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "caller_uid": 501,
+          "check": "grant_claim",
+          "claimed_state": "admin",
+          "kind": "grant",
+          "outcome": "refused",
+          "problem": "a Privileges grant claimed for jdoe, which Privileges' own log does not confirm",
+          "reason": "a Privileges grant claimed for jdoe, which Privileges' own log does not confirm",
+          "state": "detected",
+          "user": "jdoe"
+        },
+        "event_type": "agent.tamper"
+      }
+    }
+  }
+]
