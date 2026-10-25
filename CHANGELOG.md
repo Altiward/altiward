@@ -9,6 +9,34 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Server 0.7.0 - unreleased
+
+### Upgrade order
+
+None needed beyond the usual: upgrade the server before the agents.
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+- Settings is split into tabs, each at its own address: **General** (`/settings`:
+  enrollment, alerts, appearance), **SIEM export** (`/settings/siem`), and for admins
+  **Sign-ins** (`/settings/sign-ins`) and **Updates** (`/settings/updates`). Overview's SIEM
+  tile opens SIEM export.
+- **Settings › SIEM export** shows how to connect each SIEM that isn't connected yet (#37):
+  lines to copy and its setup guide. On Docker Compose they're `.env` lines, each optional
+  setting commented out under what it does; on Azure Container Apps, `az containerapp`
+  commands for the app, with secrets kept as app secrets and Sentinel signing in as the
+  app's managed identity. It shows placeholders only. SIEM settings stay in the server's
+  environment, so changing where events go still takes access to the server, not just the
+  console.
+
 ## Agent 0.5.0 - 2026-10-25
 
 ### Upgrade order

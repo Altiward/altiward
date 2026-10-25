@@ -116,8 +116,9 @@ try {
     await select("Sessions", "ben.wong@");
     await shot("session-revoked", "Homebrew upgrade", ".inspector");
     await exportsSent();
-    await open("/settings");
+    await open("/settings/siem");
     await shot("settings-siem", "Up to date", '[role="group"][aria-labelledby="siem-title"]');
+    await open("/settings/sign-ins");
     await shot("settings-signed-in", "Tom Berg", '[role="group"][aria-labelledby="signins-title"]');
     await open("/enrollments");
     await select("Enrollments", "C02XK0AAJGH5");

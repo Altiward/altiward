@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
+import { NavLink, Navigate, Route, Routes } from "react-router";
 import type { ConsoleSignIn, ExportSink, Settings } from "../api";
 import { Banner, RoleNote, Segmented, Toolbar } from "../components/Chrome";
 import { StateBadge } from "../components/StateBadge";
-import { UpdatesGroup } from "../components/Updates";
+import { Command, UpdatesGroup } from "../components/Updates";
 import { useApi, useCan } from "../context";
 import { dateTime, sinkName } from "../format";
+import { type SiemGuide, type Where, siemGuides, siemSnippet } from "../siemSetup";
 import { appearances, setLook, themes, useLook } from "../theme";
 import { useLoad } from "../useLoad";
 
@@ -12,7 +14,44 @@ import { useLoad } from "../useLoad";
 const DEFAULT_SILENT_HOURS = 72;
 const MAX_SILENT_HOURS = 720;
 
+/** Settings' tabs, as in a Mac app's Settings window. Each has its own address under
+ *  /settings, so the install guide and other pages can link to one. Sign-ins and Updates are
+ *  for admins only. */
+const TABS = [
+  { to: "/settings", title: "General" },
+  { to: "/settings/siem", title: "SIEM export" },
+  { to: "/settings/sign-ins", title: "Sign-ins", admin: true },
+  { to: "/settings/updates", title: "Updates", admin: true },
+];
+
 export function SettingsView() {
+  const admin = useCan("admin");
+  return (
+    <>
+      <Toolbar title="Settings">
+        <nav className="segmented" aria-label="Settings sections">
+          {TABS.filter((t) => admin || !t.admin).map((t) => (
+            <NavLink key={t.to} to={t.to} end>{t.title}</NavLink>
+          ))}
+        </nav>
+      </Toolbar>
+      <div className="pane">
+        <div className="form">
+          <Routes>
+            <Route index element={<GeneralSettings />} />
+            <Route path="siem" element={<SiemExport />} />
+            {admin && <Route path="sign-ins" element={<ConsoleSignIns />} />}
+            {admin && <Route path="updates" element={<Updates />} />}
+            <Route path="*" element={<Navigate to="/settings" replace />} />
+          </Routes>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** Enrollment and alert settings, which only admins change, and this browser's appearance. */
+function GeneralSettings() {
   const api = useApi();
   const { data, error, reload } = useLoad(() => api.settings(), []);
   const [saving, setSaving] = useState(false);
@@ -45,72 +84,64 @@ export function SettingsView() {
 
   return (
     <>
-      <Toolbar title="Settings" />
-      <div className="pane">
-        {(error || saveError) && <Banner>{saveError ?? error}</Banner>}
-        <div className="form">
-          {!canChange && <RoleNote>Changing settings needs the admin role.</RoleNote>}
-          <div className="group" style={{ marginTop: 0 }}>
-            <h3>Enrollment</h3>
-            <div className="box">
-              <label className="row">
-                <span>
-                  <span>Approve Macs that enroll again</span>
-                  <p className="hint">
-                    When a Mac that already enrolled shows up with a new key, for example after a reinstall, its
-                    reports wait until you approve it in Enrollments. Off: the new key replaces the old one at once.
-                  </p>
-                </span>
-                <input type="checkbox" role="switch" disabled={!data || saving || !canChange}
-                  checked={data?.reenrollment_requires_approval ?? false}
-                  onChange={(e) => save({ reenrollment_requires_approval: e.target.checked })} />
-              </label>
-            </div>
-          </div>
-          <div className="group">
-            <h3>Alerts</h3>
-            <div className="box">
-              <label className="row">
-                <span>
-                  <span>Alert when a Mac stops checking in</span>
-                  <p className="hint">
-                    Off: no new alerts, for example if your SIEM already watches for quiet Macs. A Mac already
-                    reported still sends a resolved alert when it checks in again.
-                  </p>
-                </span>
-                <input type="checkbox" role="switch" disabled={!data || saving || !canChange}
-                  checked={!(data?.silent_alerts_off ?? false)}
-                  onChange={(e) => save({ silent_alerts_off: !e.target.checked })} />
-              </label>
-              <form className="row" onSubmit={(e) => { e.preventDefault(); if (hoursChanged) save({ silent_after_hours: parsed }); }}>
-                <label htmlFor="silent-hours">
-                  <span>Raise it after</span>
-                  <p className="hint">
-                    Hours without a check-in before Altiward raises an alert and sends it to your SIEM. Laptops that are
-                    closed stop checking in too, so the default of {DEFAULT_SILENT_HOURS} hours rides out a weekend.
-                    Macs whose enrollments you revoked never alert.
-                  </p>
-                </label>
-                <span className="inline-field">
-                  <input id="silent-hours" type="number" inputMode="numeric" min={1} max={MAX_SILENT_HOURS}
-                    disabled={!data || saving || !canChange || data.silent_alerts_off} value={hours} aria-invalid={!hoursValid}
-                    onChange={(e) => setHours(e.target.value)} />
-                  <span className="secondary">hours</span>
-                  <button type="submit" className="button" disabled={!hoursChanged || saving || !canChange || data?.silent_alerts_off}>Save</button>
-                </span>
-              </form>
-              {!hoursValid && <p className="hint" role="alert">Enter a whole number of hours from 1 to {MAX_SILENT_HOURS}.</p>}
-            </div>
-          </div>
-          <SiemExport />
-          {canChange && <ConsoleSignIns />}
-          {canChange && <Updates />}
-          <AppearanceGroup />
-          <p className="hint">
-            Altiward includes open-source software. <a href="/third-party-notices.txt">Third-party notices</a>
-          </p>
+      {(error || saveError) && <Banner>{saveError ?? error}</Banner>}
+      {!canChange && <RoleNote>Changing settings needs the admin role.</RoleNote>}
+      <div className="group" style={{ marginTop: 0 }}>
+        <h3>Enrollment</h3>
+        <div className="box">
+          <label className="row">
+            <span>
+              <span>Approve Macs that enroll again</span>
+              <p className="hint">
+                When a Mac that already enrolled shows up with a new key, for example after a reinstall, its
+                reports wait until you approve it in Enrollments. Off: the new key replaces the old one at once.
+              </p>
+            </span>
+            <input type="checkbox" role="switch" disabled={!data || saving || !canChange}
+              checked={data?.reenrollment_requires_approval ?? false}
+              onChange={(e) => save({ reenrollment_requires_approval: e.target.checked })} />
+          </label>
         </div>
       </div>
+      <div className="group">
+        <h3>Alerts</h3>
+        <div className="box">
+          <label className="row">
+            <span>
+              <span>Alert when a Mac stops checking in</span>
+              <p className="hint">
+                Off: no new alerts, for example if your SIEM already watches for quiet Macs. A Mac already
+                reported still sends a resolved alert when it checks in again.
+              </p>
+            </span>
+            <input type="checkbox" role="switch" disabled={!data || saving || !canChange}
+              checked={!(data?.silent_alerts_off ?? false)}
+              onChange={(e) => save({ silent_alerts_off: !e.target.checked })} />
+          </label>
+          <form className="row" onSubmit={(e) => { e.preventDefault(); if (hoursChanged) save({ silent_after_hours: parsed }); }}>
+            <label htmlFor="silent-hours">
+              <span>Raise it after</span>
+              <p className="hint">
+                Hours without a check-in before Altiward raises an alert and sends it to your SIEM. Laptops that are
+                closed stop checking in too, so the default of {DEFAULT_SILENT_HOURS} hours rides out a weekend.
+                Macs whose enrollments you revoked never alert.
+              </p>
+            </label>
+            <span className="inline-field">
+              <input id="silent-hours" type="number" inputMode="numeric" min={1} max={MAX_SILENT_HOURS}
+                disabled={!data || saving || !canChange || data.silent_alerts_off} value={hours} aria-invalid={!hoursValid}
+                onChange={(e) => setHours(e.target.value)} />
+              <span className="secondary">hours</span>
+              <button type="submit" className="button" disabled={!hoursChanged || saving || !canChange || data?.silent_alerts_off}>Save</button>
+            </span>
+          </form>
+          {!hoursValid && <p className="hint" role="alert">Enter a whole number of hours from 1 to {MAX_SILENT_HOURS}.</p>}
+        </div>
+      </div>
+      <AppearanceGroup />
+      <p className="hint">
+        Altiward includes open-source software. <a href="/third-party-notices.txt">Third-party notices</a>
+      </p>
     </>
   );
 }
@@ -143,12 +174,15 @@ function AppearanceGroup() {
   );
 }
 
-/** Each SIEM's queue, with a test event and a retry for after a fix. The SIEMs themselves
- *  are set in the server's .env, so nothing here changes their settings. */
+/** Each SIEM's queue, with a test event and a retry for after a fix, and how to connect the
+ *  others. The SIEMs themselves are set in the server's environment, so nothing here changes
+ *  their settings. */
 function SiemExport() {
   const api = useApi();
   const canAct = useCan("admin");
   const { data, error, reload } = useLoad(() => api.exports(), []);
+  const { data: about } = useLoad(() => api.about(), []);
+  const where: Where = about?.platform === "azure-container-apps" ? { azureApp: about.app ?? "" } : {};
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -178,11 +212,7 @@ function SiemExport() {
     <div className="group" role="group" aria-labelledby="siem-title">
       <h3 id="siem-title">SIEM export</h3>
       {(error || actionError) && <Banner>{actionError ?? error}</Banner>}
-      {data && data.length === 0 && (
-        <p className="hint">
-          No SIEM is connected. Set one up in the server’s .env: see “Connect your SIEM” in the install guide.
-        </p>
-      )}
+      {data && data.length === 0 && <p className="hint">No SIEM is connected.</p>}
       {data && data.length > 0 && (
         <div className="box">
           {data.map((s) => <SinkRow key={s.sink} sink={s} canAct={canAct} busy={busy}
@@ -197,7 +227,57 @@ function SiemExport() {
         </div>
       )}
       {result && <p className="hint" role="status">{result}</p>}
+      {data && <ConnectSiem connected={data.map((s) => s.sink)} where={where} version={about?.version ?? null} />}
     </div>
+  );
+}
+
+/** For each SIEM not connected yet: the settings it needs, and lines to copy to where the
+ *  server's settings live. Read-only, and only placeholders: SIEM settings belong to the
+ *  deployment, so changing where events go needs the server, not a console session. */
+function ConnectSiem({ connected, where, version }: { connected: string[]; where: Where; version: string | null }) {
+  const guides = siemGuides(where).filter((g) => !connected.includes(g.sink));
+  if (guides.length === 0) return null;
+  // The guide for the server that's running, or main for a build without a release version.
+  const ref = version && /^\d+\.\d+\.\d+(-rc\.\d+)?$/.test(version) ? `server-v${version}` : "main";
+  const azure = where.azureApp !== undefined;
+  return (
+    <div className="siem-connect">
+      <h4>{connected.length > 0 ? "Connect another SIEM" : "Connect a SIEM"}</h4>
+      <p className="hint">
+        {azure
+          ? "SIEM settings are environment variables on the container app’s altiward container, with secrets kept as app secrets. Setting them starts a new revision."
+          : "SIEM settings go in the server’s .env, then run docker compose up -d."}{" "}
+        They can’t be changed here: changing where events go takes access to the server, not just the console.
+      </p>
+      {guides.map((g) => <SiemGuideDetails key={g.sink} guide={g} where={where} docs={`https://github.com/Altiward/altiward/blob/${ref}/${g.guide}`} />)}
+    </div>
+  );
+}
+
+function SiemGuideDetails({ guide, where, docs }: { guide: SiemGuide; where: Where; docs: string }) {
+  const name = sinkName(guide.sink);
+  const azure = where.azureApp !== undefined;
+  const optional = guide.settings.filter((s) => !s.required);
+  return (
+    <details className="siem-guide">
+      <summary>{name}</summary>
+      <p className="hint">{guide.intro} <a href={docs} target="_blank" rel="noreferrer">{name} setup guide</a>.</p>
+      <p className="hint">
+        {azure
+          ? "Run these with the Azure CLI, after filling in the values in angle brackets."
+          : "Add these lines to .env, after filling in the values in angle brackets. Uncomment an optional one to change it."}
+      </p>
+      <Command text={siemSnippet(guide, where)} />
+      {azure && optional.length > 0 && (
+        <>
+          <p className="hint">Optional settings, added the same way:</p>
+          <ul className="hint siem-optional" aria-label={`Optional ${name} settings`}>
+            {optional.map((s) => <li key={s.name}><code>{s.name}</code>. {s.what}.</li>)}
+          </ul>
+        </>
+      )}
+    </details>
   );
 }
 

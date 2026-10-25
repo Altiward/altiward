@@ -152,7 +152,7 @@ function Window({ onSignOut }: { onSignOut: () => void }) {
           <Route path="/enrollments" element={<EnrollmentsView onChanged={pending.reload} />} />
           <Route path="/commands" element={<CommandsView />} />
           <Route path="/activity" element={<ActivityView />} />
-          <Route path="/settings" element={<SettingsView />} />
+          <Route path="/settings/*" element={<SettingsView />} />
           <Route path="*" element={<Navigate to="/overview" replace />} />
         </Routes>
       </main>
