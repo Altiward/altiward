@@ -344,7 +344,8 @@ Analytics Reader* on the workspace.
 
 What it can't show: *Now* looks back 90 days, or your retention if that's shorter, so
 rights granted before then and still held aren't counted. Agent versions list only the Macs
-that sent an event in the period, because health check-ins aren't exported. Whether
+that sent an event in the period, because health check-ins aren't exported; the events the
+server raises about a Mac (`agent.enrollment` and `agent.silent`) don't count. Whether
 each SIEM is keeping up is on the console's Overview.
 
 ## Analytics rules and hunting queries
