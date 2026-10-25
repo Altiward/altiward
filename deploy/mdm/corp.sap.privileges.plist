@@ -17,6 +17,18 @@
   allowing SAP's team 7R5ZEU67FQ (Endpoint Security extension) and Full Disk Access for
   corp.sap.privileges.extension.
   SAP's Example_ApprovePrivileges.mobileconfig has both.
+
+  The keys after EnableSystemExtension are settings Altiward relies on. Privileges lets
+  users change any setting its profile doesn't set, so Altiward reports each Mac where
+  the profile doesn't set them (docs/install.md, step 2):
+  - ExpirationIntervalMax caps how long a grant lasts. Use your own policy's value, or
+    a fixed ExpirationInterval instead if your profile already sets one.
+  - AllowPrivilegeRenewal false: a renewal doesn't reach Altiward, so expiry
+    enforcement would remove renewed rights early. Don't set AutoRenewalProcessPaths,
+    which renews whatever this says.
+  - PostChangeActionOnGrantOnly false: Privileges then runs the hook when rights are
+    given back too, and a user can't tick "Run only if administrator privileges have
+    been granted".
 -->
 <plist version="1.0">
 <dict>
@@ -28,7 +40,30 @@
     <true/>
     <key>EnableSystemExtension</key>
     <true/>
-    <!-- Leave PostChangeActionOnGrantOnly unset or false: Altiward needs revokes too. -->
+    <key>ExpirationIntervalMax</key>
+    <integer>60</integer>
+    <key>AllowPrivilegeRenewal</key>
+    <false/>
+    <key>PostChangeActionOnGrantOnly</key>
+    <false/>
+    <!-- Recommended, once you have listed your permanent admins: rights never survive a
+         restart or a clock set back. Each exclusion list must name every account in
+         Altiward's PermanentAdmins (break-glass, LAPS, your MDM's admin): Privileges makes
+         any other admin a standard user at their next sign-in, or when the clock changes.
+         Altiward reports a Mac where a list leaves one out.
+    <key>RevokePrivilegesAtLogin</key>
+    <true/>
+    <key>RevokeAtLoginExcludedUsers</key>
+    <array>
+        <string>REPLACE_WITH_EACH_PERMANENT_ADMIN</string>
+    </array>
+    <key>RevokePrivilegesAfterSystemTimeChange</key>
+    <true/>
+    <key>RevokeAfterTimeChangeExcludedUsers</key>
+    <array>
+        <string>REPLACE_WITH_EACH_PERMANENT_ADMIN</string>
+    </array>
+    -->
     <!-- Suggested, if your Privileges profile doesn't already set them: Privileges keeps a
          reason only when it requires one, so without these Altiward records no reason.
     <key>ReasonRequired</key>

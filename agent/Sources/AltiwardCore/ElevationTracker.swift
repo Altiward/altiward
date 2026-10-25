@@ -120,7 +120,7 @@ public struct AgentEnvironment: Sendable {
 
     /// The real system.
     public static func live(config: AgentConfiguration) -> AgentEnvironment {
-        let system = SystemIntegrity.live()
+        let system = SystemIntegrity.live(config: config)
         let sources = PersistenceSources.live()
         return AgentEnvironment(
             device: { DeviceIdentity.current() },

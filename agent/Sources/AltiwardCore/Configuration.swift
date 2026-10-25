@@ -16,6 +16,24 @@ public struct PrivilegesSettings: Sendable, Equatable {
     /// `AdminBudget` (Privileges 2.7+): the most minutes a day a user may hold admin rights.
     /// Reported only; Privileges enforces it before a grant.
     public var adminBudgetMinutes: Int?
+    /// Whether MDM caps how long a grant lasts: it forces `ExpirationInterval` above 0, or,
+    /// without one, `ExpirationIntervalMax` above 0. Privileges lets the user change any setting
+    /// its profile doesn't force, so a value from anywhere else is no cap.
+    public var expiryCapped: Bool
+    /// `AllowPrivilegeRenewal`, when MDM forces it. Nil means the user can renew.
+    public var allowPrivilegeRenewal: Bool?
+    /// Whether `AutoRenewalProcessPaths` names any app: SAP's docs say it renews rights
+    /// whatever `AllowPrivilegeRenewal` says.
+    public var autoRenewalConfigured: Bool
+    /// `PostChangeActionOnGrantOnly`, when MDM forces it. Nil means the user can tick "Run only
+    /// if administrator privileges have been granted", which stops the hook for give-backs.
+    public var postChangeActionOnGrantOnly: Bool?
+    /// `RevokePrivilegesAtLogin`, and the accounts it leaves alone.
+    public var revokeAtLogin: Bool?
+    public var revokeAtLoginExcludedUsers: [String]?
+    /// `RevokePrivilegesAfterSystemTimeChange` (Privileges 2.4.1+), and the accounts it leaves alone.
+    public var revokeAfterTimeChange: Bool?
+    public var revokeAfterTimeChangeExcludedUsers: [String]?
 
     public init(
         postChangeExecutablePath: String? = nil,
@@ -25,7 +43,15 @@ public struct PrivilegesSettings: Sendable, Equatable {
         expirationIntervalMaxMinutes: Int? = nil,
         enforcePrivileges: String? = nil,
         systemExtensionEnabled: Bool? = nil,
-        adminBudgetMinutes: Int? = nil
+        adminBudgetMinutes: Int? = nil,
+        expiryCapped: Bool = false,
+        allowPrivilegeRenewal: Bool? = nil,
+        autoRenewalConfigured: Bool = false,
+        postChangeActionOnGrantOnly: Bool? = nil,
+        revokeAtLogin: Bool? = nil,
+        revokeAtLoginExcludedUsers: [String]? = nil,
+        revokeAfterTimeChange: Bool? = nil,
+        revokeAfterTimeChangeExcludedUsers: [String]? = nil
     ) {
         self.postChangeExecutablePath = postChangeExecutablePath
         self.postChangeExecutableChecksum = postChangeExecutableChecksum
@@ -35,6 +61,14 @@ public struct PrivilegesSettings: Sendable, Equatable {
         self.enforcePrivileges = enforcePrivileges
         self.systemExtensionEnabled = systemExtensionEnabled
         self.adminBudgetMinutes = adminBudgetMinutes
+        self.expiryCapped = expiryCapped
+        self.allowPrivilegeRenewal = allowPrivilegeRenewal
+        self.autoRenewalConfigured = autoRenewalConfigured
+        self.postChangeActionOnGrantOnly = postChangeActionOnGrantOnly
+        self.revokeAtLogin = revokeAtLogin
+        self.revokeAtLoginExcludedUsers = revokeAtLoginExcludedUsers
+        self.revokeAfterTimeChange = revokeAfterTimeChange
+        self.revokeAfterTimeChangeExcludedUsers = revokeAfterTimeChangeExcludedUsers
     }
 
     public static let domain = "corp.sap.privileges"
@@ -46,6 +80,13 @@ public struct PrivilegesSettings: Sendable, Equatable {
 
     static func settings(from p: Preferences) -> PrivilegesSettings {
         let checksumApplies = p.isForced("PostChangeExecutablePath") && p.isForced("PostChangeExecutableChecksum")
+        let forcedBool = { (key: String) in p.isForced(key) ? p.bool(key) : nil }
+        let forcedMinutes = { (key: String) in p.isForced(key) ? p.int(key) ?? 0 : 0 }
+        // An ExpirationInterval MDM sets is fixed, so it decides, and 0 means no expiry. One it
+        // doesn't set is only a default the user can change, and MDM's maximum caps it.
+        let capped =
+            p.isForced("ExpirationInterval")
+            ? forcedMinutes("ExpirationInterval") > 0 : forcedMinutes("ExpirationIntervalMax") > 0
         return PrivilegesSettings(
             postChangeExecutablePath: p.string("PostChangeExecutablePath"),
             postChangeExecutableChecksum: checksumApplies
@@ -55,7 +96,15 @@ public struct PrivilegesSettings: Sendable, Equatable {
             expirationIntervalMaxMinutes: p.int("ExpirationIntervalMax"),
             enforcePrivileges: p.string("EnforcePrivileges"),
             systemExtensionEnabled: p.bool("EnableSystemExtension"),
-            adminBudgetMinutes: p.int("AdminBudget").flatMap { $0 > 0 ? $0 : nil })
+            adminBudgetMinutes: p.int("AdminBudget").flatMap { $0 > 0 ? $0 : nil },
+            expiryCapped: capped,
+            allowPrivilegeRenewal: forcedBool("AllowPrivilegeRenewal"),
+            autoRenewalConfigured: !(p.strings("AutoRenewalProcessPaths") ?? []).isEmpty,
+            postChangeActionOnGrantOnly: forcedBool("PostChangeActionOnGrantOnly"),
+            revokeAtLogin: p.bool("RevokePrivilegesAtLogin"),
+            revokeAtLoginExcludedUsers: p.strings("RevokeAtLoginExcludedUsers"),
+            revokeAfterTimeChange: p.bool("RevokePrivilegesAfterSystemTimeChange"),
+            revokeAfterTimeChangeExcludedUsers: p.strings("RevokeAfterTimeChangeExcludedUsers"))
     }
 
     /// The expiry Privileges will apply to a grant made at `grantedAt`, and where it came from.
@@ -85,6 +134,15 @@ public struct PrivilegesSettings: Sendable, Equatable {
             "enforce_privileges": .optional(enforcePrivileges),
             "system_extension_enabled": systemExtensionEnabled.map(JSONValue.bool) ?? .null,
             "admin_budget_minutes": adminBudgetMinutes.map { .number(Double($0)) } ?? .null,
+            "expiry_capped": .bool(expiryCapped),
+            "allow_privilege_renewal": allowPrivilegeRenewal.map(JSONValue.bool) ?? .null,
+            "auto_renewal_configured": .bool(autoRenewalConfigured),
+            "post_change_action_on_grant_only": postChangeActionOnGrantOnly.map(JSONValue.bool) ?? .null,
+            "revoke_at_login": revokeAtLogin.map(JSONValue.bool) ?? .null,
+            "revoke_at_login_excluded_users": revokeAtLoginExcludedUsers.map { .strings($0) } ?? .null,
+            "revoke_after_time_change": revokeAfterTimeChange.map(JSONValue.bool) ?? .null,
+            "revoke_after_time_change_excluded_users":
+                revokeAfterTimeChangeExcludedUsers.map { .strings($0) } ?? .null,
         ]
     }
 }

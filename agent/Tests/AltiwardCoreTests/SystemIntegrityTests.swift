@@ -158,4 +158,138 @@ struct SystemIntegrityTests {
         #expect(local.postChangeExecutableChecksum == nil)
         #expect(local.postChangeExecutablePath == "/hook")
     }
+
+    // MARK: The settings Altiward recommends (#92)
+
+    /// The settings that pass every recommended check.
+    static let recommended = PrivilegesSettings(
+        expiryCapped: true, allowPrivilegeRenewal: false, postChangeActionOnGrantOnly: false, revokeAtLogin: true,
+        revokeAtLoginExcludedUsers: ["itadmin"], revokeAfterTimeChange: true,
+        revokeAfterTimeChangeExcludedUsers: ["itadmin"])
+
+    func settingsChecks(
+        _ settings: PrivilegesSettings, expiry: ExpiryEnforcement = .enforce, permanentAdmins: Set<String> = ["itadmin"]
+    ) -> [IntegrityCheck: IntegrityResult] {
+        SystemIntegrity.settingsChecks(settings, expiryEnforcement: expiry, permanentAdmins: permanentAdmins)
+    }
+
+    @Test func theRecommendedSettingsPass() {
+        let r = settingsChecks(Self.recommended)
+        #expect(
+            r == [
+                .privilegesExpiryCap: .ok, .privilegesRenewal: .ok, .privilegesGiveBackHook: .ok,
+                .privilegesRevokeExclusions: .ok,
+            ])
+        // run() adds them while Privileges is installed, and only then.
+        var system = integrity(privileges: Self.recommended, privilegesInstalled: true)
+        system.expiryEnforcement = .enforce
+        system.permanentAdmins = ["itadmin"]
+        #expect(system.run()[.privilegesRenewal] == .ok)
+        #expect(integrity(privileges: Self.recommended).run()[.privilegesExpiryCap] == nil)
+    }
+
+    @Test func noExpiryCapFails() {
+        var s = Self.recommended
+        s.expiryCapped = false
+        #expect(settingsChecks(s)[.privilegesExpiryCap]?.problem?.hasPrefix("MDM doesn't cap how long") == true)
+        // In alert mode too: an uncapped grant is never overdue either.
+        #expect(settingsChecks(s, expiry: .alert)[.privilegesExpiryCap]?.ok == false)
+    }
+
+    @Test func renewalsFailOnlyWhileExpiryIsEnforced() {
+        var s = Self.recommended
+        s.allowPrivilegeRenewal = nil
+        #expect(
+            settingsChecks(s)[.privilegesRenewal]?.problem?.hasPrefix("MDM doesn't set AllowPrivilegeRenewal to false")
+                == true)
+        s.allowPrivilegeRenewal = true
+        #expect(settingsChecks(s)[.privilegesRenewal]?.ok == false)
+        #expect(settingsChecks(s, expiry: .alert)[.privilegesRenewal] == nil)
+        #expect(settingsChecks(s, expiry: .off)[.privilegesRenewal] == nil)
+        // AutoRenewalProcessPaths renews whatever AllowPrivilegeRenewal says.
+        var auto = Self.recommended
+        auto.autoRenewalConfigured = true
+        #expect(settingsChecks(auto)[.privilegesRenewal]?.problem?.hasPrefix("AutoRenewalProcessPaths renews") == true)
+    }
+
+    @Test func theGiveBackHookMustBeForcedOn() {
+        var s = Self.recommended
+        s.postChangeActionOnGrantOnly = nil
+        #expect(
+            settingsChecks(s)[.privilegesGiveBackHook]?.problem?.hasPrefix(
+                "MDM doesn't set PostChangeActionOnGrantOnly to false") == true)
+        s.postChangeActionOnGrantOnly = true
+        #expect(
+            settingsChecks(s)[.privilegesGiveBackHook]
+                == .failed("PostChangeActionOnGrantOnly is true, so Privileges doesn't run Altiward's hook on a give-back"))
+    }
+
+    @Test func revokeExclusionsMustCoverPermanentAdmins() {
+        let admins: Set<String> = ["itadmin", "breakglass"]
+        #expect(
+            settingsChecks(Self.recommended, permanentAdmins: admins)[.privilegesRevokeExclusions]
+                == .failed(
+                    "PermanentAdmins accounts aren't excluded: RevokeAtLoginExcludedUsers leaves out breakglass, "
+                        + "so Privileges removes their admin rights at sign-in; RevokeAfterTimeChangeExcludedUsers "
+                        + "leaves out breakglass, so Privileges removes their admin rights after a clock change"))
+        // A revoke that is off excludes nobody, so it needs no list.
+        var off = Self.recommended
+        off.revokeAtLogin = false
+        off.revokeAfterTimeChange = nil
+        off.revokeAtLoginExcludedUsers = nil
+        off.revokeAfterTimeChangeExcludedUsers = nil
+        #expect(settingsChecks(off, permanentAdmins: admins)[.privilegesRevokeExclusions] == .ok)
+        var noList = Self.recommended
+        noList.revokeAtLoginExcludedUsers = nil
+        #expect(
+            settingsChecks(noList)[.privilegesRevokeExclusions]?.problem
+                == "PermanentAdmins accounts aren't excluded: RevokeAtLoginExcludedUsers leaves out itadmin, "
+                + "so Privileges removes their admin rights at sign-in")
+    }
+
+    /// Privileges lets the user change a setting its profile doesn't force, so the cap, renewals
+    /// and the give-back hook count only from MDM.
+    @Test func theRecommendedSettingsCountOnlyFromMDM() {
+        let values: [String: Any] = [
+            "ExpirationIntervalMax": 60, "AllowPrivilegeRenewal": false, "PostChangeActionOnGrantOnly": false,
+            "RevokePrivilegesAtLogin": true, "RevokeAtLoginExcludedUsers": ["itadmin"],
+            "RevokePrivilegesAfterSystemTimeChange": true, "RevokeAfterTimeChangeExcludedUsers": ["itadmin"],
+            "AutoRenewalProcessPaths": ["/Applications/Xcode.app"],
+        ]
+        let managed = PrivilegesSettings.settings(from: Preferences(values: values, forced: Set(values.keys)))
+        #expect(managed.expiryCapped)
+        #expect(managed.allowPrivilegeRenewal == false)
+        #expect(managed.postChangeActionOnGrantOnly == false)
+        #expect(managed.autoRenewalConfigured)
+        #expect(managed.revokeAtLogin == true && managed.revokeAtLoginExcludedUsers == ["itadmin"])
+        #expect(managed.revokeAfterTimeChange == true && managed.revokeAfterTimeChangeExcludedUsers == ["itadmin"])
+
+        let local = PrivilegesSettings.settings(from: Preferences(values: values))
+        #expect(!local.expiryCapped)
+        #expect(local.allowPrivilegeRenewal == nil)
+        #expect(local.postChangeActionOnGrantOnly == nil)
+
+        // ExpirationInterval wins when MDM sets it: 0 means no expiry, whatever the maximum.
+        let never = Preferences(
+            values: ["ExpirationInterval": 0, "ExpirationIntervalMax": 60],
+            forced: ["ExpirationInterval", "ExpirationIntervalMax"])
+        #expect(!PrivilegesSettings.settings(from: never).expiryCapped)
+        let fixed = Preferences(values: ["ExpirationInterval": 20], forced: ["ExpirationInterval"])
+        #expect(PrivilegesSettings.settings(from: fixed).expiryCapped)
+        // One MDM doesn't set is only a default the user can change, and MDM's maximum caps it.
+        let userInterval = Preferences(
+            values: ["ExpirationInterval": 0, "ExpirationIntervalMax": 60], forced: ["ExpirationIntervalMax"])
+        #expect(PrivilegesSettings.settings(from: userInterval).expiryCapped)
+
+        guard case .object(let fields) = managed.healthDetail else { Issue.record("not an object"); return }
+        #expect(fields["expiry_capped"] == true)
+        #expect(fields["allow_privilege_renewal"] == false)
+        #expect(fields["auto_renewal_configured"] == true)
+        #expect(fields["post_change_action_on_grant_only"] == false)
+        #expect(fields["revoke_at_login_excluded_users"] == ["itadmin"])
+        #expect(fields["revoke_after_time_change"] == true)
+        guard case .object(let unset) = PrivilegesSettings().healthDetail else { Issue.record("not an object"); return }
+        #expect(unset["allow_privilege_renewal"] == .null)
+        #expect(unset["revoke_at_login_excluded_users"] == .null)
+    }
 }

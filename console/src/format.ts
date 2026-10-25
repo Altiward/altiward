@@ -110,6 +110,10 @@ const integrityChecks: Record<string, string> = {
   privileges_blocked: "Privileges blocked tampering",
   grant_confirmation: "Grant confirmation",
   grant_claim: "Grant claim not confirmed",
+  privileges_expiry_cap: "Privileges expiry cap",
+  privileges_renewal: "Privileges renewals off",
+  privileges_give_back_hook: "Privileges reports give-backs",
+  privileges_revoke_exclusions: "Privileges spares permanent admins",
 };
 
 /** Words for the agent's tamper checks, sentence case. */
@@ -218,4 +222,15 @@ export function revokeNotice(c: Command, who?: string): { kind: "error" | "info"
     default:
       return { kind: "error", text: `${c.serial} didn’t check in before the revoke expired.` };
   }
+}
+
+/** How long a Privileges grant lasts: a fixed interval, or the cap on what the user picks.
+ *  Agents from 0.5.0 report `expiration_interval_minutes` only when MDM sets it, so it is
+ *  fixed, and 0 is MDM's choice of no expiry. `expiry_capped` is false when MDM doesn't cap
+ *  grants, so a maximum shown then is one the user can change. */
+export function expiresAfter(p: Record<string, unknown>): string {
+  const fixed = p.expiration_interval_minutes, max = p.expiration_interval_max_minutes;
+  if (typeof fixed === "number") return fixed > 0 ? `${fixed} min` : "Never";
+  if (typeof max === "number" && max > 0) return p.expiry_capped === false ? `Up to ${max} min, not set by MDM` : `Up to ${max} min`;
+  return p.expiry_capped === false ? "No cap" : "—";
 }

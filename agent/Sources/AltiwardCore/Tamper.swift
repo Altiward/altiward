@@ -59,8 +59,12 @@ extension ElevationTracker {
     /// Why a check no longer runs, from what decides whether it applies (SystemIntegrity).
     private func retiredReason(_ check: IntegrityCheck, device: DeviceInfo) -> String {
         switch check {
-        case .privilegesTamperProtection, .privilegesHook, .privilegesTimer:
+        case .privilegesTamperProtection, .privilegesHook, .privilegesTimer, .privilegesExpiryCap,
+            .privilegesGiveBackHook, .privilegesRevokeExclusions:
             return "SAP Privileges isn't installed now"
+        case .privilegesRenewal:
+            return device.privilegesVersion == nil
+                ? "SAP Privileges isn't installed now" : "ExpiryEnforcement isn't enforce now"
         case .grantConfirmation:
             return device.privilegesVersion == nil
                 ? "SAP Privileges isn't installed now"

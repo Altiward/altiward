@@ -9,7 +9,7 @@ import { Table } from "../components/Table";
 import { useApi, useCan } from "../context";
 import { checkTips, persistenceCheckTip } from "../explanations";
 import {
-  agentOutdated, dateTime, integrityCheckLabel, permanentUseMethodLabel, relativeTime, revokeNotice, tamperStateLabel,
+  agentOutdated, dateTime, expiresAfter, integrityCheckLabel, permanentUseMethodLabel, relativeTime, revokeNotice, tamperStateLabel,
 } from "../format";
 import { useCommandResult } from "../useCommandResult";
 import { useLoad } from "../useLoad";
@@ -350,7 +350,7 @@ function DeviceInspector({ device: d, severities, onClose }: {
           ["Version", d.privileges_version ?? "Not installed"],
           ["Reports to Altiward", yesNo(p.post_change_hook_configured)],
           ["Passes the reason", yesNo(p.pass_reason_to_executable)],
-          ["Expires after", p.expiration_interval_minutes != null ? `${p.expiration_interval_minutes} min` : "—"],
+          ["Expires after", expiresAfter(p)],
           ["Tamper protection", yesNo(p.system_extension_enabled)],
           ["Daily admin budget", p.admin_budget_minutes != null ? `${p.admin_budget_minutes} min` : "—"],
         ]} />

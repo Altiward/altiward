@@ -13,7 +13,12 @@ Every section has the four headings below, with "None." under any that don't app
 
 ### Upgrade order
 
-None.
+Add this release's `corp.sap.privileges.plist` keys to your Privileges profile with the
+package, as for every release. It now also sets `ExpirationIntervalMax` (60 minutes: change
+it to your policy), `AllowPrivilegeRenewal` and `PostChangeActionOnGrantOnly`, so the new
+checks pass. Upgrade the server to 0.6.0 first: an older server exports the four new checks
+to the SIEM as high severity findings titled only by their names, and the console shows them
+unlabelled.
 
 ### Breaking changes
 
@@ -43,6 +48,51 @@ None.
   the agent then refuses; the refusal is still reported as `grant_claim`. When answering a
   claim still takes more than a second, the agent logs a notice saying how long it spent on
   each step, so a slow Mac names the cause.
+- New integrity checks for the SAP Privileges settings Altiward relies on (#92). Privileges
+  lets users change any setting its profile doesn't set, so only values MDM sets count:
+  - `privileges_expiry_cap`: MDM doesn't cap how long a grant lasts (`ExpirationIntervalMax`,
+    or a fixed `ExpirationInterval`), so a user can choose to keep admin rights with no
+    expiry.
+  - `privileges_renewal`, while `ExpiryEnforcement` is `enforce`: MDM doesn't set
+    `AllowPrivilegeRenewal` to `false`, or `AutoRenewalProcessPaths` names an app. A renewal
+    doesn't reach Altiward (#90), so enforcement removes renewed rights at the original
+    expiry.
+  - `privileges_give_back_hook`: MDM doesn't set `PostChangeActionOnGrantOnly` to `false`, so
+    a user can stop Privileges running Altiward's hook when rights are given back.
+  - `privileges_revoke_exclusions`: `RevokePrivilegesAtLogin` or
+    `RevokePrivilegesAfterSystemTimeChange` is on and its exclusion list leaves out an
+    account in `PermanentAdmins`, which Privileges then makes a standard user.
+- `corp.sap.privileges.plist` sets `ExpirationIntervalMax`, `AllowPrivilegeRenewal` (`false`)
+  and `PostChangeActionOnGrantOnly` (`false`), and suggests the two revoke settings in a
+  comment, with exclusion lists to fill in. `docs/install.md` explains each.
+- `agent.health`'s `privileges` section gains `expiry_capped`, `allow_privilege_renewal`,
+  `auto_renewal_configured`, `post_change_action_on_grant_only`, `revoke_at_login`,
+  `revoke_at_login_excluded_users`, `revoke_after_time_change` and
+  `revoke_after_time_change_excluded_users`. `docs/data-handling.md` lists them.
+
+## Server 0.6.0 - unreleased
+
+### Upgrade order
+
+None needed beyond the usual: upgrade the server before the agents.
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+- The SIEM export titles the four new Privileges settings checks (`privileges_expiry_cap`,
+  `privileges_renewal`, `privileges_give_back_hook` and `privileges_revoke_exclusions`), all
+  medium severity. Each closes when it passes.
+- The console labels the new checks (Privileges expiry cap, Privileges renewals off,
+  Privileges reports give-backs, Privileges spares permanent admins), and a Mac's
+  **Expires after** shows the cap on what a user picks (`Up to 60 min`), and says when MDM
+  doesn't set it.
 
 ## Agent 0.4.0 - 2026-10-25
 

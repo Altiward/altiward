@@ -180,6 +180,10 @@ var tamperChecks = map[string]struct {
 	"privileges_blocked":           {"SAP Privileges blocked an attempt to tamper with it", SeverityHigh},
 	"grant_claim":                  {"A SAP Privileges grant claim was refused or not confirmed by Privileges' log", SeverityHigh},
 	"grant_confirmation":           {"Altiward can't confirm SAP Privileges grants against Privileges' log", SeverityMedium},
+	"privileges_expiry_cap":        {"SAP Privileges grants have no expiry cap", SeverityMedium},
+	"privileges_renewal":           {"SAP Privileges allows renewals that Altiward doesn't see", SeverityMedium},
+	"privileges_give_back_hook":    {"SAP Privileges may not report give-backs to Altiward", SeverityMedium},
+	"privileges_revoke_exclusions": {"SAP Privileges removes admin rights from a permanent admin account", SeverityMedium},
 }
 
 // TamperSeverities names the severity a failure of each known tamper check is exported
