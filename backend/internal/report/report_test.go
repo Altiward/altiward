@@ -173,7 +173,7 @@ func TestHealthCountsVersionsAndSinks(t *testing.T) {
 		d.AgentVersion = version
 		return d
 	}
-	devices := []session.Device{mac("A", "0.2.2"), mac("B", "0.2.2"), mac("C", "0.10.0"), mac("D", "0.0.4"), mac("E", "")}
+	devices := []session.Device{mac("A", "0.3.2"), mac("B", "0.3.2"), mac("C", "0.10.0"), mac("D", "0.0.4"), mac("E", "")}
 	delivered := now.Add(-time.Minute)
 	sinks := []store.ExportBacklog{
 		{Sink: "sentinel", LastDeliveredAt: &delivered},
@@ -188,7 +188,7 @@ func TestHealthCountsVersionsAndSinks(t *testing.T) {
 		t.Fatalf("macs %d, outdated %d", h.Macs, h.AgentsOutdated)
 	}
 	got, _ := json.Marshal(h.AgentVersions)
-	want := `[{"version":"0.10.0","macs":1,"supported":true},{"version":"0.2.2","macs":2,"supported":true},` +
+	want := `[{"version":"0.10.0","macs":1,"supported":true},{"version":"0.3.2","macs":2,"supported":true},` +
 		`{"version":"0.0.4","macs":1,"supported":false},{"version":"","macs":1,"supported":true}]`
 	if string(got) != want {
 		t.Fatalf("versions = %s", got)

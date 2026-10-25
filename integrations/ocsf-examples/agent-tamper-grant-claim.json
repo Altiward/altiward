@@ -24,9 +24,9 @@
         "type": "Rule",
         "type_id": 1
       },
-      "created_time": 1792938068000,
+      "created_time": 1792145528000,
       "desc": "A SAP Privileges grant claim was refused or not confirmed by Privileges' log on C02XK0AAJGH5: a Privileges grant claimed for jdoe, which Privileges' own log does not confirm",
-      "first_seen_time": 1792938068000,
+      "first_seen_time": 1792145528000,
       "title": "A SAP Privileges grant claim was refused or not confirmed by Privileges' log",
       "types": [
         "Defense Evasion"
@@ -36,7 +36,7 @@
     "is_alert": true,
     "message": "A SAP Privileges grant claim was refused or not confirmed by Privileges' log on C02XK0AAJGH5: a Privileges grant claimed for jdoe, which Privileges' own log does not confirm",
     "metadata": {
-      "logged_time": 1792938068000,
+      "logged_time": 1792145528000,
       "product": {
         "name": "Altiward",
         "vendor_name": "Altiward",
@@ -50,7 +50,7 @@
     "severity_id": 4,
     "status": "New",
     "status_id": 1,
-    "time": 1792938068000,
+    "time": 1792145528000,
     "type_name": "Detection Finding: Create",
     "type_uid": 200401,
     "unmapped": {

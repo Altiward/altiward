@@ -34,8 +34,8 @@ func TestOldestSupportedAgentMatchesTheFrozenFixtures(t *testing.T) {
 
 func TestAgentSupported(t *testing.T) {
 	for v, want := range map[string]bool{
-		"0.2.0": true, "0.2.7": true, "0.3.0": true, "1.0.0": true, "0.2": true,
-		"0.1.9": false, "0.1": false, "0.0.9": false, "0.0": false,
+		"0.3.0": true, "0.3.7": true, "0.4.0": true, "1.0.0": true, "0.3": true,
+		"0.2.9": false, "0.2": false, "0.1.9": false, "0.0": false,
 		"": true, "dev": true, "1.x": true, "1.2.3.4": true, // unreadable: not flagged
 	} {
 		if got := release.AgentSupported(v); got != want {

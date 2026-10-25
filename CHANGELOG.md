@@ -9,7 +9,7 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
-## Agent 0.4.0 - unreleased
+## Agent 0.4.0 - 2026-10-25
 
 ### Upgrade order
 
@@ -87,7 +87,7 @@ None.
   on but SAP's system extension isn't running, or isn't SAP's (#93). It used to read the
   setting only, so a Mac whose extension was never approved, or was stopped, passed.
 
-## Server 0.5.0 - unreleased
+## Server 0.5.0 - 2026-10-25
 
 ### Upgrade order
 
@@ -97,7 +97,8 @@ raw names until you upgrade.
 
 ### Breaking changes
 
-None.
+Agent 0.2 is no longer supported: support covers the last two agent minors, now 0.3 and
+0.4. The console marks Macs still running agent 0.2.x. Update them to Agent 0.4.0.
 
 ### Security
 
