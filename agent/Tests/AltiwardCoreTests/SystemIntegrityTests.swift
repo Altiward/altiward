@@ -269,13 +269,17 @@ struct SystemIntegrityTests {
         #expect(local.allowPrivilegeRenewal == nil)
         #expect(local.postChangeActionOnGrantOnly == nil)
 
-        // ExpirationInterval wins when it is set: 0 means no expiry, whatever the maximum.
+        // ExpirationInterval wins when MDM sets it: 0 means no expiry, whatever the maximum.
         let never = Preferences(
             values: ["ExpirationInterval": 0, "ExpirationIntervalMax": 60],
             forced: ["ExpirationInterval", "ExpirationIntervalMax"])
         #expect(!PrivilegesSettings.settings(from: never).expiryCapped)
         let fixed = Preferences(values: ["ExpirationInterval": 20], forced: ["ExpirationInterval"])
         #expect(PrivilegesSettings.settings(from: fixed).expiryCapped)
+        // One MDM doesn't set is only a default the user can change, and MDM's maximum caps it.
+        let userInterval = Preferences(
+            values: ["ExpirationInterval": 0, "ExpirationIntervalMax": 60], forced: ["ExpirationIntervalMax"])
+        #expect(PrivilegesSettings.settings(from: userInterval).expiryCapped)
 
         guard case .object(let fields) = managed.healthDetail else { Issue.record("not an object"); return }
         #expect(fields["expiry_capped"] == true)

@@ -82,9 +82,10 @@ public struct PrivilegesSettings: Sendable, Equatable {
         let checksumApplies = p.isForced("PostChangeExecutablePath") && p.isForced("PostChangeExecutableChecksum")
         let forcedBool = { (key: String) in p.isForced(key) ? p.bool(key) : nil }
         let forcedMinutes = { (key: String) in p.isForced(key) ? p.int(key) ?? 0 : 0 }
-        // ExpirationInterval wins whenever it is set, as in expiry(grantedAt:timer:).
+        // An ExpirationInterval MDM sets is fixed, so it decides, and 0 means no expiry. One it
+        // doesn't set is only a default the user can change, and MDM's maximum caps it.
         let capped =
-            p.int("ExpirationInterval") != nil
+            p.isForced("ExpirationInterval")
             ? forcedMinutes("ExpirationInterval") > 0 : forcedMinutes("ExpirationIntervalMax") > 0
         return PrivilegesSettings(
             postChangeExecutablePath: p.string("PostChangeExecutablePath"),

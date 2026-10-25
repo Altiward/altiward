@@ -285,7 +285,7 @@ Create these in your MDM and scope them to a pilot group first.
    | `ExpirationIntervalMax` | 60 minutes: use your own policy's value. A fixed `ExpirationInterval` works too, and is stricter | Without a cap, a user can choose to keep admin rights with no expiry, and expiry enforcement has nothing to enforce | **Privileges expiry cap**, medium severity |
    | `AllowPrivilegeRenewal` | `false`. Don't set `AutoRenewalProcessPaths`, which renews whatever this says | A renewal doesn't reach Altiward ([#90](https://github.com/Altiward/altiward/issues/90)), so with `ExpiryEnforcement` on `enforce` the agent removes renewed rights at the original expiry | **Privileges renewals off**, medium, only while `ExpiryEnforcement` is `enforce` |
    | `PostChangeActionOnGrantOnly` | `false` | Unset, a user can tick "Run only if administrator privileges have been granted", and Privileges stops telling Altiward when rights are given back | **Privileges reports give-backs**, medium |
-   | `RevokePrivilegesAtLogin` with `RevokeAtLoginExcludedUsers` | Suggested, in a comment | Rights never survive a restart | **Privileges spares permanent admins**, low |
+   | `RevokePrivilegesAtLogin` with `RevokeAtLoginExcludedUsers` | Suggested, in a comment | Rights never survive a restart | **Privileges spares permanent admins**, medium |
    | `RevokePrivilegesAfterSystemTimeChange` with `RevokeAfterTimeChangeExcludedUsers` (Privileges 2.4.1 or later) | Suggested, in a comment | Nobody can stretch an expiry by setting the clock back | The same check |
 
    Only values your MDM profile sets count for the first three: a value in

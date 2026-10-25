@@ -542,7 +542,7 @@ func TestPrivilegesSettingsChecksAreStandingFindings(t *testing.T) {
 		"privileges_expiry_cap":        {"SAP Privileges grants have no expiry cap", "Medium"},
 		"privileges_renewal":           {"SAP Privileges allows renewals that Altiward doesn't see", "Medium"},
 		"privileges_give_back_hook":    {"SAP Privileges may not report give-backs to Altiward", "Medium"},
-		"privileges_revoke_exclusions": {"SAP Privileges removes admin rights from a permanent admin account", "Low"},
+		"privileges_revoke_exclusions": {"SAP Privileges removes admin rights from a permanent admin account", "Medium"},
 	} {
 		e := stored(t, "agent-tamper")
 		e.Detail = map[string]any{"check": check, "state": "failed", "problem": "a problem"}

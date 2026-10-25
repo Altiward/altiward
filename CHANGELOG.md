@@ -84,9 +84,9 @@ None.
 
 ### Changes
 
-- The SIEM export titles the four new Privileges settings checks: `privileges_expiry_cap`,
-  `privileges_renewal` and `privileges_give_back_hook` are medium severity,
-  `privileges_revoke_exclusions` is low. Each closes when it passes.
+- The SIEM export titles the four new Privileges settings checks (`privileges_expiry_cap`,
+  `privileges_renewal`, `privileges_give_back_hook` and `privileges_revoke_exclusions`), all
+  medium severity. Each closes when it passes.
 - The console labels the new checks (Privileges expiry cap, Privileges renewals off,
   Privileges reports give-backs, Privileges spares permanent admins), and a Mac's
   **Expires after** shows the cap on what a user picks (`Up to 60 min`), and says when MDM
