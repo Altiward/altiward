@@ -112,6 +112,8 @@ Known limits:
   during an elevation rather than every process that ran; your EDR covers that. The
   process behind admin rights nobody granted comes from Privileges' own system extension,
   so it needs Privileges 2.6 or later with the extension on, on macOS 14 or later.
+- Persistence found during an elevation is reported, never undone. Responding to it is a
+  job for your EDR or MDM: Altiward changes nothing on a Mac but the `admin` group.
 
 ## Quick start
 
