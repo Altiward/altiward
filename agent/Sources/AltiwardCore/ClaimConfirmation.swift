@@ -18,6 +18,9 @@ public enum ClaimOutcome: Sendable {
 extension ElevationTracker {
     /// The most grant claims one caller may send in ``claimRateWindow`` seconds.
     static let maxClaimsPerMinute = 5
+    /// The most give-back claims one caller may send in ``claimRateWindow`` seconds before
+    /// only the ones that end a session count.
+    static let maxGiveBacksPerMinute = 5
     static let claimRateWindow: TimeInterval = 60
 
     /// Takes a claim from the XPC handler.
@@ -25,7 +28,10 @@ extension ElevationTracker {
     /// 1. A caller that has sent ``maxClaimsPerMinute`` grant claims in the last minute is
     ///    refused (`tooManyClaims`) before anything else, and the refusal is logged, not
     ///    reported: reporting it would let the caller flood the outbox. Give-back claims
-    ///    don't count, and aren't refused for it, so a real give-back is always recorded.
+    ///    don't count towards it. They have an allowance of their own,
+    ///    ``maxGiveBacksPerMinute``: past it, a give-back that ends an open session is still
+    ///    recorded, so a real give-back always is, and any other is ignored and logged
+    ///    (`tooManyGiveBacks`), not recorded or reported.
     /// 2. Without the log, or for a permanent admin, the claim goes to
     ///    ``record(_:callerUID:)``. A grant claim recorded because the log isn't available
     ///    says so (`privileges_log: "unavailable"`), and on a Mac where the agent has read the
@@ -37,13 +43,17 @@ extension ElevationTracker {
     ///
     /// A claim ``record(_:callerUID:)`` refuses (`late`, `stillAdmin`,
     /// `privilegesNotInstalled`) is reported as an `agent.tamper` (`grant_claim`, `refused`)
-    /// before the refusal is thrown on. Every refusal is reported except `tooManyClaims`.
+    /// before the refusal is thrown on. Every refusal is reported except `tooManyClaims` and
+    /// `tooManyGiveBacks`.
     public func submit(_ invocation: HookInvocation, callerUID: UInt32?) throws -> ClaimOutcome {
         let now = env.now()
-        if invocation.state == .admin, tooManyClaims(from: callerUID ?? 0, at: now) {
+        if invocation.state == .admin, overTheLimit(recentClaims, Self.maxClaimsPerMinute, from: callerUID ?? 0, at: now) {
             log.notice("ignoring a claim for \(invocation.user, privacy: .public): too many grant claims from this caller")
             throw ClaimRefused(user: invocation.user, reason: .tooManyClaims)
         }
+        let endingOnly =
+            invocation.state == .user
+            && overTheLimit(recentGiveBacks, Self.maxGiveBacksPerMinute, from: callerUID ?? 0, at: now)
 
         let availability = env.privilegesLogAvailability()
         try notePrivilegesLog(availability)
@@ -51,7 +61,7 @@ extension ElevationTracker {
         guard availability == .available, !permanent else {
             guard invocation.state == .admin, !permanent else {
                 return .recorded(try reportingRefusal(invocation, callerUID: callerUID, now: now) {
-                    try record(invocation, callerUID: callerUID)
+                    try record(invocation, callerUID: callerUID, grantDetail: [:], endingOnly: endingOnly) { _ in nil }
                 })
             }
             return .recorded(try reportingRefusal(invocation, callerUID: callerUID, now: now) {
@@ -60,6 +70,12 @@ extension ElevationTracker {
         }
 
         if let callerUID, callerUID != 0, let owner = env.userID(invocation.user), owner != callerUID {
+            // Another user's give-back can't end this user's session, so past the allowance
+            // it isn't reported either.
+            if endingOnly {
+                log.notice("ignoring a give-back for \(invocation.user, privacy: .public): too many give-back claims from this caller")
+                throw ClaimRefused(user: invocation.user, reason: .tooManyGiveBacks)
+            }
             let refusal = ClaimRefused(user: invocation.user, reason: .callerMismatch(callerUID: callerUID))
             let event = claimRefusedEvent(
                 refusal, kind: invocation.state == .admin ? "grant" : "give_back", outcome: "refused",
@@ -70,7 +86,7 @@ extension ElevationTracker {
 
         guard invocation.state == .admin else {
             return .recorded(try reportingRefusal(invocation, callerUID: callerUID, now: now) {
-                try record(invocation, callerUID: callerUID)
+                try record(invocation, callerUID: callerUID, grantDetail: [:], endingOnly: endingOnly) { _ in nil }
             })
         }
         let claimID = newID()
@@ -81,11 +97,15 @@ extension ElevationTracker {
     /// Runs `body`, which records `invocation`, and when it throws ``ClaimRefused`` queues a
     /// `grant_claim` event (`refused`) in a transaction of its own, then throws it on. The
     /// refusal left the ledger and the outbox as they were, so the report is all it adds.
+    /// `tooManyGiveBacks` is only logged.
     private func reportingRefusal(
         _ invocation: HookInvocation, callerUID: UInt32?, now: Date, _ body: () throws -> AltiwardEvent
     ) throws -> AltiwardEvent {
         do {
             return try body()
+        } catch let refusal as ClaimRefused where refusal.reason == .tooManyGiveBacks {
+            log.notice("ignoring a give-back for \(invocation.user, privacy: .public): too many give-back claims from this caller")
+            throw refusal
         } catch let refusal as ClaimRefused {
             let event = claimRefusedEvent(
                 refusal, kind: invocation.state == .admin ? "grant" : "give_back", outcome: "refused",
@@ -113,13 +133,16 @@ extension ElevationTracker {
         }
     }
 
-    /// Counts a grant claim from `uid` and says whether it is over the limit. Refused claims
-    /// aren't counted, so a caller waits out its own window instead of extending it.
-    private func tooManyClaims(from uid: UInt32, at now: Date) -> Bool {
-        recentClaims.withLock { claims in
+    /// Counts a claim from `uid` in `counts` and says whether it is over `limit` claims in
+    /// ``claimRateWindow``. Claims over the limit aren't counted, so a caller waits out its
+    /// own window instead of extending it.
+    private func overTheLimit(
+        _ counts: OSAllocatedUnfairLock<[UInt32: [Date]]>, _ limit: Int, from uid: UInt32, at now: Date
+    ) -> Bool {
+        counts.withLock { claims in
             var recent = (claims[uid] ?? []).filter { now.timeIntervalSince($0) < Self.claimRateWindow }
             defer { claims[uid] = recent.isEmpty ? nil : recent }
-            guard recent.count < Self.maxClaimsPerMinute else { return true }
+            guard recent.count < limit else { return true }
             recent.append(now)
             return false
         }

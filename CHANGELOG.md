@@ -9,6 +9,30 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Agent 0.5.0 - unreleased
+
+### Upgrade order
+
+None.
+
+### Breaking changes
+
+None.
+
+### Security
+
+- A caller can send at most 5 give-back claims a minute through the hook that the agent
+  records or reports (closes #96). Before, there was no limit: anyone could run
+  `altiward-hook` by hand in a loop and queue an event for each run, a refused give-back
+  in `OutOfBandEnforcement` `enforce` mode, a give-back from another user's account, or a
+  give-back that ended no session, and fill the outbox and the SIEM. Past the allowance, a
+  give-back that ends an open session is still recorded, so a real give-back is never lost,
+  and any other is logged on the Mac and not sent.
+
+### Changes
+
+None.
+
 ## Agent 0.4.0 - 2026-10-25
 
 ### Upgrade order

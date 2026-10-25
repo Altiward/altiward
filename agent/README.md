@@ -244,8 +244,11 @@ leaves neither, so the agent holds a grant claim until one of them backs it.
   0 is refused and reported, which stops a standard user ending someone else's session with
   a give-back. A caller is limited to 5 grant claims a minute, checked before anything
   else; those refusals are logged on the Mac and not sent, so a flood can't fill the
-  outbox. Give-back claims don't count and aren't limited, so a real give-back is always
-  recorded. Every other
+  outbox. Give-back claims don't count towards it. They have an allowance of their own, 5 a
+  minute from one caller, in every mode and with or without the log: past it, a give-back
+  that ends an open session is still recorded, so a real give-back always is, and any other
+  (one that would be refused, come from another user, or end no session) is logged on the
+  Mac and not sent (#96). Every other
   refusal is reported as `grant_claim` (`refused`), including the earlier ones: a grant on a
   Mac without SAP Privileges, a grant claimed too long after the rights were raised, and a
   give-back (`kind` `give_back`) while the user is still admin.
