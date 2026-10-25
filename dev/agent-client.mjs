@@ -43,7 +43,7 @@ export function agentClient(server, enrollToken) {
 export function event(mac, type, at, { user, session, elevation, detail = {} } = {}) {
   return {
     schema_version: 1, event_id: randomUUID(), type, session_id: session ?? null, timestamp: at,
-    device: { serial: mac.serial, hardware_uuid: "HW-" + mac.serial, os_version: "26.1.0", agent_version: mac.agentVersion ?? "0.3.0", privileges_version: "2.6.0" },
+    device: { serial: mac.serial, hardware_uuid: "HW-" + mac.serial, os_version: "26.1.0", agent_version: mac.agentVersion ?? "0.4.0", privileges_version: "2.6.0" },
     user: user ? { local_name: user[0], upn: user[1] ?? null } : null,
     elevation: elevation ?? null, delayed: false, detail,
   };
