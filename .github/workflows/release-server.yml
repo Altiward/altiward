@@ -17,14 +17,16 @@ on:
 
 permissions:
   contents: read
-  packages: write # push to ghcr.io
-  id-token: write # keyless signing
 
 jobs:
   image:
     runs-on: ubuntu-latest
     timeout-minutes: 30 # a normal build takes a few minutes; don't hang for six hours
     environment: release # a maintainer approves before anything is pushed or signed
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io
+      id-token: write # keyless signing
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -153,3 +155,18 @@ jobs:
           if [[ "$TAG" == *-rc.* ]]; then flags+=(--prerelease); fi
           gh release create "$TAG" files/* \
             --verify-tag --title "$TAG" --notes-file files/RELEASE_NOTES.md "${flags[@]}"
+
+  # Starts the Azure deploy check for this release, on main with the tag as its input, so
+  # the azure-test environment (main only) is the one place the Azure sign-in can run.
+  azure-deploy-check:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write # start a workflow_dispatch run
+    steps:
+      - name: Start the Azure deploy check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh workflow run azure-deploy-check.yml --ref main -f tag="$TAG"

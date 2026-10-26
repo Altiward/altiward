@@ -112,9 +112,10 @@ it and needs no second approval.
 
 ## Deploy to Azure check
 
-After each server release or candidate, the *Azure deploy check* workflow
-(`.github/workflows/azure-deploy-check.yml`) deploys `deploy/azure/azuredeploy.json` from
-the tag on GitHub, as the Deploy to Azure button does, into `rg-altiward-deploycheck`. It
+After each server release or candidate is published, *Release server* starts the *Azure
+deploy check* workflow (`.github/workflows/azure-deploy-check.yml`) on `main` with the
+release's tag. It deploys `deploy/azure/azuredeploy.json` from the tag on GitHub, as the
+Deploy to Azure button does, into `rg-altiward-deploycheck`. It
 checks that a Mac can enroll, send a signed event and hold a long poll; that the console
 answers only the allowed networks, including against a forged `X-Forwarded-For`; and that
 the server runs the release. Then it deletes everything it made. Run it by hand from the

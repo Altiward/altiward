@@ -19,6 +19,10 @@ docker load -i /tmp/altiward-caddy/caddy.oci.tar
 CADDY_IMAGE=altiward-caddy:build scripts/test-azure-proxy.sh altiward-api:ci
 ```
 
+`osv-scanner.toml` lists advisories for modules in `go.mod` that never reach the binary,
+with the reason for each, so dependency scanners such as OpenSSF Scorecard skip them.
+Remove an entry when its module is upgraded past the fix.
+
 The build supports amd64 and arm64 without running the target binaries under emulation.
 Pinned builder, Dockerfile frontend, compiler and certificate images, module checksums,
 a fixed source date, stripped build IDs and normalised layer timestamps make the final
