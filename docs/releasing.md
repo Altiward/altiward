@@ -42,6 +42,12 @@ signed. A tag is the only trigger: `server-vX.Y.Z` (or `server-vX.Y.Z-rc.N`) run
    the files, `docker pull ghcr.io/altiward/altiward-api:X.Y.Z` works without logging
    in, and the cosign commands in [Checking a release](install.md#checking-a-release)
    pass.
+7. **Update the public release record.** After publication and verification, open a pull
+   request in [Altiward/altiward.com](https://github.com/Altiward/altiward.com) to update
+   the server version, release date and tag link in the "Is it released?" row of
+   `assurance/index.html`. Use the published release as the source, and check that every
+   other component in that row still matches its own published release. Keep release
+   candidates out of this row.
 
 The package must be public: on GitHub, under the package's settings, set its visibility
 to public once, after its first push. An image that needs a login is a release gone
@@ -101,6 +107,15 @@ releases are Server 0.1.0 and Agent 0.1.0. When to tag 1.0.0 is open.
    the package, the example `corp.sap.privileges.plist`, `RELEASE_NOTES.md`, `SHA256SUMS`
    and its signature (also kept for 90 days as the run's artifact
    `altiward-agent-agent-vX.Y.Z`). Ship a server release first if the agent needs it.
+5. **Verify and update the public release record.** Download the published package and
+   check its signature, notarisation and signed checksums using
+   [Checking a release](install.md#checking-a-release). Then open a pull request in
+   [Altiward/altiward.com](https://github.com/Altiward/altiward.com) to update the agent
+   version, release date and tag link in the "Is it released?" row of
+   `assurance/index.html`.
+   Update the server version there too only if its corresponding release is already
+   published. Record the released hook checksum for the MDM profile update in the
+   [upgrade guide](install.md#releases-and-updates).
 
 ## Approval
 
