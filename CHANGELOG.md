@@ -45,6 +45,9 @@ None.
 
 ### Changes
 
+- Bounded, fixture-seeded Go fuzz campaigns exercise event and command-result decoding,
+  signed requests and enrolment parsing in CI, including signature integrity and enrolment
+  retry idempotence.
 - CEF enrolment events include the token fingerprint as `suser` and the device credential
   ID as `cs5` (`target`), so SIEM users can join them with approvals and revocations.
   Sentinel's `UserName` also includes the enrolment token fingerprint. A permanent admin
