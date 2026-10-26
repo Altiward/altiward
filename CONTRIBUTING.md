@@ -29,6 +29,14 @@ CI runs the same checks, plus `go test -race`, the console build and a package a
 upgrade test. Run `make notices` after adding, removing or upgrading a Go module or a
 console production dependency, and commit the result.
 
+### Test policy
+
+New features and fixes come with tests. Add or update automated tests in the same pull
+request to cover the changed behaviour. For a bug fix, include a regression test that
+would fail without the fix. Explain the relevant checks and their results in the pull
+request. If a change cannot be tested automatically, explain why and record the manual
+verification so a reviewer can assess it.
+
 To try your change against a local stack with demo data, run `make run-api`,
 `make console-seed` and `make console-dev`.
 
