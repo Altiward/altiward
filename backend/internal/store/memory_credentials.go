@@ -133,7 +133,7 @@ func (m *Memory) enforceEnrollLimits(c DeviceCredential, limits EnrollLimits) er
 	if limits == (EnrollLimits{}) {
 		return nil
 	}
-	newMacsSince, keysSince := c.CreatedAt.Add(-newMacsWindow), c.CreatedAt.Add(-keysPerMacWindow)
+	newMacsSince, keysSince := c.CreatedAt.Add(-NewMacsWindow), c.CreatedAt.Add(-KeysPerMacWindow)
 	firstKey := map[string]time.Time{}
 	keys := 0
 	for _, o := range m.creds {

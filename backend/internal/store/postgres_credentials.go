@@ -42,13 +42,17 @@ func lockTenantNewMacs(ctx context.Context, tx pgx.Tx, tenantID string) error {
 }
 
 // countNewMacs counts the tenant's serials whose first credential is under an hour old at
-// c.CreatedAt, from the rows committed when it runs.
+// c.CreatedAt, from the rows committed when it runs. It reads only the hour's credentials
+// and, for each, whether its serial has an older one, so its cost follows the hour's
+// enrolments, which the limits bound, not the tenant's whole history.
 func countNewMacs(ctx context.Context, tx pgx.Tx, c DeviceCredential) (int, error) {
 	var n int
 	err := tx.QueryRow(ctx, `
-		SELECT count(*) FROM (
-			SELECT serial FROM device_credentials WHERE tenant_id = $1 GROUP BY serial HAVING min(created_at) > $2
-		) AS new_macs`, c.TenantID, c.CreatedAt.Add(-newMacsWindow)).Scan(&n)
+		SELECT count(DISTINCT d.serial) FROM device_credentials d
+		WHERE d.tenant_id = $1 AND d.created_at > $2 AND NOT EXISTS (
+			SELECT 1 FROM device_credentials e
+			WHERE e.tenant_id = d.tenant_id AND e.serial = d.serial AND e.created_at <= $2
+		)`, c.TenantID, c.CreatedAt.Add(-NewMacsWindow)).Scan(&n)
 	return n, err
 }
 
@@ -82,7 +86,7 @@ func enforceEnrollLimits(ctx context.Context, tx pgx.Tx, c DeviceCredential, enr
 	if enrolledBefore && limits.KeysPerMacPerDay > 0 {
 		var keys int
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM device_credentials WHERE tenant_id = $1 AND serial = $2 AND created_at > $3`,
-			c.TenantID, c.Serial, c.CreatedAt.Add(-keysPerMacWindow)).Scan(&keys); err != nil {
+			c.TenantID, c.Serial, c.CreatedAt.Add(-KeysPerMacWindow)).Scan(&keys); err != nil {
 			return err
 		}
 		if limits.refusesKey(keys) {

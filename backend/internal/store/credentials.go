@@ -109,8 +109,8 @@ func DefaultEnrollLimits() EnrollLimits {
 
 // The windows the limits count over, ending at the new key's CreatedAt.
 const (
-	newMacsWindow    = time.Hour
-	keysPerMacWindow = 24 * time.Hour
+	NewMacsWindow    = time.Hour
+	KeysPerMacWindow = 24 * time.Hour
 )
 
 // refusesNewMac reports whether n new Macs in the last hour leave no room for another.

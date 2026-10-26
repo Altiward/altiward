@@ -128,11 +128,11 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal
 		return
 	}
 	if errors.Is(err, store.ErrRateLimited) {
-		limit, msg := "keys_per_mac_per_day", "too many keys have been enrolled for this Mac in the last 24 hours; try again later"
+		limit, window, msg := "keys_per_mac_per_day", store.KeysPerMacWindow, "too many keys have been enrolled for this Mac in the last 24 hours; try again later"
 		if errors.Is(err, store.ErrNewMacsLimited) {
-			limit, msg = "new_macs_per_hour", "too many new Macs have been enrolled in the last hour; try again later"
+			limit, window, msg = "new_macs_per_hour", store.NewMacsWindow, "too many new Macs have been enrolled in the last hour; try again later"
 		}
-		s.logEnrollmentLimit(p.TenantID, req.Serial, limit)
+		s.logEnrollmentLimit(p.TenantID, req.Serial, limit, window)
 		w.Header().Set("Retry-After", enrollRetryAfter)
 		writeCodedError(w, http.StatusTooManyRequests, codeEnrollmentRateLimited, msg)
 		return

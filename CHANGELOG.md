@@ -47,10 +47,14 @@ None.
 
 - CEF enrolment events include the token fingerprint as `suser` and the device credential
   ID as `cs5` (`target`), so SIEM users can join them with approvals and revocations.
-  Sentinel's `UserName` also includes the enrolment token fingerprint.
-- A credential-history index supports enrolment limit counts and serial lookups.
+  Sentinel's `UserName` also includes the enrolment token fingerprint. A permanent admin
+  account's use on another user's session carries that user as `suser`, the OCSF actor.
+- Enrolment limit checks no longer read the organisation's whole credential history: a
+  new index covers each Mac's own keys, and the count of new Macs reads only the last
+  hour's enrolments.
 - Enrolment limit refusals log a warning once per tenant and limit window per server
-  instance; subsequent refusals log at debug level, to limit log noise during a storm.
+  instance, to limit log noise during a storm. The next warning counts the refusals in
+  between that weren't logged, as `not_logged`.
 - Enrollments loads and polls Fleet evidence only while a pending key is selected, and
   hides the last check-in if the latest refresh fails.
 - Token rotation guidance covers a leaked token exhausting the enrolment limits.
