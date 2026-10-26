@@ -33,6 +33,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/Altiward/altiward/backend/internal/auth"
@@ -59,6 +60,8 @@ type Server struct {
 	platform, app string
 	sinks         []string // the configured SIEM export sinks
 	enrollLimits  store.EnrollLimits
+	enrollLogMu   sync.Mutex
+	enrollLogLast map[enrollLogKey]time.Time
 
 	sso           *sso.Provider // nil: console tokens only
 	secureCookies bool

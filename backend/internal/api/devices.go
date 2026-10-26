@@ -132,7 +132,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal
 		if errors.Is(err, store.ErrNewMacsLimited) {
 			limit, msg = "new_macs_per_hour", "too many new Macs have been enrolled in the last hour; try again later"
 		}
-		s.log.Warn("enrolment rate limited", "tenant", p.TenantID, "serial", req.Serial, "limit", limit)
+		s.logEnrollmentLimit(p.TenantID, req.Serial, limit)
 		w.Header().Set("Retry-After", enrollRetryAfter)
 		writeCodedError(w, http.StatusTooManyRequests, codeEnrollmentRateLimited, msg)
 		return
