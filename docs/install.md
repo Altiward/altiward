@@ -123,6 +123,11 @@ Edit `.env`. `ALTIWARD_VERSION` is already set to the release you downloaded.
 
 Use the same organisation name in both token settings.
 
+You can give each group of Macs its own agent token, one per MDM profile, listed comma
+separated: `yourcompany=<first>,yourcompany=<second>`. **Enrollments** shows which token
+each key enrolled with, so if one leaks you change only that group's profile and can find
+the keys it made.
+
 Then start everything:
 
 ```sh
@@ -801,8 +806,11 @@ Edit the token in `.env` and run `docker compose up -d`.
 - **Agent enrolment token:** enrolled Macs keep working, because they sign with their own
   keys. Update the profile in your MDM so new Macs enrol with the new token. If the old
   token leaked, remove it from `ALTIWARD_AGENT_TOKENS` rather than leaving both tokens
-  accepted. Revoke any keys you don't recognise: changing the token does not revoke keys
-  it already enrolled or clear the enrolment limits. While those windows expire, enrol
+  accepted. **Enrollments** shows the token each key enrolled with (from server 0.9.0), as
+  `token:` and the first 8 hex digits of its SHA-256. Get the old token's with
+  `printf %s '<old token>' | shasum -a 256 | cut -c1-8`, search for it, and revoke the keys
+  you don't recognise: changing the token does not revoke keys it already enrolled or
+  clear the enrolment limits. While those windows expire, enrol
   expected Macs using the temporary limit increase described under
   [Settings worth reviewing](#6-settings-worth-reviewing).
 

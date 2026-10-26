@@ -58,6 +58,10 @@ None.
 - Enrollments loads and polls Fleet evidence only while a pending key is selected, and
   hides the last check-in if the latest refresh fails.
 - Token rotation guidance covers a leaked token exhausting the enrolment limits.
+- Each key records the enrolment token it enrolled with, by its fingerprint. **Enrollments**
+  shows it, and searching for it finds every key one token enrolled, so a leaked token's
+  keys can be found and revoked. Keys enrolled before 0.9.0 show "Not recorded". The
+  install guide suggests one agent token per group of Macs.
 - **Approve every new Mac**, in Settings, off by default: a Mac's first key waits for
   approval too, so the shared enrolment token can't add a Mac or take a real Mac's serial
   before it enrols. It costs one approval for each Mac rolled out.

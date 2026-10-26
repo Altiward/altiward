@@ -118,6 +118,8 @@ export interface Enrollment {
   hardware_uuid: string;
   public_key: string;
   key_storage: KeyStorage;
+  /** The enrolling token's fingerprint, "token:" and 8 hex digits; empty before server 0.9.0. */
+  token: string;
   status: CredentialStatus;
   created_at: string;
   activated_at: string | null;

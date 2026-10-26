@@ -332,6 +332,10 @@ func TestReenrollmentApprovalFlow(t *testing.T) {
 	if _, has := list[0].(map[string]any)["public_key"]; !has {
 		t.Fatal("list should show the public key so an admin can compare it")
 	}
+	// It names the token that enrolled the key, so an admin can find the keys a leaked token made.
+	if got := list[0].(map[string]any)["token"]; got != agentTokenActor() {
+		t.Fatalf("token = %v, want %s", got, agentTokenActor())
+	}
 
 	if rec, _ := do(t, h, "POST", "/v1/enrollments/"+pending.deviceID+"/approve", otherConsole, nil); rec.Code != 404 {
 		t.Fatalf("other tenant approve: %d", rec.Code)

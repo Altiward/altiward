@@ -51,6 +51,37 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		return c
 	}
 
+	// A leaked token can be retired and the keys it made found: each credential keeps the
+	// token that enrolled it, and a retry of the same key doesn't change it.
+	t.Run("a credential keeps the token that enrolled it", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		key := newKey(t)
+		enrollWith := func(token string, at time.Time) DeviceCredential {
+			t.Helper()
+			id, err := NewDeviceID()
+			if err != nil {
+				t.Fatal(err)
+			}
+			res, err := s.Enroll(ctx, DeviceCredential{
+				DeviceID: id, TenantID: tenant, Serial: serial, HardwareUUID: "HW", PublicKey: key, Token: token, CreatedAt: at,
+			}, EnrollLimits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return res.Credential
+		}
+		first := enrollWith("token:1a2b3c4d", t0)
+		if first.Token != "token:1a2b3c4d" || lookup(t, s, first.DeviceID).Token != "token:1a2b3c4d" {
+			t.Fatalf("enrolled %+v, stored %+v", first, lookup(t, s, first.DeviceID))
+		}
+		if retry := enrollWith("token:99999999", t0.Add(time.Minute)); retry.DeviceID != first.DeviceID || retry.Token != "token:1a2b3c4d" {
+			t.Fatalf("a retry with another token = %+v", retry)
+		}
+		if creds, err := s.ListCredentials(ctx, tenant, CredentialFilter{Serial: serial}); err != nil || len(creds) != 1 || creds[0].Token != "token:1a2b3c4d" {
+			t.Fatalf("listed %+v, %v", creds, err)
+		}
+	})
+
 	t.Run("first enrollment is active", func(t *testing.T) {
 		s, tenant, serial := setup(t)
 		res := enroll(t, s, tenant, serial, newKey(t), t0)
