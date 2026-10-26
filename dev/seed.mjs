@@ -59,8 +59,8 @@ const [a, b, c, d, e, f] = await Promise.all([
   ["C02XK0AAJGH5", "secure_enclave"], ["C02VJ4EEMD6R", "secure_enclave"], ["C02ZM1BBMD6T", "secure_enclave"],
   ["C02YH2CCJG5H", "secure_enclave"], ["C02WQ3DDKL7M", "software"], ["C02TN5FFHV2P", null],
 ].map(([serial, keyStorage]) => enroll(serial, { keyStorage })));
-// The Mac without a reported key runs agent 0.3.1, older than the server supports.
-f.agentVersion = "0.3.1";
+// The Mac without a reported key runs agent 0.4.1, older than the server supports.
+f.agentVersion = "0.4.1";
 
 const s1 = randomUUID();
 await send(a, [grant(a, jane, 12, 20, "Installing Xcode command line tools", s1), health(a, 2, ["itadmin", "jdoe"])]);

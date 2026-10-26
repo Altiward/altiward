@@ -43,7 +43,7 @@ param consoleToken string = replace(newGuid(), '-', '')
 
 // The release this template runs: scripts/azure-template.sh moves it, and the release
 // workflow refuses a tag it doesn't match.
-var version = '0.6.0'
+var version = '0.8.0'
 var image = 'ghcr.io/altiward/altiward-api:${version}'
 // Rebuilt with patched dependencies, scanned and published by each server release.
 // Compose uses the same reviewed digest (deploy/caddy/README.md).
