@@ -15,12 +15,12 @@ const agentUserAgent = "altiward-agent/"
 
 // enrollmentEvent reports a key that has just enrolled, as res says: its first key
 // (enrolled), a new key waiting for approval (pending) or one that took the place of the
-// active key without it (replaced). token is the enrolment token's audit name.
+// active key without it (replaced).
 //
 // The ID names the credential, so the same enrolment is the same event. The Mac's own
 // claims (hardware UUID, key storage, agent version) are the ones it made when it enrolled.
 // What isn't known is left out, not sent empty.
-func enrollmentEvent(tenantID string, res store.EnrollResult, userAgent, token string, now time.Time) event.Event {
+func enrollmentEvent(tenantID string, res store.EnrollResult, userAgent string, now time.Time) event.Event {
 	c := res.Credential
 	state := event.EnrollmentStateEnrolled
 	switch {
@@ -37,8 +37,8 @@ func enrollmentEvent(tenantID string, res store.EnrollResult, userAgent, token s
 	if c.KeyStorage != store.KeyStorageUnknown {
 		detail["key_storage"] = string(c.KeyStorage)
 	}
-	if token != "" {
-		detail["token"] = token
+	if c.Token != "" {
+		detail["token"] = c.Token
 	}
 	if prev := res.Previous; prev != nil {
 		detail["previous_device_id"] = prev.DeviceID

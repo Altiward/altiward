@@ -62,6 +62,7 @@ type DeviceCredential struct {
 	HardwareUUID string           `json:"hardware_uuid"`
 	PublicKey    []byte           `json:"public_key"` // SubjectPublicKeyInfo DER
 	KeyStorage   KeyStorage       `json:"key_storage"`
+	Token        string           `json:"token"` // the enrolling token's audit name, as Principal.Actor; "" before server 0.9.0
 	Status       CredentialStatus `json:"status"`
 	CreatedAt    time.Time        `json:"created_at"`
 	ActivatedAt  *time.Time       `json:"activated_at"`

@@ -121,7 +121,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal
 	now := s.now()
 	res, err := s.store.Enroll(r.Context(), store.DeviceCredential{
 		DeviceID: id, TenantID: p.TenantID, Serial: req.Serial, HardwareUUID: req.HardwareUUID,
-		PublicKey: spki, KeyStorage: store.ParseKeyStorage(req.KeyStorage), CreatedAt: now,
+		PublicKey: spki, KeyStorage: store.ParseKeyStorage(req.KeyStorage), Token: p.Actor, CreatedAt: now,
 	}, s.enrollLimits)
 	if errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "this key is enrolled elsewhere; generate a new one")
@@ -150,7 +150,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal
 		// agent's retry gets the stored credential and raises nothing, so a client that gives
 		// up now must not stop the event being stored. A database that doesn't answer still
 		// mustn't hold the handler, so the write gets enrollEventTimeout.
-		e := enrollmentEvent(p.TenantID, res, r.UserAgent(), p.Actor, now)
+		e := enrollmentEvent(p.TenantID, res, r.UserAgent(), now)
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), enrollEventTimeout)
 		_, err := s.store.Ingest(ctx, p.TenantID, []event.Event{e}, now)
 		cancel()

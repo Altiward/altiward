@@ -38,7 +38,7 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return (data ?? []).filter((e) => (filter === "all" || e.status === filter) && (!q || e.serial.toLowerCase().includes(q)));
+    return (data ?? []).filter((e) => (filter === "all" || e.status === filter) && (!q || e.serial.toLowerCase().includes(q) || e.token.toLowerCase().includes(q)));
   }, [data, filter, query]);
   const current = rows.find((e) => e.device_id === selected) ?? null;
   const pending = (data ?? []).filter((e) => e.status === "pending").length;
@@ -50,7 +50,7 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
           { value: "all", title: "All" }, { value: "pending", title: "Waiting" },
           { value: "active", title: "Active" }, { value: "revoked", title: "Revoked" },
         ]} />
-        <SearchField value={query} onChange={setQuery} placeholder="Search serial numbers" />
+        <SearchField value={query} onChange={setQuery} placeholder="Search serial numbers and tokens" />
       </Toolbar>
       <div className={`split${current ? " with-inspector" : ""}`}>
         <div className="pane">
@@ -152,6 +152,9 @@ function EnrollmentInspector({ enrollment: e, active, evidenceVersion, onClose, 
           ["Key fingerprint", <span key="fp" className="data"><Fingerprint publicKey={e.public_key} /></span>],
           ["Key kept in", <Explain key="kept" tip={explanations.keyStorage} bare><KeyKeptIn storage={e.key_storage} /></Explain>],
           ["Hardware UUID", <span key="hw" className="data">{e.hardware_uuid}</span>],
+          ["Enrolled with", <Explain key="token" tip={explanations.enrolledWith} bare>
+            {e.token ? <span className="data">{e.token}</span> : <Missing>Not recorded</Missing>}
+          </Explain>],
           ["Enrolled", dateTime(e.created_at)],
           ["Activated", e.activated_at ? dateTime(e.activated_at) : <Missing key="activated">Not yet</Missing>],
           ["Revoked", e.revoked_at ? dateTime(e.revoked_at) : <Missing key="revoked">Not revoked</Missing>],
