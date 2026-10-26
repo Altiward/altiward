@@ -314,6 +314,29 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 	})
 
+	// A tenant that approves every new Mac holds a serial's first key too; it's off unless
+	// turned on, and doesn't change how a known serial's next key is treated.
+	t.Run("approving every new Mac holds a first key", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		if got, err := s.TenantSettings(ctx, tenant); err != nil || got.NewMacRequiresApproval {
+			t.Fatalf("default = %+v, %v; want new Macs not held", got, err)
+		}
+		if err := s.PutTenantSettings(ctx, tenant, TenantSettings{NewMacRequiresApproval: true}, auditFor(t, tenant, AuditChangeSettings)); err != nil {
+			t.Fatal(err)
+		}
+		first := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+		if first.Status != CredentialPending || first.ActivatedAt != nil {
+			t.Fatalf("a new Mac's first key = %+v, want pending", first)
+		}
+		if c, err := s.ApproveCredential(ctx, tenant, first.DeviceID, t0.Add(time.Minute), auditFor(t, tenant, AuditApproveEnrollment)); err != nil || c.Status != CredentialActive {
+			t.Fatalf("approve = %+v, %v", c, err)
+		}
+		// With re-enrolment approval off, the known serial's next key replaces the first.
+		if res := enroll(t, s, tenant, serial, newKey(t), t0.Add(time.Hour)); res.Credential.Status != CredentialActive || res.Replaced != first.DeviceID {
+			t.Fatalf("a known Mac's next key = %+v, replaced %q", res.Credential, res.Replaced)
+		}
+	})
+
 	// There is no Mac limit: the number of active Macs never decides a status.
 	t.Run("enrollment has no Mac limit", func(t *testing.T) {
 		s, tenant, _ := setup(t)

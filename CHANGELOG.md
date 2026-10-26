@@ -58,6 +58,9 @@ None.
 - Enrollments loads and polls Fleet evidence only while a pending key is selected, and
   hides the last check-in if the latest refresh fails.
 - Token rotation guidance covers a leaked token exhausting the enrolment limits.
+- **Approve every new Mac**, in Settings, off by default: a Mac's first key waits for
+  approval too, so the shared enrolment token can't add a Mac or take a real Mac's serial
+  before it enrols. It costs one approval for each Mac rolled out.
 
 ## Agent 0.8.0 - 2026-10-26
 

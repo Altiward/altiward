@@ -138,7 +138,7 @@ func (p *Postgres) Enroll(ctx context.Context, c DeviceCredential, limits Enroll
 		if err != nil {
 			return err
 		}
-		if holdsForApproval(settings.ReenrollmentRequiresApproval, enrolledBefore, res.Previous, c.HardwareUUID) {
+		if holdsForApproval(settings, enrolledBefore, res.Previous, c.HardwareUUID) {
 			c.Status = CredentialPending
 		} else {
 			c.Status, c.ActivatedAt = CredentialActive, ptr(c.CreatedAt)

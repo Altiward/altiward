@@ -56,6 +56,7 @@ export function auditSummary(a: AuditEntry): string {
 
 const settingNames: Record<string, string> = {
   reenrollment_requires_approval: "Approve Macs that enrol again",
+  new_mac_requires_approval: "Approve every new Mac",
   silent_after_hours: "Alert after hours without a check-in",
 };
 

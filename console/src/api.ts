@@ -150,6 +150,8 @@ export interface Command {
 
 export interface Settings {
   reenrollment_requires_approval: boolean;
+  /** A Mac's first key waits for approval too; off unless an admin turns it on, and when missing. */
+  new_mac_requires_approval?: boolean;
   /** Hours without a check-in before the server raises agent.silent; 0 means the default, 72. */
   silent_after_hours: number;
   silent_alerts_off: boolean;

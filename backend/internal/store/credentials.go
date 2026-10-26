@@ -122,11 +122,12 @@ func (l EnrollLimits) refusesKey(n int) bool {
 }
 
 // holdsForApproval reports whether a new key waits for an admin instead of becoming active.
-// It does when the tenant requires approval for a Mac that enrolled before, and whatever
-// the tenant chose when the Mac has an active key and the new one claims other hardware:
-// then it may be a different Mac under the same serial. active is nil when nothing is.
-func holdsForApproval(requireApproval, enrolledBefore bool, active *DeviceCredential, hardwareUUID string) bool {
-	if requireApproval && enrolledBefore {
+// It does when the tenant requires approval for a Mac that enrolled before, or for a new
+// Mac, and whatever the tenant chose when the Mac has an active key and the new one claims
+// other hardware: then it may be a different Mac under the same serial. active is nil when
+// nothing is.
+func holdsForApproval(settings TenantSettings, enrolledBefore bool, active *DeviceCredential, hardwareUUID string) bool {
+	if enrolledBefore && settings.ReenrollmentRequiresApproval || !enrolledBefore && settings.NewMacRequiresApproval {
 		return true
 	}
 	return active != nil && active.HardwareUUID != hardwareUUID
@@ -142,6 +143,9 @@ type TenantSettings struct {
 	// A new key for a serial that enrolled before waits for console approval, even
 	// when the previous credential was revoked. Enabled by default.
 	ReenrollmentRequiresApproval bool `json:"reenrollment_requires_approval"`
+	// A serial's first key waits for console approval too, so the shared enrolment token
+	// can't add a Mac on its own. Off by default, and when missing, for rollouts.
+	NewMacRequiresApproval bool `json:"new_mac_requires_approval"`
 	// SilentAfterHours is how long a Mac may go without checking in before the backend
 	// raises agent.silent; 0 means DefaultSilentAfterHours.
 	SilentAfterHours int `json:"silent_after_hours"`

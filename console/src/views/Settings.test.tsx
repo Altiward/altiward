@@ -68,6 +68,24 @@ describe("Settings", () => {
     });
   });
 
+  it("leaves approving every new Mac off until an admin turns it on", async () => {
+    const api = fakeApi({
+      settings: vi.fn(async () => ({
+        reenrollment_requires_approval: true, new_mac_requires_approval: false, silent_after_hours: 0, silent_alerts_off: false,
+      })),
+      putSettings: vi.fn(async (s) => s),
+    });
+    renderView(api);
+    const newMacs = await screen.findByRole("switch", { name: /Approve every new Mac/ });
+    await waitFor(() => expect(newMacs).toBeEnabled());
+    expect(newMacs).not.toBeChecked();
+    expect(screen.getByText(/A Mac's first key waits for approval in Enrollments/)).toBeInTheDocument();
+    await userEvent.click(newMacs);
+    expect(api.putSettings).toHaveBeenCalledWith({
+      reenrollment_requires_approval: true, new_mac_requires_approval: true, silent_after_hours: 0, silent_alerts_off: false,
+    });
+  });
+
   it("shows the default silence limit and saves a new one without touching the rest", async () => {
     const api = fakeApi({
       settings: vi.fn(async () => ({ reenrollment_requires_approval: true, silent_after_hours: 0, silent_alerts_off: false })),

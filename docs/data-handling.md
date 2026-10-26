@@ -191,7 +191,8 @@ security records ([Backups](install.md#backups)).
   Secure Enclave. The hardware UUID is the agent's own claim, not a secret, so that rule
   catches a key made on another Mac, not someone who names the UUID. The shared token
   cannot verify ownership of a serial enrolling for the first time. Check new enrolments
-  against independently verified inventory; per-device bootstrap credentials are needed
+  against independently verified inventory, or turn on **Approve every new Mac** so each
+  Mac's first key waits for approval too; per-device bootstrap credentials are needed
   for stronger first-enrolment assurance. Changing the token doesn't affect Macs already
   enrolled.
 - **Console and agent tokens** are kept in the server's `.env` file (keep it `chmod 600`).

@@ -37,7 +37,9 @@ export function fakeApi(over: Partial<Api> = {}): Api {
   return {
     sessions: vi.fn(async () => []), session: none(), devices: vi.fn(async () => []), overview: vi.fn(async () => overview()),
     enrollments: vi.fn(async () => []), approveEnrollment: none(), revokeEnrollment: none(),
-    settings: vi.fn(async () => ({ reenrollment_requires_approval: false, silent_after_hours: 0, silent_alerts_off: false })), putSettings: none(),
+    settings: vi.fn(async () => ({
+      reenrollment_requires_approval: false, new_mac_requires_approval: false, silent_after_hours: 0, silent_alerts_off: false,
+    })), putSettings: none(),
     revokeSession: none(), revokeDevice: none(), command: none(), commands: vi.fn(async () => []), audit: vi.fn(async () => []),
     about: vi.fn(async () => ({ version: "0.1.0", oldest_supported_agent: "0.1", update_check: false })),
     me: vi.fn(async () => signedIn("admin")), signOut: vi.fn(async () => undefined),
