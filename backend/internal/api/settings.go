@@ -48,6 +48,6 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, p auth.Prin
 		return
 	}
 	s.log.Info("tenant settings changed", "tenant", p.TenantID, "reenrollment_requires_approval", settings.ReenrollmentRequiresApproval,
-		"silent_after_hours", settings.SilentAfterHours)
+		"new_mac_requires_approval", settings.NewMacRequiresApproval, "silent_after_hours", settings.SilentAfterHours)
 	writeJSON(w, http.StatusOK, settings)
 }

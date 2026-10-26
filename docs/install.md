@@ -261,7 +261,8 @@ its serial and hardware UUID. Neither is a secret, and Secure Enclave key protec
 not prevent that replacement.
 
 Approval protects existing serials; the shared token does not verify that a serial enrolling
-for the first time belongs to the caller. Check new enrolments against your device inventory.
+for the first time belongs to the caller. Check new enrolments against your device inventory,
+or turn on **Approve every new Mac** so each Mac's first key waits for approval too.
 Stronger first-enrolment assurance needs per-device bootstrap credentials or independently
 verified inventory.
 
@@ -471,6 +472,12 @@ In the console, under **Settings › General**:
   made on another Mac, not someone who sets it by hand. **Enrollments** warns when a key
   waiting for approval reports a different hardware UUID, and shows when the Mac last
   checked in with its current key.
+- **Approve every new Mac.** Off by default. A Mac's first key waits in **Enrollments** for
+  your approval too, so someone with the enrolment token can't add a Mac of their own, or
+  enrol a real Mac's serial before that Mac does. It costs one approval for each Mac you roll
+  out; until you approve it, a Mac doesn't report. Each key waiting for approval raises an
+  `agent.enrollment` event with state `pending`, so a SIEM alerting on those alerts on every
+  new Mac while this is on. An omitted flag in a settings API update turns it off.
 - **Alert when a Mac stops checking in.** Hours without a check-in before Altiward raises
   an alert. The default of 72 rides out a weekend with laptops closed.
 

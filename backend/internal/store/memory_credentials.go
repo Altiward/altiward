@@ -26,7 +26,7 @@ func (m *Memory) Enroll(_ context.Context, c DeviceCredential, limits EnrollLimi
 	if hasActive {
 		res.Previous = ptr(active)
 	}
-	if holdsForApproval(m.tenantSettings(c.TenantID).ReenrollmentRequiresApproval, m.enrolledBefore(c.TenantID, c.Serial),
+	if holdsForApproval(m.tenantSettings(c.TenantID), m.enrolledBefore(c.TenantID, c.Serial),
 		res.Previous, c.HardwareUUID) {
 		c.Status = CredentialPending
 	} else {

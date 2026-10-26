@@ -96,12 +96,26 @@ function GeneralSettings() {
                 On by default and recommended. A new key for a Mac that enrolled before waits for approval
                 in Enrollments; its current key keeps reporting. Turning this off lets anyone with the
                 enrolment token replace an enrolled Mac's identity by naming its serial and hardware UUID.
-                First enrolments still use the shared token: check them against your device inventory.
+                First enrolments still use the shared token: check them against your device inventory, or
+                approve every new Mac.
               </p>
             </span>
             <input type="checkbox" role="switch" disabled={!data || saving || !canChange}
               checked={data?.reenrollment_requires_approval ?? true}
               onChange={(e) => save({ reenrollment_requires_approval: e.target.checked })} />
+          </label>
+          <label className="row">
+            <span>
+              <span>Approve every new Mac</span>
+              <p className="hint">
+                Off by default. A Mac's first key waits for approval in Enrollments too, so the shared
+                enrolment token can't add a Mac, or take a serial before the real Mac enrols. Expect one
+                approval for each Mac during a rollout.
+              </p>
+            </span>
+            <input type="checkbox" role="switch" disabled={!data || saving || !canChange}
+              checked={data?.new_mac_requires_approval ?? false}
+              onChange={(e) => save({ new_mac_requires_approval: e.target.checked })} />
           </label>
         </div>
       </div>

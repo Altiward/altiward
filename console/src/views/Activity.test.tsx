@@ -36,6 +36,12 @@ describe("Activity", () => {
     expect(auditSummary(hours)).toBe("Alert after hours without a check-in: default → 24");
   });
 
+  it("names the switch for approving every new Mac", () => {
+    const on = entry({ action: "change_settings", target: "settings",
+      detail: { previous: { new_mac_requires_approval: false }, settings: { new_mac_requires_approval: true } } });
+    expect(auditSummary(on)).toBe("Approve every new Mac: off → on");
+  });
+
   it("names an ended console sign-in", () => {
     const ended = entry({ action: "end_console_session", target: "jane@example.com", detail: { name: "Jane Doe" } });
     expect(auditSummary(ended)).toBe("Jane Doe (jane@example.com)");

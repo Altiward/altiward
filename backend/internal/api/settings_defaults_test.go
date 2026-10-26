@@ -59,3 +59,41 @@ func TestRevokedSerialStillRequiresApprovalByDefault(t *testing.T) {
 	rec, out := replacement.post(t, batch(t, "elevation-granted"))
 	wantCode(t, rec, out, http.StatusForbidden, "enrollment_pending")
 }
+
+// Approving every new Mac is off unless an admin turns it on, and a later save that leaves
+// the flag out turns it off again.
+func TestSettingsApproveEveryNewMacIsOffUnlessSet(t *testing.T) {
+	h := newServer(t)
+	if _, out := do(t, h, "GET", "/v1/settings", consoleToken, nil); out["new_mac_requires_approval"] != false {
+		t.Fatalf("default settings = %v", out)
+	}
+	if rec, out := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"new_mac_requires_approval": true}); rec.Code != http.StatusOK ||
+		out["new_mac_requires_approval"] != true || out["reenrollment_requires_approval"] != true {
+		t.Fatalf("turn on: %d %s", rec.Code, rec.Body)
+	}
+	if rec, out := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"silent_after_hours": 24}); rec.Code != http.StatusOK ||
+		out["new_mac_requires_approval"] != false {
+		t.Fatalf("a save without the flag: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// With it on, a Mac's first key waits like a re-enrolment, and its event says pending with
+// nothing to compare.
+func TestApproveEveryNewMacHoldsTheFirstKey(t *testing.T) {
+	h, st := newServerWithQueue(t)
+	if rec, _ := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"new_mac_requires_approval": true}); rec.Code != http.StatusOK {
+		t.Fatalf("turn on: %d %s", rec.Code, rec.Body)
+	}
+	a := &agent{h: h, key: newKey(t)}
+	rec, out := a.enroll(t, fixtureSerial)
+	if rec.Code != http.StatusCreated || out["status"] != "pending" {
+		t.Fatalf("first enrolment: %d %s", rec.Code, rec.Body)
+	}
+	a.deviceID = out["device_id"].(string)
+	rec, out = a.post(t, batch(t, "elevation-granted"))
+	wantCode(t, rec, out, http.StatusForbidden, "enrollment_pending")
+	got := queuedEnrollments(t, st)
+	if len(got) != 1 || got[0].Detail["state"] != "pending" || got[0].Detail["previous_device_id"] != nil {
+		t.Fatalf("events = %+v, want one pending enrolment with no previous key", got)
+	}
+}
