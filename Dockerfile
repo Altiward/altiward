@@ -6,14 +6,14 @@
 
 # The console and the binary build on the runner's own platform and the Go build
 # cross-compiles, so a multi-platform build runs nothing under emulation.
-FROM --platform=$BUILDPLATFORM node:22-alpine AS console
+FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS console
 WORKDIR /src/console
 COPY console/package.json console/package-lock.json ./
 RUN npm ci
 COPY console/ ./
 RUN npm run build
 
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS api
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c AS api
 ARG VERSION=dev
 ARG TARGETOS
 ARG TARGETARCH
@@ -25,7 +25,7 @@ COPY backend/ backend/
 COPY integrations/ integrations/
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/altiward-api ./backend/cmd/altiward-api
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 COPY --from=api /out/altiward-api /usr/local/bin/altiward-api
 COPY --from=console /src/console/dist /srv/console
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md /usr/share/doc/altiward/

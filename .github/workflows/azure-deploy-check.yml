@@ -2,9 +2,9 @@ name: Azure deploy check
 
 # Deploys the Deploy to Azure template (deploy/azure/) into a test resource group, checks
 # the server works through the ingress and caddy as a Mac and an admin would use it, then
-# deletes everything it made. It runs after each server release, deploying the template
-# from GitHub at the commit the release built, as the button does, and by hand with a
-# release tag or on main. It first passed on server 0.2.0.
+# deletes everything it made. Release server starts it on main with the release's tag once
+# each release is published, deploying the template from GitHub at that tag, as the button
+# does; it also runs by hand with a release tag or on main. It first passed on server 0.2.0.
 #
 # Never on pull requests: it signs in to Azure. The azure-test environment holds only IDs
 # (AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID); the sign-in is GitHub OIDC
@@ -17,9 +17,6 @@ on:
       tag:
         description: "A server-v release tag to deploy; empty deploys main's template"
         required: false
-  workflow_run:
-    workflows: [Release server]
-    types: [completed]
 
 permissions:
   contents: read
@@ -30,7 +27,6 @@ concurrency:
 jobs:
   check:
     name: Deploy, check and delete
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 75
     environment: azure-test
@@ -48,11 +44,10 @@ jobs:
           [[ "$TAG" =~ ^server-v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] ||
             { echo "::error::Not a server release tag: $TAG"; exit 1; }
 
-      # After a release, the commit it built, never a name that could have moved since; by
-      # hand, the tag given or main.
+      # The release tag given, which can't move (release tags are protected), or main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha || inputs.tag || github.sha }}
+          ref: ${{ inputs.tag || github.sha }}
 
       - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:

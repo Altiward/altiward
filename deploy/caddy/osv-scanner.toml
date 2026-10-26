@@ -1,0 +1,12 @@
+# Advisories for modules in this go.mod that don't reach the Caddy binary. OSV-Scanner,
+# and OpenSSF Scorecard's Vulnerabilities check, read this file. The release workflow
+# still runs govulncheck on both built binaries, which fails on any vulnerable code that
+# is compiled in. Remove an entry when the module is upgraded past the fix.
+
+[[IgnoredVulns]]
+id = "GHSA-j6qf-3m9c-vwj3" # CVE-2026-114437, chi ClientIPFromXFF
+reason = "chi is in the module graph only: `go mod why -m github.com/go-chi/chi/v5` reports that the main module does not need it, so none of its code is compiled into Caddy."
+
+[[IgnoredVulns]]
+id = "GO-2026-5932" # golang.org/x/crypto/openpgp
+reason = "Caddy doesn't import golang.org/x/crypto/openpgp, and govulncheck -mode=binary finds it in neither built binary."
