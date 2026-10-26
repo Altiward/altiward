@@ -45,6 +45,9 @@ None.
 
 ### Changes
 
+- The supported agent minor releases are 0.8 and 0.9. The frozen compatibility fixtures
+  retain both, and the console flags agents older than 0.8 as out of support.
+
 - CEF enrolment events include the token fingerprint as `suser` and the device credential
   ID as `cs5` (`target`), so SIEM users can join them with approvals and revocations.
   Sentinel's `UserName` also includes the enrolment token fingerprint. A permanent admin

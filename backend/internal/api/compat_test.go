@@ -11,7 +11,7 @@ import (
 
 // TestOlderAgentsStillReport posts the events each supported agent release sends, frozen
 // in docs/schema/compat, and requires every one to be accepted: sites upgrade the server
-// first and roll agents out later, so the server accepts agents up to two minor versions older.
+// first and roll agents out later, so the server accepts both supported agent minor releases.
 func TestOlderAgentsStillReport(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	root := filepath.Join(filepath.Dir(file), "..", "..", "..", "docs", "schema", "compat")

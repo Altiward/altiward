@@ -9,7 +9,7 @@ import (
 
 // OldestSupportedAgent is the oldest agent minor release the server accepts: the oldest
 // directory in docs/schema/compat. Update both together when an agent release ships.
-const OldestSupportedAgent = "0.5"
+const OldestSupportedAgent = "0.8"
 
 // AgentSupported reports whether an agent version is at least OldestSupportedAgent.
 // A version that can't be read counts as supported: nothing to flag with confidence.
