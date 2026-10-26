@@ -406,6 +406,21 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 	})
 
+	// A new Mac with several keys in its first hour is still one new Mac.
+	t.Run("a new Mac counts once whatever its keys", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		limits := EnrollLimits{NewMacsPerHour: 2}
+		for i := 0; i < 3; i++ {
+			if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0.Add(time.Duration(i)*time.Minute), limits); err != nil {
+				t.Fatalf("key %d: %v", i+1, err)
+			}
+		}
+		sn := "C02ONCE" + randomHex(t)
+		if _, err := enrollLimited(s, tenant, sn, "HW-"+sn, newKey(t), t0.Add(5*time.Minute), limits); err != nil {
+			t.Fatalf("a second new Mac: %v", err)
+		}
+	})
+
 	// A shared token could also pile keys onto one serial, so a serial may take only so many
 	// in 24 hours, in any status.
 	t.Run("keys per Mac per day are limited", func(t *testing.T) {

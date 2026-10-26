@@ -75,6 +75,17 @@ func TestCEFForAnEnrollment(t *testing.T) {
 	}
 }
 
+// A permanent admin's use on someone else's session: duser is the admin account, suser the
+// OCSF actor, whose session it was.
+func TestCEFForPermanentAdminUseOnAnotherSession(t *testing.T) {
+	got := export.CEF(record(t, "admin-permanent-use-prompt"))
+	for _, want := range []string{"duser=breakglass", "suser=alex"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in\n%s", want, got)
+		}
+	}
+}
+
 func TestCEFForAConsoleAction(t *testing.T) {
 	a := store.AuditEntry{ID: "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d", TenantID: "acme", Actor: "token:3f2a9c1b",
 		At: testfixture.Time(t, "2026-10-17T09:00:00Z"), Action: store.AuditRevokeSession, Target: "s1",

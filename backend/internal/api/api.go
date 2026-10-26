@@ -61,7 +61,7 @@ type Server struct {
 	sinks         []string // the configured SIEM export sinks
 	enrollLimits  store.EnrollLimits
 	enrollLogMu   sync.Mutex
-	enrollLogLast map[enrollLogKey]time.Time
+	enrollLog     map[enrollLogKey]enrollLogWindow
 
 	sso           *sso.Provider // nil: console tokens only
 	secureCookies bool

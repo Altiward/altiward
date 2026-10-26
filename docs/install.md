@@ -477,23 +477,24 @@ Two more settings go in `.env`; `0` turns one off:
 - **`ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY`** (default 5). How many keys one Mac may enrol in
   24 hours, in any status. It stops the enrolment token piling keys onto one serial.
 
-A Mac over a limit is refused with HTTP 429 and `Retry-After: 3600`, and the server logs
-`enrolment rate limited` with the tenant, the serial and which limit. The first refusal
-per tenant and limit window is a warning; subsequent refusals are debug logs. Restarting
-a server starts new warning windows. Agent 0.8.0 and later
+A Mac over a limit is refused with HTTP 429 and `Retry-After: 3600`. Agent 0.8.0 and later
 wait that hour before asking again (an agent that restarts asks once more straight away);
 earlier agents ask about once a minute. A Mac sending a key that is already enrolled is
-never refused. Run `docker compose up -d` to apply a change (on Azure, see
+never refused. The server logs `enrolment rate limited` with the tenant, the serial and
+which limit. To keep a flood of refusals out of the log, it logs one per tenant and limit
+in each window (an hour, or a day for the keys per Mac), and `not_logged` in the next one
+counts the refusals in between. Restarting a server starts new windows. Run
+`docker compose up -d` to apply a change (on Azure, see
 [Changing settings](../deploy/azure/README.md#changing-settings)).
 
 Someone with the enrolment token can also use the limits against you. They can keep the
 new-Macs allowance full with invented serials, so that genuine Macs enrolling for the first
 time are refused, or use up a serial's keys for the day (five by default). Revoking a key
 frees neither. The signs are Macs being refused (`enrolment rate limited` in the server's
-log, `device id: (not enrolled)` in `altiward-agent status`) while **Enrollments** fills
-with serials or keys you don't recognise. Then change the agent token
-([Changing tokens](#changing-tokens)), revoke the keys you don't recognise, and meanwhile
-raise the limit or set it to `0`.
+log, with a high `not_logged`, and `device id: (not enrolled)` in `altiward-agent status`)
+while **Enrollments** fills with serials or keys you don't recognise. Then change the agent
+token ([Changing tokens](#changing-tokens)), revoke the keys you don't recognise, and
+meanwhile raise the limit or set it to `0`.
 
 To retire a Mac, revoke its enrollment in **Enrollments**. It then stops being able to
 report and never raises a "not checking in" alert.

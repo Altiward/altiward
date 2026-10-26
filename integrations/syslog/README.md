@@ -58,7 +58,7 @@ Header: `CEF:0|Altiward|Altiward|<agent version>|<signature>|<name>|<severity>|`
 | `cs2` `sessionId` | Elevation session, so the grant, revoke and alerts of one session group together |
 | `cs3` `reason` | The reason the user gave |
 | `cs4` `source` | `privileges` or `out_of_band` |
-| `suser` | The enrolment token fingerprint for `agent.enrollment` |
+| `suser` | Who acted, where the event says: the enrolment token fingerprint for `agent.enrollment`, and for `admin.permanent_use` the user whose session the account's name and password were typed on |
 | `cs5` `target` | The device credential ID for `agent.enrollment`, to join with its approval or revocation |
 | `cs5` `findingUid` | Pairs a finding with the event that resolves it (tamper checks, silent Macs, admin rights nobody granted) |
 | `cs6` `eventType` | Altiward event type |
@@ -96,6 +96,7 @@ sign-outs are OCSF Authentication records, with the event types `console.sign_in
   again sends `act=Close` with the same `cs5`.
 - **Use of a permanent admin account:** signature `admin.permanent_use`. `act=Logon` is a
   sign-in, an approval or screen sharing, and `act=Logoff` is the Mac seeing a sign-in end.
-  `duser` is the account and `msg` says how it was used.
+  `duser` is the account and `msg` says how it was used. For an admin prompt on another
+  user's session, `suser` is that user.
 - **Settings changes:** signature `console.change_settings`.
 - **Break-glass token use:** `suser` starting `break-glass:`.

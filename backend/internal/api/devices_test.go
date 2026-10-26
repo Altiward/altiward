@@ -742,6 +742,9 @@ func TestEnrollRateLimitedAnswers429(t *testing.T) {
 		refused := &agent{h: h, key: newKey(t)}
 		rec, out := refused.enroll(t, "C02SECOND")
 		wantRateLimited(t, rec, out)
+		// A second refusal in the same hour isn't logged on its own.
+		rec, out = (&agent{h: h, key: newKey(t)}).enroll(t, "C02THIRD")
+		wantRateLimited(t, rec, out)
 
 		if logged := logs.String(); !strings.Contains(logged, "level=WARN") || !strings.Contains(logged, `msg="enrolment rate limited"`) ||
 			!strings.Contains(logged, "tenant=acme") || !strings.Contains(logged, "serial=C02SECOND") ||
@@ -766,9 +769,11 @@ func TestEnrollRateLimitedAnswers429(t *testing.T) {
 		second := enrollAgent(t, h, fixtureSerial)
 		rec, out := (&agent{h: h, key: newKey(t)}).enroll(t, fixtureSerial)
 		wantRateLimited(t, rec, out)
+		rec, out = (&agent{h: h, key: newKey(t)}).enroll(t, fixtureSerial)
+		wantRateLimited(t, rec, out)
 
 		if logged := logs.String(); !strings.Contains(logged, "level=WARN") || !strings.Contains(logged, "serial="+fixtureSerial) ||
-			!strings.Contains(logged, "limit=keys_per_mac_per_day") {
+			!strings.Contains(logged, "limit=keys_per_mac_per_day") || strings.Count(logged, "rate limited") != 1 {
 			t.Errorf("log = %s", logged)
 		}
 		if got := queuedEnrollments(t, st); len(got) != 2 {
