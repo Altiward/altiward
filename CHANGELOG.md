@@ -48,6 +48,9 @@ None.
 - The supported agent minor releases are 0.8 and 0.9. The frozen compatibility fixtures
   retain both, and the console flags agents older than 0.8 as out of support.
 
+- Bounded, fixture-seeded Go fuzz campaigns exercise event and command-result decoding,
+  signed requests and enrolment parsing in CI, including signature integrity and enrolment
+  retry idempotence.
 - CEF enrolment events include the token fingerprint as `suser` and the device credential
   ID as `cs5` (`target`), so SIEM users can join them with approvals and revocations.
   Sentinel's `UserName` also includes the enrolment token fingerprint. A permanent admin

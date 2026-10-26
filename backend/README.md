@@ -20,6 +20,24 @@ when a Mac enrols a key. Agents can't send either: the API refuses both types.
 | `internal/sso` | Console single sign-on: OIDC with PKCE through go-oidc, groups to roles. `sso/ssotest` is a fake identity provider for tests |
 | `internal/auth`, `internal/config` | Bearer tokens and console roles; `ALTIWARD_*` environment |
 
+## Fuzzing
+
+`scripts/test-fuzz.sh` runs native Go fuzz campaigns for event decoding and validation,
+signed-request headers, P-256 public keys and signatures, command results and the actual
+enrolment HTTP handler. Seeds include the shared signing vector, command result, current
+event examples and frozen supported-agent events. Ordinary `go test` also runs these seeds.
+
+Each campaign runs for five seconds with two workers in CI, one target at a time. For a
+longer local run, use `FUZZ_TIME=60s FUZZ_PARALLEL=2 scripts/test-fuzz.sh`. Individual inputs
+are capped at 128 KiB (16 KiB for headers and public keys). The enrolment target uses a
+fresh in-memory store per input and requires no listening socket or external service.
+It checks persisted credentials and retry/export idempotence while preserving support
+for unknown fields from later agents. Event and command-result decoding remain strict.
+
+Keep a reproducible failing input as a regression seed after checking it against the
+wire contract. Short campaigns supplement normal, race and state/concurrency tests;
+they do not replace those checks.
+
 ## HTTP handler layout
 
 `internal/api/api.go` constructs the server and registers routes. Handlers are grouped by
