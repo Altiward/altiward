@@ -57,6 +57,9 @@ func (s *SentinelSink) Send(ctx context.Context, records []Record) error {
 		if r.Event.User != nil {
 			row.UserName = r.Event.User.LocalName
 		}
+		if row.UserName == "" {
+			row.UserName = actorName(r)
+		}
 		if r.Audit != nil {
 			row.UserName = r.Audit.Actor
 			row.DeviceSerial, _ = r.Audit.Detail["serial"].(string)
@@ -64,4 +67,11 @@ func (s *SentinelSink) Send(ctx context.Context, records []Record) error {
 		rows = append(rows, row)
 	}
 	return s.Client.Upload(ctx, rows)
+}
+
+// actorName is the OCSF actor, such as an enrolment token's fingerprint.
+func actorName(r Record) string {
+	actor, _ := r.OCSF["actor"].(map[string]any)
+	user, _ := actor["user"].(map[string]any)
+	return str(user["name"])
 }

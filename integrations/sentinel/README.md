@@ -304,7 +304,7 @@ Then carry on from [step 2](#2-give-altiward-the-values).
 | `ActivityId` | int | OCSF activity |
 | `SeverityId` | int | OCSF severity |
 | `DeviceSerial` | string | The Mac's serial number |
-| `UserName` | string | The user, or who acted for a console action |
+| `UserName` | string | The user, the actor for a console action, or the enrolment token fingerprint |
 | `Message` | string | A sentence describing the event |
 | `Ocsf` | dynamic | The full OCSF record |
 

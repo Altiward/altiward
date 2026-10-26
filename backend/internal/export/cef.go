@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Altiward/altiward/backend/internal/event"
 	"github.com/Altiward/altiward/backend/internal/ocsf"
 	"github.com/Altiward/altiward/integrations/syslog"
 )
@@ -110,6 +111,7 @@ func CEF(r Record) string {
 	add("outcome", str(o["status"]))
 	add("dvchost", e.Device.Serial)
 	add("deviceExternalId", e.Device.HardwareUUID)
+	add("suser", actorName(r))
 	if e.User != nil {
 		user := e.User.LocalName
 		if e.User.UPN != nil {
@@ -130,6 +132,9 @@ func CEF(r Record) string {
 	}
 	if f, ok := o["finding_info"].(map[string]any); ok {
 		custom(5, "findingUid", str(f["uid"]))
+	}
+	if e.Type == event.AgentEnrollment {
+		custom(5, "target", str(e.Detail["device_id"]))
 	}
 	custom(6, "eventType", string(e.Type))
 

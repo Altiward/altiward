@@ -58,6 +58,8 @@ Header: `CEF:0|Altiward|Altiward|<agent version>|<signature>|<name>|<severity>|`
 | `cs2` `sessionId` | Elevation session, so the grant, revoke and alerts of one session group together |
 | `cs3` `reason` | The reason the user gave |
 | `cs4` `source` | `privileges` or `out_of_band` |
+| `suser` | The enrolment token fingerprint for `agent.enrollment` |
+| `cs5` `target` | The device credential ID for `agent.enrollment`, to join with its approval or revocation |
 | `cs5` `findingUid` | Pairs a finding with the event that resolves it (tamper checks, silent Macs, admin rights nobody granted) |
 | `cs6` `eventType` | Altiward event type |
 

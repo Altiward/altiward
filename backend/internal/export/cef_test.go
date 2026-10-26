@@ -66,6 +66,7 @@ func TestCEFForAnEnrollment(t *testing.T) {
 	}
 	for _, want := range []string{
 		"cat=API Activity", "act=Create", "dvchost=C02XK0AAJGH5",
+		"suser=token:1a2b3c4d", "cs5Label=target cs5=5d2c8e1a-7b4f-4a93-8c6d-0f1e2a3b4c5d",
 		"msg=C02XK0AAJGH5 enrolled again with a new key, waiting for approval", "cs6Label=eventType cs6=agent.enrollment",
 	} {
 		if !strings.Contains(got, want) {
