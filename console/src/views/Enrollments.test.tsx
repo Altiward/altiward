@@ -11,7 +11,8 @@ import { EnrollmentsView } from "./Enrollments";
 
 const pending: Enrollment = {
   device_id: "d-pending", serial: "C02XK0AAJGH5", hardware_uuid: "HW-1", public_key: btoa("abc"),
-  key_storage: "secure_enclave", status: "pending", created_at: "2026-10-16T11:00:00Z", activated_at: null, revoked_at: null,
+  key_storage: "secure_enclave", token: "token:1a2b3c4d", status: "pending", created_at: "2026-10-16T11:00:00Z", activated_at: null,
+  revoked_at: null,
 };
 
 function renderView(api: ReturnType<typeof fakeApi>, view: JSX.Element) {
@@ -53,6 +54,26 @@ describe("Enrollments", () => {
     await userEvent.click(within(inspector).getByRole("button", { name: "Approve" }));
     expect(api.approveEnrollment).toHaveBeenCalledWith("d-pending");
     expect(await screen.findByRole("status")).toHaveTextContent("Approved");
+  });
+});
+
+describe("Enrollments, the token that enrolled a key", () => {
+  it("shows the token's fingerprint, or says it wasn't recorded", async () => {
+    const older: Enrollment = { ...pending, device_id: "d-older", serial: "OLDER-MAC", status: "active", token: "" };
+    renderView(fakeApi({ enrollments: vi.fn(async () => [pending, older]) }), <EnrollmentsView />);
+    await userEvent.click(await screen.findByText(pending.serial));
+    expect(screen.getByRole("complementary", { name: "Enrollment details" })).toHaveTextContent("Enrolled withtoken:1a2b3c4d");
+    await userEvent.click(screen.getByText("OLDER-MAC"));
+    expect(screen.getByRole("complementary", { name: "Enrollment details" })).toHaveTextContent("Enrolled withNot recorded");
+  });
+
+  it("finds every key one token enrolled", async () => {
+    const other: Enrollment = { ...pending, device_id: "d-other", serial: "OTHER-MAC", token: "token:99999999" };
+    renderView(fakeApi({ enrollments: vi.fn(async () => [pending, other]) }), <EnrollmentsView />);
+    await screen.findByText("OTHER-MAC");
+    await userEvent.type(screen.getByRole("searchbox"), "1a2b3c4d");
+    expect(screen.getByText(pending.serial)).toBeInTheDocument();
+    expect(screen.queryByText("OTHER-MAC")).toBeNull();
   });
 });
 
