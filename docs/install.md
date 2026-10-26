@@ -478,7 +478,9 @@ Two more settings go in `.env`; `0` turns one off:
   24 hours, in any status. It stops the enrolment token piling keys onto one serial.
 
 A Mac over a limit is refused with HTTP 429 and `Retry-After: 3600`, and the server logs
-`enrolment rate limited` with the tenant, the serial and which limit. Agent 0.8.0 and later
+`enrolment rate limited` with the tenant, the serial and which limit. The first refusal
+per tenant and limit window is a warning; subsequent refusals are debug logs. Restarting
+a server starts new warning windows. Agent 0.8.0 and later
 wait that hour before asking again (an agent that restarts asks once more straight away);
 earlier agents ask about once a minute. A Mac sending a key that is already enrolled is
 never refused. Run `docker compose up -d` to apply a change (on Azure, see
@@ -788,8 +790,13 @@ Edit the token in `.env` and run `docker compose up -d`.
 
 - **Console token:** everyone using it signs in again with the new one. With single
   sign-on, that's only break-glass use.
-- **Agent enrollment token:** enrolled Macs keep working, because they sign with their own
-  keys. Update the profile in your MDM so new Macs enroll with the new token.
+- **Agent enrolment token:** enrolled Macs keep working, because they sign with their own
+  keys. Update the profile in your MDM so new Macs enrol with the new token. If the old
+  token leaked, remove it from `ALTIWARD_AGENT_TOKENS` rather than leaving both tokens
+  accepted. Revoke any keys you don't recognise: changing the token does not revoke keys
+  it already enrolled or clear the enrolment limits. While those windows expire, enrol
+  expected Macs using the temporary limit increase described under
+  [Settings worth reviewing](#6-settings-worth-reviewing).
 
 ### Your own certificates or load balancer
 

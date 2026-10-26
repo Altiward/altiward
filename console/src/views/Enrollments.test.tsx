@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { JSX } from "react";
 import { MemoryRouter } from "react-router";
@@ -19,6 +19,28 @@ function renderView(api: ReturnType<typeof fakeApi>, view: JSX.Element) {
 }
 
 describe("Enrollments", () => {
+  it("loads and polls Fleet evidence only for a selected pending key", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const active: Enrollment = { ...pending, serial: "ACTIVE-MAC", device_id: "d-active", status: "active" };
+      const api = fakeApi({ enrollments: vi.fn(async () => [pending, active]), devices: vi.fn(async () => []) });
+      renderView(api, <EnrollmentsView />);
+      await screen.findByText("ACTIVE-MAC");
+      expect(api.devices).not.toHaveBeenCalled();
+      await userEvent.click(screen.getByText("ACTIVE-MAC"));
+      expect(api.devices).not.toHaveBeenCalled();
+      await userEvent.click(screen.getByText(pending.serial));
+      await waitFor(() => expect(api.devices).toHaveBeenCalledTimes(1));
+      await act(async () => { vi.advanceTimersByTime(30_000); });
+      expect(api.devices).toHaveBeenCalledTimes(2);
+      await userEvent.click(screen.getByRole("button", { name: "Close details" }));
+      await act(async () => { vi.advanceTimersByTime(30_000); });
+      expect(api.devices).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("approves a pending re-enrollment and shows its key fingerprint", async () => {
     const api = fakeApi({
       enrollments: vi.fn(async () => [pending]),
@@ -40,6 +62,7 @@ describe("Enrollments, telling new Macs from re-enrollments", () => {
     await userEvent.click(rows.find((r) => r.closest("tr")?.textContent?.includes("Waiting"))!);
     return screen.getByRole("complementary", { name: "Enrollment details" });
   };
+
 
   it("approves a new Mac however many are enrolled, with no mention of a limit", async () => {
     const others: Enrollment[] = Array.from({ length: 30 }, (_, i) => ({
@@ -118,6 +141,22 @@ describe("Enrollments, the evidence for a pending key", () => {
     await userEvent.click(rows.find((r) => r.closest("tr")?.textContent?.includes("Waiting"))!);
     return screen.getByRole("complementary", { name: "Enrollment details" });
   };
+
+  it("hides a previous check-in when a later Fleet refresh fails", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const devices = vi.fn().mockResolvedValueOnce([mac({ last_received_at: minutesAgo(4) })])
+        .mockRejectedValue(new Error("devices are down"));
+      renderView(fakeApi({ enrollments: vi.fn(async () => [pending, active]), devices }), <EnrollmentsView />);
+      const inspector = await openPending();
+      expect(await within(inspector).findByText(/last checked in 4 min ago/)).toBeInTheDocument();
+      await act(async () => { vi.advanceTimersByTime(30_000); });
+      await waitFor(() => expect(inspector).not.toHaveTextContent("last checked in"));
+      expect(within(inspector).getByRole("button", { name: "Approve" })).toBeEnabled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("says when the Mac last checked in with its current key", async () => {
     renderView(fakeApi({

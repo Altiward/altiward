@@ -1,5 +1,5 @@
 import { type JSX, useMemo, useState } from "react";
-import type { CredentialStatus, Device, Enrollment, KeyStorage } from "../api";
+import type { CredentialStatus, Enrollment, KeyStorage } from "../api";
 import { Banner, Details, Empty, Explain, Missing, RoleNote, SearchField, Segmented, Toolbar } from "../components/Chrome";
 import { Fingerprint } from "../components/Fingerprint";
 import { AttentionGlyph, ChipGlyph, CloseIcon, EndedGlyph, FileGlyph } from "../components/Icons";
@@ -29,9 +29,7 @@ function KeyKeptIn({ storage }: { storage: KeyStorage }) {
 export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
   const api = useApi();
   const { data, error, reload } = useLoad(() => api.enrollments(), [], 30_000);
-  // Evidence for the inspector only: if the devices don't load, it leaves that out and
-  // the rest of the view works as before.
-  const devices = useLoad(() => api.devices(), [], 30_000);
+  const [evidenceVersion, setEvidenceVersion] = useState(0);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
@@ -47,7 +45,7 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
 
   return (
     <>
-      <Toolbar title="Enrollments" subtitle={pending ? `${pending} waiting for approval` : undefined} onRefresh={() => { void reload(); void devices.reload(); }}>
+      <Toolbar title="Enrollments" subtitle={pending ? `${pending} waiting for approval` : undefined} onRefresh={() => { void reload(); setEvidenceVersion((v) => v + 1); }}>
         <Segmented label="Show" value={filter} onChange={setFilter} options={[
           { value: "all", title: "All" }, { value: "pending", title: "Waiting" },
           { value: "active", title: "Active" }, { value: "revoked", title: "Revoked" },
@@ -82,7 +80,7 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
           )}
         </div>
         {current && (
-          <EnrollmentInspector enrollment={current} onClose={() => setSelected(null)} devices={devices.data}
+          <EnrollmentInspector enrollment={current} onClose={() => setSelected(null)} evidenceVersion={evidenceVersion}
             active={(data ?? []).find((e) => e.serial === current.serial && e.device_id !== current.device_id && e.status === "active")}
             onDone={(text) => { setDone(text); void reload(); onChanged?.(); }} />
         )}
@@ -91,11 +89,9 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
   );
 }
 
-/** A Mac's credentials: a pending one for a Mac with no active one is a new Mac; a
- *  re-enrollment replaces the Mac's `active` key when approved. `devices` is null until
- *  the Fleet's list has loaded, or if it can't. */
-function EnrollmentInspector({ enrollment: e, active, devices, onClose, onDone }: {
-  enrollment: Enrollment; active: Enrollment | undefined; devices: Device[] | null; onClose: () => void;
+/** A pending key replaces the Mac's active key when approved, if it has one. */
+function EnrollmentInspector({ enrollment: e, active, evidenceVersion, onClose, onDone }: {
+  enrollment: Enrollment; active: Enrollment | undefined; evidenceVersion: number; onClose: () => void;
   onDone: (message: string) => void;
 }) {
   const api = useApi();
@@ -103,7 +99,6 @@ function EnrollmentInspector({ enrollment: e, active, devices, onClose, onDone }
   const replacesEnclaveKey = active?.key_storage === "secure_enclave";
   // A reinstall keeps the hardware UUID, so a different one is the first thing to read.
   const otherHardware = e.status === "pending" && active && e.hardware_uuid !== active.hardware_uuid ? active : undefined;
-  const device = devices?.find((d) => d.serial === e.serial);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -187,12 +182,8 @@ function EnrollmentInspector({ enrollment: e, active, devices, onClose, onDone }
           This Mac is waiting for approval. Approve it to start recording it.
         </p>
       )}
-      {e.status === "pending" && devices && (
-        <p className="secondary" style={{ marginTop: 12 }}>
-          {device
-            ? `This Mac last checked in ${relativeTime(lastCheckIn(device)).toLowerCase()}${newMac ? "" : " with its current key"}.`
-            : "This Mac hasn’t checked in yet."}
-        </p>
+      {e.status === "pending" && (
+        <PendingCheckIn key={e.device_id} serial={e.serial} newMac={newMac} refreshVersion={evidenceVersion} />
       )}
       {confirming && (
         <ConfirmSheet
@@ -204,5 +195,20 @@ function EnrollmentInspector({ enrollment: e, active, devices, onClose, onDone }
           onConfirm={() => act("revoke")} onCancel={() => setConfirming(false)} />
       )}
     </aside>
+  );
+}
+
+/** Fetch Fleet evidence only while a pending key is selected. */
+function PendingCheckIn({ serial, newMac, refreshVersion }: { serial: string; newMac: boolean; refreshVersion: number }) {
+  const api = useApi();
+  const { data, error } = useLoad(() => api.devices(), [serial, refreshVersion], 30_000);
+  if (!data || error) return null;
+  const device = data.find((d) => d.serial === serial);
+  return (
+    <p className="secondary" style={{ marginTop: 12 }}>
+      {device
+        ? `This Mac last checked in ${relativeTime(lastCheckIn(device)).toLowerCase()}${newMac ? "" : " with its current key"}.`
+        : "This Mac hasn’t checked in yet."}
+    </p>
   );
 }

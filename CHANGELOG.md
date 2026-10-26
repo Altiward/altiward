@@ -9,6 +9,52 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Agent 0.9.0 - unreleased
+
+### Upgrade order
+
+Upgrade the server to 0.9.0 first. Deploy this release's Privileges hook checksum with
+its package, as for every agent upgrade.
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+None.
+
+## Server 0.9.0 - unreleased
+
+### Upgrade order
+
+Upgrade the server before the agents. The new credential index is built on first start;
+large credential histories may take longer to migrate.
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+- CEF enrolment events include the token fingerprint as `suser` and the device credential
+  ID as `cs5` (`target`), so SIEM users can join them with approvals and revocations.
+  Sentinel's `UserName` also includes the enrolment token fingerprint.
+- A credential-history index supports enrolment limit counts and serial lookups.
+- Enrolment limit refusals log a warning once per tenant and limit window per server
+  instance; subsequent refusals log at debug level, to limit log noise during a storm.
+- Enrollments loads and polls Fleet evidence only while a pending key is selected, and
+  hides the last check-in if the latest refresh fails.
+- Token rotation guidance covers a leaked token exhausting the enrolment limits.
+
 ## Agent 0.8.0 - 2026-10-26
 
 ### Upgrade order
