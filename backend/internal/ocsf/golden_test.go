@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Altiward/altiward/backend/internal/event"
 	"github.com/Altiward/altiward/backend/internal/ocsf"
 	"github.com/Altiward/altiward/backend/internal/store"
 	"github.com/Altiward/altiward/backend/internal/testfixture"
@@ -31,11 +32,17 @@ func extraExamples(t *testing.T) map[string][]ocsf.Record {
 	unverified := stored(t, "elevation-granted")
 	unverified.Detail = maps.Clone(unverified.Detail)
 	unverified.Detail["observed_admin"], unverified.Detail["verified"] = false, false
+	replaced := stored(t, "agent-enrollment-pending")
+	replaced.Detail = maps.Clone(replaced.Detail)
+	replaced.EventID = event.RaisedID("acme/enrollment/replaced-example")
+	replaced.Detail["state"] = event.EnrollmentStateReplaced
+	replaced.Detail["hardware_uuid_matches"] = true
 	at := time.Date(2026, 10, 16, 10, 2, 0, 0, time.UTC)
 	entry := func(id, actor, action, target string, detail map[string]any) store.AuditEntry {
 		return store.AuditEntry{ID: id, TenantID: "acme", Actor: actor, At: at, Action: action, Target: target, Detail: detail}
 	}
 	return map[string][]ocsf.Record{
+		"agent-enrollment-replaced":             ocsf.Map(replaced, "acme"),
 		"elevation-granted-unverified":          ocsf.Map(unverified, "acme"),
 		"elevation-revoked-out-of-band-command": ocsf.Map(consoleRevokeOfOutOfBand(t), "acme"),
 		"account-created": ocsf.Map(withAccount(t,
