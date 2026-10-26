@@ -17,6 +17,8 @@
   <a href="https://github.com/Altiward/altiward/releases?q=server-v&expanded=true"><img src="https://img.shields.io/github/v/release/Altiward/altiward?filter=server-v*&label=" alt="Latest server release"></a>
   <a href="https://github.com/Altiward/altiward/releases?q=agent-v&expanded=true"><img src="https://img.shields.io/github/v/release/Altiward/altiward?filter=agent-v*&label=" alt="Latest agent release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-Apache--2.0-blue" alt="Licence: Apache 2.0"></a>
+  <a href="https://www.bestpractices.dev/projects/15960"><img src="https://www.bestpractices.dev/projects/15960/badge" alt="OpenSSF Best Practices: passing"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/Altiward/altiward"><img src="https://api.scorecard.dev/projects/github.com/Altiward/altiward/badge" alt="OpenSSF Scorecard"></a>
 </p>
 
 ![The Altiward console's Overview: who has admin rights now, rights past their expiry, and elevations per day](docs/images/console-overview.png)
