@@ -99,6 +99,10 @@ before, it also carries that key's device ID and storage and whether the two key
 from the same hardware UUID. It holds no public key. A Mac that sends its key again, as a
 retry, raises nothing new.
 
+For these enrolment events, CEF puts the token fingerprint in `suser` and the new key's
+device ID in `cs5` with label `target`. Sentinel also puts the token fingerprint in its
+`UserName` column. The full OCSF record carries the same fields as described above.
+
 In the example deployment, Caddy also asks Let's Encrypt for TLS certificates unless you
 provide your own. If you pull the image from the registry instead of loading the file,
 Docker connects to `ghcr.io`. With the Deploy to Azure template, Azure pulls the images
