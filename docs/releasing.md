@@ -12,9 +12,11 @@ signed. A tag is the only trigger: `server-vX.Y.Z` (or `server-vX.Y.Z-rc.N`) run
 
 ## Server release
 
-1. **Write the notes.** In `CHANGELOG.md`, fill in the `## Server X.Y.Z` section and
-   replace `unreleased` with today's date. Say under "Upgrade order" whether agents need
-   anything, and list any security fixes. The workflow refuses a version whose section
+1. **Write the notes.** Run `scripts/changelog.sh release server X.Y.Z`: it adds the
+   `## Server X.Y.Z` section to `CHANGELOG.md`, dated today, from the fragments in
+   `changelog.d/server/`, and deletes them. Read the section through, reorder its bullets
+   if that reads better, and check it says under "Upgrade order" whether agents need
+   anything and lists any security fixes. The workflow refuses a version whose section
    is missing, undated or lacks one of the four headings.
    In the same commit, run `scripts/azure-template.sh X.Y.Z`: it sets the Deploy to Azure
    template's version and points the buttons at the new tag. The workflow refuses a tag
@@ -66,8 +68,8 @@ access* give the `altiward` repository the Write role, so the workflow can publi
 For anyone who wants to test a release before it ships. Candidates get no fixes: the next
 candidate or the release replaces them.
 
-1. **Check the notes.** The candidate uses the coming release's `CHANGELOG.md` section,
-   which can still say `unreleased`; keep its four headings filled in. Run
+1. **Check the notes.** The candidate's notes are the fragments in `changelog.d/server/`,
+   as `scripts/changelog.sh show server X.Y.Z` prints them. Run
    `scripts/azure-template.sh X.Y.Z-rc.N` too: it moves only the template, so the deploy
    check below tries the candidate while the buttons stay on the last release.
 2. **Tag and push:** `git tag server-vX.Y.Z-rc.N && git push
@@ -93,8 +95,9 @@ releases are Server 1.0.0 and Agent 1.0.0.
 ## Agent release
 
 1. **Bump the version** in `agent/Sources/AltiwardCore/DeviceIdentity.swift`
-   (`AgentVersion.current`), and write the `## Agent X.Y.Z` section of `CHANGELOG.md`
-   with today's date.
+   (`AgentVersion.current`), and run `scripts/changelog.sh release agent X.Y.Z` to write
+   the `## Agent X.Y.Z` section of `CHANGELOG.md` from `changelog.d/agent/`, dated today.
+   Read it through as for the server.
 2. **New minor version only:** freeze the current event fixtures as
    `docs/schema/compat/agent-X.Y/` and prune to the newest two, then update
    `OldestSupportedAgent` (see `docs/schema/compat/README.md`).

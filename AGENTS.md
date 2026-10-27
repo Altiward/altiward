@@ -12,8 +12,8 @@ Start with README.md; the agent's trust model is in agent/README.md (Design note
 
 - `make test`: Swift, Go and console unit tests (run `make console-install` once first).
   `make test-db`: adds the Postgres store suite (Docker).
-- `make lint`: gofmt + go vet. CI runs both, `go test -race`, the console build,
-  `make notices-check`, `make package package-verify` and `scripts/test-upgrade.sh`
+- `make lint`: gofmt + go vet, and `make changelog-check`. CI runs them, `go test -race`,
+  the console build, `make notices-check`, `make package package-verify` and `scripts/test-upgrade.sh`
   (`make test-upgrade` locally: installs a release in Docker and upgrades it).
 - Admins set everything in `.env`: a new server setting gets a `${VAR:-}` line in
   `deploy/compose/compose.yaml` and an entry in `env.example`, so nobody edits
@@ -29,9 +29,15 @@ Start with README.md; the agent's trust model is in agent/README.md (Design note
   or `server-vX.Y.Z-rc.N` for a server release candidate. Semantic versions, a minor about
   quarterly: support and agent compatibility count the last two minors, which gives sites
   about six months on a version.
-  Both refuse a version without a dated section in `CHANGELOG.md`; add the user-facing
-  changes there as you make them. A server tag also needs `scripts/azure-template.sh`
-  run for its version. Steps: [docs/releasing.md](docs/releasing.md).
+  Both refuse a version without a dated section in `CHANGELOG.md`, which
+  `scripts/changelog.sh release` writes from `changelog.d/`. A server tag also needs
+  `scripts/azure-template.sh` run for its version. Steps: [docs/releasing.md](docs/releasing.md).
+- **Changelog: add a fragment, never edit `CHANGELOG.md`.** Each user-facing change gets
+  its own file, `changelog.d/<server|agent>/<name>.<upgrade-order|breaking|security|changes>.md`,
+  in the pull request that makes it ([changelog.d/README.md](changelog.d/README.md)).
+  Pull requests that all add a line to `CHANGELOG.md` conflict with each other; separate
+  files never do. Only a release PR writes `CHANGELOG.md`, and `make changelog-check`
+  fails on an undated section there.
 - `make notices`: regenerates `THIRD_PARTY_NOTICES.md`. Run it after adding, removing or
   upgrading a Go module or a console production dependency, and commit the result.
 - `make brand-sync` refreshes the console's exported SVGs; `make brand-check` checks them.
@@ -82,7 +88,7 @@ Start with README.md; the agent's trust model is in agent/README.md (Design note
   transaction, with `p.Actor`; the console hides what a role can't do, but the server is the check.
 - **`docs/data-handling.md` is a promise to users.** Update it in the same
   change whenever the agent collects, the server stores or keeps, or either one sends
-  something new, and add a line to `CHANGELOG.md`.
+  something new, and add a changelog fragment.
 - Session and device state come only from the pure reducers in `backend/internal/session`;
   both stores call them. Keep them order-independent.
 - Swift 6 strict concurrency is on. Prefer `Sendable` value types and actors over
