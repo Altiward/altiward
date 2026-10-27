@@ -73,8 +73,8 @@ You need:
 - **From [GitHub Releases](https://github.com/Altiward/altiward/releases):** a server
   release and an agent release. A server
   release is the bundle (`altiward-server-<version>.tar.gz`, holding the deployment files
-  in `deploy/compose/`, this guide, the SIEM guides and the Sentinel and Intune setup scripts in
-  `integrations/`, and the agent's example Mac profiles in `profiles/`), the server image
+  in `deploy/compose/`, this guide, the SIEM guides and the Sentinel and Intune setup scripts and the Intune
+  profile script in `integrations/`, and the agent's example Mac profiles in `profiles/`), the server image
   as a file for your platform (`altiward-api-<version>-linux-amd64.tar.gz` or `…-arm64`),
   `RELEASE_NOTES.md`, `SHA256SUMS` and its signature, `SHA256SUMS.sigstore.json`. An
   agent release is the signed package
@@ -252,6 +252,20 @@ Create these in your MDM and scope them to a pilot group first.
   keys to that profile instead.
 - The package: **Apps › All Apps › Create**, platform **macOS**, type **macOS app (PKG)**.
   That type takes packages that install outside `/Applications`, as Altiward's does.
+
+To create the profiles in one command instead, run `Push-AltiwardProfiles.ps1` from the
+server bundle's `integrations/intune/`. It signs in as you, creates the three profiles
+above (or updates them, when you run it again), and assigns them to a group:
+
+```powershell
+./Push-AltiwardProfiles.ps1 -AgentSettings ./com.altiward.agent.mobileconfig `
+    -PrivilegesSettings ./corp.sap.privileges.mobileconfig -Group 'Altiward pilot' -WhatIf
+```
+
+Run it with `-WhatIf` first, then without. It stops before it signs in if `ServerURL` or
+`EnrollmentToken` is still the example, and it never touches the package.
+[Its README](../deploy/intune/README.md) has the permissions it asks for, how to sign in
+with your own app registration, and what it changes.
 
 In any MDM, the SAP Privileges keys go into the profile that already configures
 Privileges. The ready-made `.mobileconfig` files keep their identifiers, so an edited copy

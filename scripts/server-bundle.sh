@@ -43,10 +43,12 @@ done
 # Sentinel's setup script, to upload to Cloud Shell.
 cp deploy/sentinel/setup.sh "$D/integrations/sentinel/setup.sh"
 chmod 755 "$D/integrations/sentinel/setup.sh"
-# The script that lets the server read Intune, to upload to Cloud Shell.
+# The script that lets the server read Intune, to upload to Cloud Shell, and the one that
+# uploads the profiles to Intune (it finds the login items profile in ../../profiles).
 mkdir -p "$D/integrations/intune"
 cp deploy/intune/setup.sh "$D/integrations/intune/setup.sh"
 chmod 755 "$D/integrations/intune/setup.sh"
+cp deploy/intune/Push-AltiwardProfiles.ps1 deploy/intune/AltiwardIntune.psm1 "$D/integrations/intune/"
 # The Altiward overview dashboard for Splunk.
 cp integrations/splunk/altiward_overview.xml "$D/integrations/splunk/"
 # The Altiward overview workbook, as a template to deploy and as JSON to paste.

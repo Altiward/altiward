@@ -28,3 +28,6 @@ signing.key
 *.p8
 *.mobileprovision
 *.provisionprofile
+
+# Pester (deploy/intune) writes this with -CI
+testResults.xml

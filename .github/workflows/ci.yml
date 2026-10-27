@@ -149,6 +149,10 @@ jobs:
             grep -E '^-rwxr-xr-x .*/integrations/intune/setup\.sh$'
           tar -tzf "$RUNNER_TEMP/bundle/altiward-server-0.0.0.tar.gz" |
             grep -E '/profiles/com\.altiward\.agent\.mobileconfig$'
+          tar -tzf "$RUNNER_TEMP/bundle/altiward-server-0.0.0.tar.gz" |
+            grep -E '/integrations/intune/Push-AltiwardProfiles\.ps1$'
+          tar -tzf "$RUNNER_TEMP/bundle/altiward-server-0.0.0.tar.gz" |
+            grep -E '/integrations/intune/AltiwardIntune\.psm1$'
       - name: A release installs and upgrades with upgrade.sh
         run: scripts/test-upgrade.sh altiward-api:ci
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -172,6 +176,13 @@ jobs:
           docker load -i "$RUNNER_TEMP/image.tar.gz"
           docker run --rm altiward-api:ci version
 
+  intune-script:
+    name: Intune profile script (Pester)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Pester tests, with a mocked Graph
+        run: pwsh -c 'Install-Module Pester -RequiredVersion 5.7.1 -Force -Scope CurrentUser; Invoke-Pester deploy/intune -CI'
   azure:
     name: Deploy to Azure template
     runs-on: ubuntu-latest
