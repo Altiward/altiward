@@ -1,7 +1,8 @@
 # Agent compatibility fixtures
 
 Admins upgrade the server first, then roll the agent out through MDM at their own pace.
-The server must accept events from agents up to two minor versions older than itself.
+The server must accept events from the two supported agent minor releases, including
+the newest release.
 
 Each directory holds the events one agent release sends, frozen when that release ships:
 `agent-0.1/` is what agent 0.1.x sends. The backend's tests post every file in every

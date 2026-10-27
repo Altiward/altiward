@@ -758,3 +758,27 @@ func TestEnrollmentWithoutATokenHasNoActor(t *testing.T) {
 		t.Fatalf("actor = %v", r["actor"])
 	}
 }
+
+func TestFirstPendingEnrollmentKeepsPreviousKeyUnknown(t *testing.T) {
+	e := stored(t, "agent-enrollment-pending")
+	e.Detail = maps.Clone(e.Detail)
+	for _, field := range []string{"previous_device_id", "previous_key_storage", "hardware_uuid_matches"} {
+		delete(e.Detail, field)
+	}
+	r := mapJSON(t, e)
+	if get(r, "unmapped.altiward.detail.state") != "pending" || r["severity"] != "Medium" || r["is_alert"] != true {
+		t.Fatalf("first pending enrolment lost its alert state: %v", r)
+	}
+	if get(r, "actor.user.name") != "token:1a2b3c4d" {
+		t.Fatalf("first pending enrolment lost its token attribution: %v", r)
+	}
+	detail, ok := get(r, "unmapped.altiward.detail").(map[string]any)
+	if !ok {
+		t.Fatalf("missing enrolment detail: %v", r)
+	}
+	for _, field := range []string{"previous_device_id", "previous_key_storage", "hardware_uuid_matches"} {
+		if _, exists := detail[field]; exists {
+			t.Errorf("first pending enrolment invented %s = %v", field, detail[field])
+		}
+	}
+}
