@@ -33,7 +33,7 @@ ownership checks over concurrent ingestion writes within one tenant.
 
 | Type | Field | Meaning |
 | --- | --- | --- |
-| `elevation.granted` | `trigger` | `hook` (Privileges), or `privileges_renewal`: a renewal in Privileges, which sends no hook claim, read from the line `PrivilegesAgent` logs and counted only when SAP's agent logged it (agent 0.5.0 and later). A renewal carries `renewed`, `observed_admin`, `verified`, `expires_basis` and `renewed_minutes`, and no `claimed_state` |
+| `elevation.granted` | `trigger` | `hook` (Privileges), or `privileges_renewal`: a renewal in Privileges, which sends no hook claim, read from the line `PrivilegesAgent` logs and counted only when SAP's agent logged it. A renewal carries `renewed`, `observed_admin`, `verified`, `expires_basis` and `renewed_minutes`, and no `claimed_state` |
 | | `claimed_state` | What the hook said (`admin`) |
 | | `observed_admin` | Real `admin` group membership when the daemon recorded it |
 | | `verified` | `claimed_state` agrees with `observed_admin` |
@@ -42,7 +42,7 @@ ownership checks over concurrent ingestion writes within one tenant.
 | | `expires_basis` | Where `elevation.expires` came from: `ExpirationInterval` or `ExpirationIntervalMax`; `PrivilegesTimer`, the duration the user picked in Privileges, read from Privileges' own timer and never later than `ExpirationIntervalMax`; `PrivilegesRenewal`, the renewal's time plus `renewed_minutes` |
 | | `renewed_minutes` | How long the renewal that `PrivilegesAgent` logged lasts (`trigger` `privileges_renewal` only) |
 | | `caller_uid` | UID of the process that called the daemon over XPC |
-| | `privileges_log` | Whether SAP Privileges' own log backed the claim: `confirmed`, `not_confirmed` (only `OutOfBandEnforcement` `alert`: the grant was accepted, and an `agent.tamper` `grant_claim` follows) or `unavailable` (the log can't be read on this Mac, so the claim was accepted as before). Absent from Agent 0.3.0 and earlier, on a give-back, and on a grant to an account in `PermanentAdmins` |
+| | `privileges_log` | Whether SAP Privileges' own log backed the claim: `confirmed`, `not_confirmed` (only `OutOfBandEnforcement` `alert`: the grant was accepted, and an `agent.tamper` `grant_claim` follows) or `unavailable` (the log can't be read on this Mac, so the claim was accepted as before). Absent on a give-back, and on a grant to an account in `PermanentAdmins` |
 | | `confirmed_at` | When the agent confirmed the claim against the log (`confirmed` only). The event's `timestamp` is still when the claim arrived |
 | | `evidence` | What confirmed it: `daemon` (a line from `PrivilegesDaemon`), `extension` (the system extension's record of the change) or both (`confirmed` only) |
 | `elevation.revoked` | `trigger` | `hook`, `heartbeat`, `command` (remote revoke) `permanent_admin` (an out-of-band session's user is now in `PermanentAdmins`: the session ends and the rights stay) or `privileges_grant` (a Privileges grant replaced the user's out-of-band session: the session ends, the rights stay, and the grant's session follows) |
@@ -101,7 +101,7 @@ ownership checks over concurrent ingestion writes within one tenant.
 | | `on_session_of` | Short name of the user whose session it was; `null` when unknown (`prompt`) |
 | | `right` | The authorisation right the prompt was for (`prompt` only) |
 | | `client` | Path of the app that asked, when the log names it; `null` otherwise (`prompt` only) |
-| | `run_as` | The target user (`sudo` only; Agent 0.3.0 doesn't send it) |
+| | `run_as` | The target user (`sudo` only; the agent doesn't send it yet) |
 | | `count`, `last` | How many uses were grouped into this event since the last heartbeat, and the newest one's time (`single` only) |
 | | `truncated` | On the last of a heartbeat's 20 `single` events, how many more groups were left out; absent otherwise |
 | `persistence.detected` | `findings` | What is new or changed since the last snapshot, in a stable order. Each has `kind` and `change` (`added` or `modified`), plus fields by kind, below |
@@ -143,7 +143,7 @@ passed (or at once if the log is lost), it is refused in every mode, reported wi
 `admin.permanent_use` records a use of an account in `PermanentAdmins`. Its `user` is that
 account; it has no `session_id` and no `elevation`, so it is never a session. A sign-in sends
 `started` and later `ended`, paired by `use_id`. A prompt and a screen sharing
-connection send `single`: one event per grouped use, with `count` and `last`. Agent 0.3.0
+connection send `single`: one event per grouped use, with `count` and `last`. The agent
 sends `console`, `terminal` and `ssh` sign-ins, `prompt` and `screen_sharing`. It doesn't send
 `sudo`, `su` or an SSH use seen only in the log: macOS keeps no log line for them, so they
 wait for Apple's Endpoint Security entitlement. The server accepts them.

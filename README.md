@@ -79,14 +79,13 @@ untrusted: the agent, running as root, verifies everything it says against the `
 group and takes its own timestamps. Each Mac enrolls with its own key and signs what it
 sends, so nothing can send as an enrolled Mac without its key. A new key for a Mac that is
 already enrolled waits for your approval by default, while its current key keeps reporting.
-**Approve Macs that enrol again** is also enabled once when upgrading from earlier server
-releases. Turning it off lets anyone with the enrolment token replace an enrolled Mac's
-identity by naming its serial and hardware UUID, neither of which is a secret. The shared
-token cannot establish that a serial enrolling for the first time belongs to the caller:
-check new enrolments against your device inventory. The agent replaces its own key from
-time to time, so a key copied from a Mac's backup goes stale: if both the Mac and the copy
-use one, the server revokes the key and raises an alert, and the Mac enrols again
-([a rotated key was used](docs/install.md#a-rotated-key-was-used)).
+Turning **Approve Macs that enrol again** off lets anyone with the enrolment token replace
+an enrolled Mac's identity by naming its serial and hardware UUID, neither of which is a
+secret. The shared token cannot establish that a serial enrolling for the first time
+belongs to the caller: check new enrolments against your device inventory. The agent
+replaces its own key from time to time, so a key copied from a Mac's backup goes stale: if
+both the Mac and the copy use one, the server revokes the key and raises an alert, and the
+Mac enrols again ([a rotated key was used](docs/install.md#a-rotated-key-was-used)).
 See [settings](docs/install.md#6-settings-worth-reviewing) and the agent's
 [design notes](agent/README.md#design-notes).
 
