@@ -36,7 +36,8 @@ const enrollRetryAfter = "3600"
 const enrollEventTimeout = 10 * time.Second
 
 // staleKeyContestTimeout bounds the contest a stale key's use starts, with the event it may
-// raise, which doesn't stop when the request does.
+// raise, which doesn't stop when the request does. A rotate request gets it too, since a
+// stale key's rotate request is a contest.
 const staleKeyContestTimeout = 10 * time.Second
 
 // requireDevice authenticates a request signed by an enrolled Mac and hands the

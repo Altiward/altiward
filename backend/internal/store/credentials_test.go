@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1401,7 +1402,9 @@ func contestAlertSuite(t *testing.T, newStore func(t *testing.T, sink string) St
 }
 
 // TestPostgresContestUndoneWhenItsAlertFails checks that a contest whose alert can't be
-// stored changes nothing, so the stale key's next use contests, revokes and reports.
+// stored changes nothing, so the stale key's next use contests, revokes and reports. Past
+// ContestWindow a contest revokes nothing and reports only because its marker moved, which
+// shows that the marker was rolled back too.
 func TestPostgresContestUndoneWhenItsAlertFails(t *testing.T) {
 	p := openTestPostgres(t)
 	ctx := context.Background()
@@ -1416,8 +1419,16 @@ func TestPostgresContestUndoneWhenItsAlertFails(t *testing.T) {
 			return e
 		}
 	}
-	for _, path := range []string{"use", "rotation"} {
-		t.Run(path, func(t *testing.T) {
+	for _, tc := range []struct {
+		path    string
+		after   time.Duration
+		revokes bool
+	}{
+		{"use", 2 * time.Minute, true}, {"rotation", 2 * time.Minute, true},
+		{"use past the window", ContestWindow + time.Hour, false}, {"rotation past the window", ContestWindow + time.Hour, false},
+	} {
+		path := strings.Fields(tc.path)[0]
+		t.Run(tc.path, func(t *testing.T) {
 			old := enrolFirst(t, p, "tenant-"+randomHex(t), "C02"+randomHex(t), "HW", t0)
 			res, err := p.Rotate(ctx, rotateRequest(t, old.TenantID, old.DeviceID, newKey(t), rotation))
 			if err != nil {
@@ -1437,7 +1448,7 @@ func TestPostgresContestUndoneWhenItsAlertFails(t *testing.T) {
 				return res.Contest, err
 			}
 
-			at := rotation.Add(2 * time.Minute)
+			at := rotation.Add(tc.after)
 			if c, err := contest(at, failing(at)); err == nil || errors.Is(err, ErrRotatedElsewhere) {
 				t.Fatalf("contest with a failing alert = %+v, %v; want an error", c, err)
 			}
@@ -1447,8 +1458,11 @@ func TestPostgresContestUndoneWhenItsAlertFails(t *testing.T) {
 			// Nothing marked the use as reported: the next one, the same day, does it all.
 			at = at.Add(time.Minute)
 			c, err := contest(at, alertAt(at))
-			if err != nil || c == nil || !c.Report || c.Revoked == nil || c.Revoked.DeviceID != next.DeviceID {
+			if err != nil || c == nil || !c.Report || (c.Revoked != nil) != tc.revokes {
 				t.Fatalf("the next use = %+v, %v", c, err)
+			}
+			if tc.revokes && c.Revoked.DeviceID != next.DeviceID {
+				t.Fatalf("the next use revoked %s, want %s", c.Revoked.DeviceID, next.DeviceID)
 			}
 		})
 	}

@@ -4,6 +4,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -72,7 +73,12 @@ func (s *Server) rotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := s.now()
-	res, err := s.store.Rotate(r.Context(), store.RotateRequest{
+	// As in staleKeyUsed: a client that gives up mustn't stop a contest or its alert, but a
+	// database that doesn't answer mustn't hold the handler. A rotation it lets finish is
+	// answered to the agent's retry.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), staleKeyContestTimeout)
+	defer cancel()
+	res, err := s.store.Rotate(ctx, store.RotateRequest{
 		TenantID: cred.TenantID, FromDeviceID: cred.DeviceID, DeviceID: id, PublicKey: spki,
 		KeyStorage: store.ParseKeyStorage(req.KeyStorage), SignedAt: time.Unix(sr.Timestamp, 0), Now: now,
 		Alert: staleKeyAlert(r, now),
