@@ -70,3 +70,37 @@ func TestParseSignedRequestHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestRotationStatementMatchesContract(t *testing.T) {
+	v := testfixture.Rotation(t)
+	if got := auth.RotationStatement(v.DeviceID, v.NewPublicKey); got != v.Statement {
+		t.Fatalf("statement =\n%s\nwant\n%s", got, v.Statement)
+	}
+}
+
+func TestVerifiesContractRotationProof(t *testing.T) {
+	v := testfixture.Rotation(t)
+	if err := auth.VerifyRotationProof(v.DeviceID, v.NewPublicKey, v.Proof); err != nil {
+		t.Fatalf("contract proof rejected: %v", err)
+	}
+	otherID := "4" + v.DeviceID[1:]
+	if otherID == v.DeviceID {
+		otherID = "5" + v.DeviceID[1:]
+	}
+	if err := auth.VerifyRotationProof(otherID, v.NewPublicKey, v.Proof); err == nil {
+		t.Fatal("accepted a proof for another device_id")
+	}
+	flipped := append([]byte(nil), v.NewPublicKey...)
+	flipped[len(flipped)-1] ^= 1
+	if err := auth.VerifyRotationProof(v.DeviceID, flipped, v.Proof); err == nil {
+		t.Fatal("accepted a proof for a changed key")
+	}
+	// A request signature must not stand in for a rotation proof.
+	sig := testfixture.Signature(t)
+	if err := auth.VerifyRotationProof(v.DeviceID, v.NewPublicKey, sig.Signature); err == nil {
+		t.Fatal("accepted a request signature as a proof")
+	}
+	if err := auth.VerifyRotationProof(v.DeviceID, []byte("not a key"), v.Proof); err == nil {
+		t.Fatal("accepted a proof for an unparseable key")
+	}
+}

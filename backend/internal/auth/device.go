@@ -24,6 +24,7 @@ const (
 	MaxClockSkew = 5 * time.Minute
 
 	signatureVersion = "ALTIWARD-SIG-V1"
+	rotationVersion  = "ALTIWARD-ROTATE-V1"
 )
 
 // SignedRequest is what a signed request's headers claim; Verify proves it.
@@ -79,4 +80,23 @@ func Verify(key *ecdsa.PublicKey, canonical string, signature []byte) error {
 		return errors.New("signature does not verify")
 	}
 	return nil
+}
+
+// RotationStatement is the text a new device key signs to prove it is held by the Mac
+// that is rotating: version, the device_id it succeeds and the lowercase hex SHA-256 of
+// its own SubjectPublicKeyInfo DER, one per line, with no trailing newline. Its first
+// line keeps it apart from CanonicalString, so neither can stand in for the other.
+func RotationStatement(deviceID string, newPublicKey []byte) string {
+	digest := sha256.Sum256(newPublicKey)
+	return strings.Join([]string{rotationVersion, deviceID, hex.EncodeToString(digest[:])}, "\n")
+}
+
+// VerifyRotationProof checks that proof, an ASN.1 DER ECDSA signature, was made by the
+// P-256 key newPublicKey (SubjectPublicKeyInfo DER) over RotationStatement for deviceID.
+func VerifyRotationProof(deviceID string, newPublicKey, proof []byte) error {
+	key, err := ParsePublicKey(newPublicKey)
+	if err != nil {
+		return err
+	}
+	return Verify(key, RotationStatement(deviceID, newPublicKey), proof)
 }

@@ -246,6 +246,19 @@ struct SignatureVector: Decodable {
     }
 }
 
+struct RotationVector: Decodable {
+    let deviceID, newPublicKey, statement, proof: String
+
+    enum CodingKeys: String, CodingKey {
+        case deviceID = "device_id", newPublicKey = "new_public_key", statement, proof
+    }
+
+    static func load() throws -> RotationVector {
+        try JSONDecoder().decode(
+            RotationVector.self, from: Data(contentsOf: repoFile("docs/schema/rotation-vector.json")))
+    }
+}
+
 struct RequestSigningTests {
     @Test func canonicalStringMatchesContract() throws {
         let v = try SignatureVector.load()
@@ -260,6 +273,21 @@ struct RequestSigningTests {
         let sig = try P256.Signing.ECDSASignature(derRepresentation: Data(base64Encoded: v.signature)!)
         #expect(key.isValidSignature(sig, for: Data(v.canonical.utf8)))
         #expect(!key.isValidSignature(sig, for: Data(v.canonical.replacingOccurrences(of: "POST", with: "GET").utf8)))
+    }
+
+    @Test func rotationStatementMatchesContract() throws {
+        let v = try RotationVector.load()
+        let got = RotationProof.statement(deviceID: v.deviceID, newPublicKey: Data(base64Encoded: v.newPublicKey)!)
+        #expect(got == v.statement)
+    }
+
+    @Test func verifiesBackendRotationProofFromContract() throws {
+        let v = try RotationVector.load()
+        let key = try P256.Signing.PublicKey(derRepresentation: Data(base64Encoded: v.newPublicKey)!)
+        let proof = try P256.Signing.ECDSASignature(derRepresentation: Data(base64Encoded: v.proof)!)
+        #expect(key.isValidSignature(proof, for: Data(v.statement.utf8)))
+        let other = RotationProof.statement(deviceID: "00000000-0000-4000-8000-000000000000", newPublicKey: key.derRepresentation)
+        #expect(!key.isValidSignature(proof, for: Data(other.utf8)))
     }
 }
 

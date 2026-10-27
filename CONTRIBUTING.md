@@ -64,8 +64,9 @@ Some things are contracts with people who already run Altiward. Please keep to t
   `agent/.../Event.swift` and `backend/internal/event/event.go` together. Both test suites
   decode the fixtures, and the Go decoder rejects unknown fields. The server must keep
   accepting the frozen events of the last two agent releases in `docs/schema/compat/`
-  (see its README). The command wire format (`docs/schema/commands/`) and the signing
-  vector (`docs/schema/signature-vector.json`) are contracts in the same way.
+  (see its README). The command wire format (`docs/schema/commands/`) and the signing and
+  rotation vectors (`docs/schema/signature-vector.json`, `docs/schema/rotation-vector.json`)
+  are contracts in the same way.
 - **Migrations are forever.** Sites upgrade from whatever release they run, so never edit
   or reorder a shipped migration: add a new one. Stored session and device state must still
   decode after a change, so new fields need a zero value that means "unknown".

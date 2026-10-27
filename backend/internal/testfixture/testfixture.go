@@ -96,3 +96,26 @@ func Signature(t testing.TB) SignatureVector {
 	}
 	return v
 }
+
+// RotationVector is docs/schema/rotation-vector.json, the key-rotation proof contract.
+type RotationVector struct {
+	DeviceID     string `json:"device_id"`
+	NewPublicKey []byte `json:"new_public_key"`
+	Statement    string `json:"statement"`
+	Proof        []byte `json:"proof"`
+}
+
+// Rotation loads the shared key-rotation proof vector.
+func Rotation(t testing.TB) RotationVector {
+	t.Helper()
+	_, file, _, _ := runtime.Caller(0)
+	b, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "..", "docs", "schema", "rotation-vector.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v RotationVector
+	if err := json.Unmarshal(b, &v); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}

@@ -45,6 +45,18 @@ public enum RequestSigning {
 }
 
 /// Where this Mac's device key is kept. The agent reports it when it enrolls.
+/// The key-rotation proof contract shared with the backend
+/// (docs/schema/rotation-vector.json).
+public enum RotationProof {
+    /// The text a new device key signs to prove possession: version, the device_id it succeeds
+    /// and the lowercase hex SHA-256 of its own SubjectPublicKeyInfo DER, one per line, with no
+    /// trailing newline. Its first line keeps it apart from a request signature.
+    public static func statement(deviceID: String, newPublicKey: Data) -> String {
+        let digest = SHA256.hash(data: newPublicKey).map { String(format: "%02x", $0) }.joined()
+        return ["ALTIWARD-ROTATE-V1", deviceID, digest].joined(separator: "\n")
+    }
+}
+
 public enum KeyStorage: String, Sendable {
     /// In the Secure Enclave: the agent stores an opaque handle that only this Mac's
     /// Secure Enclave can use, so a copy is no use anywhere else.

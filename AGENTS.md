@@ -59,8 +59,9 @@ Start with README.md; the agent's trust model is in agent/README.md (Design note
   frozen events of the last two agent releases in `docs/schema/compat/`, because sites
   upgrade the server first and roll the agent out through MDM later (see its
   README for when to add and prune them, and `OldestSupportedAgent` to match). The command wire format
-  (`docs/schema/commands/`) and the signing vector (`docs/schema/signature-vector.json`)
-  are contracts in the same way.
+  (`docs/schema/commands/`) and the signing and rotation vectors
+  (`docs/schema/signature-vector.json`, `docs/schema/rotation-vector.json`) are contracts in
+  the same way.
 - **The hook is untrusted.** Privileges runs it as the logged-in user, who can run the
   same binary by hand with any arguments, so a hook call is a claim. Never let a
   hook-supplied value become a fact without daemon-side verification; timestamps come

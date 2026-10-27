@@ -12,6 +12,7 @@ done <<'TARGETS'
 ./backend/internal/auth FuzzSignedRequestHeaders
 ./backend/internal/auth FuzzPublicKey
 ./backend/internal/auth FuzzRequestSignature
+./backend/internal/auth FuzzRotationProof
 ./backend/internal/command FuzzDecodeCommandResult
 ./backend/internal/api FuzzEnrollmentRequest
 TARGETS

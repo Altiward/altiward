@@ -1,0 +1,7 @@
+{
+  "description": "Key-rotation proof contract. Both test suites rebuild 'statement' from 'device_id' and 'new_public_key' and verify 'proof' with 'new_public_key'. The private key was discarded.",
+  "device_id": "abd560bb-207a-4aad-bb60-358554ebb297",
+  "new_public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+yeyHoLpnnj8GXHQm7Zsd+u3BUCtQ4Hop5T30uUdpdeojUBM8KeZxIvaLMJVszY+lIb7pg7CRKA+0nka/EnW6g==",
+  "statement": "ALTIWARD-ROTATE-V1\nabd560bb-207a-4aad-bb60-358554ebb297\n9c847c5ddcdd342dbb25a76a53e0effe4ccb91173cb2f9dd39261db92644fda2",
+  "proof": "MEQCIBv3SU+KHJz8/TYoQtSb1SVaHMtRTwtfUimGOEv4PiOaAiBPLneuT8Htk9Sx1CoxarXjCPiZyXqx6T6iwYmQsa6CNQ=="
+}

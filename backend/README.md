@@ -23,9 +23,10 @@ when a Mac enrols a key. Agents can't send either: the API refuses both types.
 ## Fuzzing
 
 `scripts/test-fuzz.sh` runs native Go fuzz campaigns for event decoding and validation,
-signed-request headers, P-256 public keys and signatures, command results and the actual
-enrolment HTTP handler. Seeds include the shared signing vector, command result, current
-event examples and frozen supported-agent events. Ordinary `go test` also runs these seeds.
+signed-request headers, P-256 public keys, request signatures, rotation proofs, command
+results and the actual enrolment HTTP handler. Seeds include the shared signing and
+rotation vectors, command result, current event examples and frozen supported-agent events.
+Ordinary `go test` also runs these seeds.
 
 Each campaign runs for five seconds with two workers in CI, one target at a time. For a
 longer local run, use `FUZZ_TIME=60s FUZZ_PARALLEL=2 scripts/test-fuzz.sh`. Individual inputs
@@ -56,6 +57,11 @@ sign every request with their device key: `Authorization: AltiwardDevice <device
 `X-Altiward-Signature`, an ECDSA P-256 signature over `ALTIWARD-SIG-V1`, the method, the
 path and query, the timestamp and the body's SHA-256, one per line
 ([signature-vector.json](../docs/schema/signature-vector.json) is a worked example).
+A rotation (`POST /v1/agent/rotate`) also carries a proof that the new key is held: an
+ECDSA P-256 signature by the new key over `ALTIWARD-ROTATE-V1`, the current `device_id` and
+the lowercase hex SHA-256 of the new key's SubjectPublicKeyInfo DER, one per line, with no
+trailing newline
+([rotation-vector.json](../docs/schema/rotation-vector.json) is a worked example).
 Console endpoints take a console token, or the session cookie single sign-on sets.
 Every query is scoped to the caller's tenant.
 
