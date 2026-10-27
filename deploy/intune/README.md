@@ -67,7 +67,7 @@ What it does, in order:
 2. Signs you in (a browser window) for `DeviceManagementConfiguration.ReadWrite.All` and
    `Group.Read.All`.
 3. Looks up the group and each profile by display name: `Altiward: agent settings`,
-   `Altiward: login items` and `Altiward: settings for SAP Privileges`. It stops, having
+   `Altiward: login items` and `Altiward: SAP Privileges settings`. It stops, having
    changed nothing, if no group or several have that name, or if two profiles do.
 4. Creates each profile as a **macOS Custom profile** on the device channel, carrying the
    file exactly as it is, or updates the profile of that name. Run it again after editing a

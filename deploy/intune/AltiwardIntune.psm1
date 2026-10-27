@@ -8,7 +8,7 @@ $script:GraphRoot = 'https://graph.microsoft.com/beta'
 # it, so changing a name makes the next upload create a second profile.
 $script:AgentProfileName = 'Altiward: agent settings'
 $script:LoginItemsProfileName = 'Altiward: login items'
-$script:PrivilegesProfileName = 'Altiward: settings for SAP Privileges'
+$script:PrivilegesProfileName = 'Altiward: SAP Privileges settings'
 
 # The example values in com.altiward.agent.mobileconfig that must be replaced.
 $script:ExampleServerURL = 'https://api.altiward.example'
@@ -127,7 +127,13 @@ function Get-AltiwardProfilePlan {
     function Read-Profile($path, $displayName, $what) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Can't find the $what file: $path" }
         $bytes = [IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $path).Path)
-        try { $xml = [xml][Text.Encoding]::UTF8.GetString($bytes) }
+        # Load from the bytes, not a string: a byte order mark (Notepad and Windows PowerShell 5.1
+        # add one) is then read as one, and the bytes sent to Intune stay as they are.
+        try {
+            $xml = [xml]::new()
+            $stream = [IO.MemoryStream]::new($bytes)
+            try { $xml.Load($stream) } finally { $stream.Dispose() }
+        }
         catch { throw "The $what file isn't a profile (it isn't valid XML): $path" }
         [pscustomobject]@{ DisplayName = $displayName; FileName = Split-Path -Leaf $path; Bytes = $bytes; Xml = $xml }
     }

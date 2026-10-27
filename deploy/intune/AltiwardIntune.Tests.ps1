@@ -237,11 +237,11 @@ Describe 'Publish-AltiwardProfiles' {
     It 'sends the Privileges profile only with -PrivilegesSettings' {
         script:Use-FakeGraph @{ Groups = @(@{ id = 'pilot'; displayName = 'Pilot Macs' }); Configurations = @(); Assignments = @{} }
         $without = Get-AltiwardProfilePlan -AgentSettings $script:f.Agent -LoginItems $script:f.LoginItems
-        $without.DisplayName | Should -Not -Contain 'Altiward: settings for SAP Privileges'
+        $without.DisplayName | Should -Not -Contain 'Altiward: SAP Privileges settings'
         $with = Get-AltiwardProfilePlan -AgentSettings $script:f.Agent -LoginItems $script:f.LoginItems -PrivilegesSettings $script:f.Privileges
-        $with.DisplayName | Should -Contain 'Altiward: settings for SAP Privileges'
+        $with.DisplayName | Should -Contain 'Altiward: SAP Privileges settings'
         Publish-AltiwardProfiles -Profiles $with -Group 'Pilot Macs'
-        @((script:Get-Writes) | Where-Object { $_.Body.displayName -eq 'Altiward: settings for SAP Privileges' }).Count | Should -Be 1
+        @((script:Get-Writes) | Where-Object { $_.Body.displayName -eq 'Altiward: SAP Privileges settings' }).Count | Should -Be 1
     }
 
     It 'refuses an ambiguous group before writing anything' {
@@ -287,6 +287,21 @@ Describe 'Get-AltiwardProfilePlan' {
         Copy-Item (Join-Path $script:MdmDir 'corp.sap.privileges.mobileconfig') $raw
         { Get-AltiwardProfilePlan -AgentSettings $script:f.Agent -LoginItems $script:f.LoginItems -PrivilegesSettings $raw } |
             Should -Throw '*use the file from the agent release*'
+    }
+
+    It 'accepts a profile saved with a UTF-8 byte order mark, and keeps its bytes' {
+        $bom = Join-Path $TestDrive 'bom.mobileconfig'
+        $bytes = [byte[]](0xEF, 0xBB, 0xBF) + [IO.File]::ReadAllBytes($script:f.Agent)
+        [IO.File]::WriteAllBytes($bom, $bytes)
+        $plan = Get-AltiwardProfilePlan -AgentSettings $bom -LoginItems $script:f.LoginItems
+        $agent = @($plan | Where-Object DisplayName -eq 'Altiward: agent settings')[0]
+        [Convert]::ToBase64String($agent.Bytes) | Should -Be ([Convert]::ToBase64String($bytes))
+    }
+
+    It 'says a file that is not XML is not a profile' {
+        $bad = Join-Path $TestDrive 'bad.mobileconfig'
+        [IO.File]::WriteAllText($bad, 'not xml')
+        { Get-AltiwardProfilePlan -AgentSettings $bad -LoginItems $script:f.LoginItems } | Should -Throw "*isn't a profile*"
     }
 
     It 'says which file is missing' {

@@ -28,7 +28,7 @@
     <key>PayloadUUID</key>
     <string>14AFC333-F2D0-46FF-8571-F30263ACCA5E</string>
     <key>PayloadDisplayName</key>
-    <string>Altiward settings for SAP Privileges</string>
+    <string>Altiward: SAP Privileges settings</string>
     <key>PayloadScope</key>
     <string>System</string>
     <key>PayloadContent</key>
