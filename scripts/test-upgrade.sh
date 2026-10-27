@@ -1,7 +1,9 @@
 #!/bin/bash
 # End-to-end test of deploy/compose/upgrade.sh, in Docker: installs a release the way
 # docs/install.md does, then upgrades it as an admin would, including a file they
-# changed, a release candidate, a refused downgrade and a corrupted download. Caddy is
+# changed, a release candidate, a refused downgrade and a corrupted download. Releases
+# given by version are downloaded from a local file server standing in for GitHub,
+# including one with a file missing and one that doesn't match its checksums. Caddy is
 # left out.
 #
 #   scripts/test-upgrade.sh <image>     e.g. altiward-api:ci, as `make image` builds it
@@ -13,10 +15,13 @@ REPO=ghcr.io/altiward/altiward-api # compose.yaml's default image name
 export COMPOSE_PROJECT_NAME=altiward-upgrade-test
 T="$(mktemp -d)"
 SITE="$T/site"
+WWW="$T/www" # served as GitHub serves releases: server-v<version>/<file>
+http_pid=""
 case "$(uname -m)" in x86_64|amd64) arch=amd64 ;; *) arch=arm64 ;; esac
 if command -v sha256sum >/dev/null; then sha=(sha256sum); else sha=(shasum -a 256); fi
 
 cleanup() {
+  [ -z "$http_pid" ] || kill "$http_pid" 2>/dev/null || true
   if [ -d "$SITE" ]; then (cd "$SITE" && docker compose down -v --timeout 5 >/dev/null 2>&1) || true; fi
   for v in 0.0.1 0.0.2 0.0.3-rc.1 0.0.3; do docker rmi "$REPO:$v" >/dev/null 2>&1 || true; done
   rm -rf "$T"
@@ -26,8 +31,8 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 ok() { echo "ok - $*"; }
 
 # release VERSION [COMPOSE_LINE] [SCRIPT_LINE]: writes the files of a server release to
-# $T/rel-VERSION, appending a comment to the bundle's compose.yaml and upgrade.sh when
-# given, as a later release would change them.
+# $T/rel-VERSION and publishes them on the file server, appending a comment to the
+# bundle's compose.yaml and upgrade.sh when given, as a later release would change them.
 release() {
   local v="$1" out="$T/rel-$1"
   mkdir -p "$out"
@@ -47,6 +52,9 @@ release() {
     COPYFILE_DISABLE=1 tar --no-xattrs -C "$x" -czf "$out/altiward-server-$v.tar.gz" "altiward-server-$v"
   fi
   (cd "$out" && "${sha[@]}" ./*.tar.gz RELEASE_NOTES.md | sed 's| \./| |' >SHA256SUMS)
+  # Unsigned: the tests run with --skip-signature, but a download needs the file.
+  echo '{}' >"$out/SHA256SUMS.sigstore.json"
+  ln -sfn "$out" "$WWW/server-v$v"
 }
 
 env_version() { sed -n 's/^ALTIWARD_VERSION=//p' "$SITE/.env"; }
@@ -61,6 +69,18 @@ for pair in "0.3.0-rc.1 0.3.0" "0.3.0-rc.1 0.3.0-rc.2" "0.3.0-rc.2 0.3.0-rc.10" 
 done
 [ "$(deploy/compose/upgrade.sh --compare 1.0.0 1.0.0)" = 0 ] || fail "1.0.0 should equal itself"
 ok "versions sort as semantic versioning does, release candidates before their release"
+
+mkdir -p "$WWW"
+python3 -u -m http.server 0 --bind 127.0.0.1 --directory "$WWW" >"$T/http.log" 2>&1 &
+http_pid=$!
+port=""
+for _ in $(seq 1 50); do
+  port="$(sed -n 's/^Serving HTTP on .* port \([0-9][0-9]*\) .*/\1/p' "$T/http.log")"
+  [ -n "$port" ] && break
+  sleep 0.2
+done
+[ -n "$port" ] || { cat "$T/http.log"; fail "the local file server didn't start"; }
+export ALTIWARD_RELEASES_URL="http://127.0.0.1:$port"
 
 echo "Making releases 0.0.1, 0.0.2, 0.0.3-rc.1 and 0.0.3"
 release 0.0.1
@@ -101,9 +121,14 @@ ok "upgraded to 0.0.2: files replaced, the changed Caddyfile kept, the database 
 
 upgrade "$T/rel-0.0.2" >"$T/out" 2>&1 || fail "rerunning the same release failed"
 grep -q "Already running 0.0.2" "$T/out" || fail "rerunning the same release didn't say so"
+upgrade 0.0.2 >"$T/out" 2>&1 || fail "rerunning the same version failed"
+grep -q "Already running 0.0.2" "$T/out" || fail "rerunning the same version didn't say so"
 if upgrade "$T/rel-0.0.1" >"$T/out" 2>&1; then fail "a downgrade went ahead"; fi
 grep -q "Going back isn't supported" "$T/out" || { cat "$T/out"; fail "the downgrade wasn't refused for the right reason"; }
-ok "the same release is a no-op, and a downgrade is refused"
+if upgrade 0.0.1 >"$T/out" 2>&1; then fail "a downgrade by version went ahead"; fi
+grep -q "Going back isn't supported" "$T/out" || { cat "$T/out"; fail "the downgrade by version wasn't refused for the right reason"; }
+[ ! -e "$SITE/releases" ] || fail "downloaded a release it doesn't need"
+ok "the same release is a no-op, and a downgrade is refused, without downloading either"
 
 cp -R "$T/rel-0.0.3" "$T/rel-bad"
 echo "tampered" >>"$T/rel-bad/RELEASE_NOTES.md"
@@ -116,25 +141,44 @@ fi
 [ "$(env_version)" = 0.0.2 ] || fail "a refused upgrade changed .env"
 ok "a corrupted release, and one whose signature can't be checked, are refused"
 
-upgrade "$T/rel-0.0.3-rc.1" >"$T/out" 2>&1 || { cat "$T/out"; fail "upgrade to 0.0.3-rc.1 failed"; }
+# 0.0.4 is published without its image, so the download stops partway.
+mkdir "$WWW/server-v0.0.4"
+cp "$T/rel-0.0.3/RELEASE_NOTES.md" "$WWW/server-v0.0.4/"
+echo "not a bundle" >"$WWW/server-v0.0.4/altiward-server-0.0.4.tar.gz"
+if upgrade 0.0.4 >"$T/out" 2>&1; then fail "a release missing a file was installed"; fi
+grep -q "couldn't download altiward-api-0.0.4-linux-$arch.tar.gz" "$T/out" || { cat "$T/out"; fail "didn't name the missing file"; }
+[ ! -e "$SITE/releases/0.0.4" ] || fail "left a partial download behind"
+# A download that doesn't match its checksums, as if changed on the way.
+ln -sfn "$T/rel-bad" "$WWW/server-v0.0.3"
+if upgrade 0.0.3 >"$T/out" 2>&1; then fail "a corrupted download was installed"; fi
+grep -q "RELEASE_NOTES.md doesn't match SHA256SUMS" "$T/out" || { cat "$T/out"; fail "the corrupted download wasn't reported"; }
+ln -sfn "$T/rel-0.0.3" "$WWW/server-v0.0.3"
+[ "$(env_version)" = 0.0.2 ] || fail "a failed download changed .env"
+ok "a download with a file missing, and one that doesn't match its checksums, are refused"
+
+upgrade 0.0.3-rc.1 >"$T/out" 2>&1 || { cat "$T/out"; fail "upgrade to 0.0.3-rc.1 by version failed"; }
 [ "$(env_version)" = 0.0.3-rc.1 ] || fail ".env says $(env_version), not 0.0.3-rc.1"
+grep -q "Downloading 0.0.3-rc.1" "$T/out" || fail "didn't download 0.0.3-rc.1"
+[ -f "$SITE/releases/0.0.3-rc.1/altiward-server-0.0.3-rc.1.tar.gz" ] || fail "the download isn't in releases/0.0.3-rc.1"
 grep -q "is a release candidate" "$T/out" || fail "didn't say 0.0.3-rc.1 is a release candidate"
-ok "upgraded to the release candidate 0.0.3-rc.1"
+ok "upgraded to the release candidate 0.0.3-rc.1, downloaded by version"
 
 # A file both the admin and the release changed stops the upgrade with a .new copy,
-# after the new release's upgrade.sh has taken over.
+# after the new release's upgrade.sh has taken over with the files already downloaded.
 echo "# my compose change" >>"$SITE/compose.yaml"
 status=0
-upgrade "$T/rel-0.0.3" >"$T/out" 2>&1 || status=$?
+upgrade 0.0.3 >"$T/out" 2>&1 || status=$?
 [ "$status" = 3 ] || { cat "$T/out"; fail "a conflicting compose.yaml should stop with 3, got $status"; }
 grep -q "Updated upgrade.sh from 0.0.3" "$T/out" || fail "upgrade.sh didn't hand over to 0.0.3's"
+[ "$(grep -c "^Downloading 0.0.3 " "$T/out")" = 1 ] || { cat "$T/out"; fail "0.0.3 wasn't downloaded exactly once"; }
 grep -q "upgrade.sh from 0.0.3" "$SITE/upgrade.sh" || fail "upgrade.sh wasn't replaced"
 grep -q "changed in 0.0.3" "$SITE/compose.yaml.new" || fail "no compose.yaml.new from 0.0.3"
 grep -q "my compose change" "$SITE/backups/before-0.0.3/compose.yaml" || fail "the admin's compose.yaml wasn't saved"
+grep -q -- "--merged .*/releases/0.0.3$" "$T/out" || { cat "$T/out"; fail "didn't say to carry on from the downloaded release"; }
 [ "$(env_version)" = 0.0.3-rc.1 ] || fail "a stopped upgrade changed .env"
 ok "a compose.yaml changed on both sides stops the upgrade with compose.yaml.new"
 
-upgrade --merged "$T/rel-0.0.3" >"$T/out" 2>&1 || { cat "$T/out"; fail "the --merged upgrade failed"; }
+upgrade --merged "$SITE/releases/0.0.3" >"$T/out" 2>&1 || { cat "$T/out"; fail "the --merged upgrade failed"; }
 [ "$(env_version)" = 0.0.3 ] || fail ".env says $(env_version), not 0.0.3"
 grep -q "my compose change" "$SITE/compose.yaml" || fail "the admin's compose.yaml was replaced"
 [ ! -e "$SITE/compose.yaml.new" ] || fail "compose.yaml.new was left behind"

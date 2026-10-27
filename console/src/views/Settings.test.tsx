@@ -337,7 +337,7 @@ describe("Settings updates", () => {
     await within(agent).findByText("The newest agent in your fleet is 0.1.2. The latest release is 0.2.0.");
     expect(within(agent).getByText("Update available")).toBeInTheDocument();
     expect(within(group).getByText(/^Last checked /)).toBeInTheDocument();
-    expect(within(group).getByText("./upgrade.sh ~/altiward-0.2.0")).toBeInTheDocument();
+    expect(within(group).getByText("./upgrade.sh 0.2.0")).toBeInTheDocument();
   });
 
   it("on Azure Container Apps, says which image to change to and where the setting lives", async () => {
@@ -382,7 +382,7 @@ describe("Settings updates", () => {
       .toBeInTheDocument();
     expect(within(server).getByText("Update available")).toBeInTheDocument();
     const notice = within(group).getByRole("region", { name: "Server release candidate 0.3.0-rc.1 is available" });
-    expect(within(notice).getByText("./upgrade.sh ~/altiward-0.3.0-rc.1")).toBeInTheDocument();
+    expect(within(notice).getByText("./upgrade.sh 0.3.0-rc.1")).toBeInTheDocument();
   });
 
   it("names the release and the candidate for a server running one", async () => {
