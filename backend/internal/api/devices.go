@@ -39,38 +39,8 @@ const enrollEventTimeout = 10 * time.Second
 // handler a principal carrying its tenant, device ID and serial.
 func (s *Server) requireDevice(h handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sr, ok := auth.ParseSignedRequest(r)
+		cred, _, body, ok := s.authenticateDevice(w, r)
 		if !ok {
-			writeCodedError(w, http.StatusUnauthorized, codeCredentialInvalid, "missing or malformed device signature")
-			return
-		}
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBodyBytes))
-		if err != nil {
-			writeError(w, http.StatusRequestEntityTooLarge, "body too large")
-			return
-		}
-		cred, err := s.store.Credential(r.Context(), sr.DeviceID)
-		if errors.Is(err, store.ErrNotFound) {
-			writeCodedError(w, http.StatusUnauthorized, codeCredentialInvalid, "unknown device credential")
-			return
-		}
-		if err != nil {
-			s.log.Error("credential lookup", "err", err)
-			writeError(w, http.StatusServiceUnavailable, "could not check credential; retry later")
-			return
-		}
-		key, err := auth.ParsePublicKey(cred.PublicKey)
-		if err == nil {
-			err = auth.Verify(key, auth.CanonicalString(r.Method, r.URL.RequestURI(), sr.Timestamp, body), sr.Signature)
-		}
-		if err != nil {
-			writeCodedError(w, http.StatusUnauthorized, codeCredentialInvalid, "signature does not verify")
-			return
-		}
-		now := s.now()
-		if skew := time.Unix(sr.Timestamp, 0).Sub(now); skew > auth.MaxClockSkew || skew < -auth.MaxClockSkew {
-			w.Header().Set("Date", now.UTC().Format(http.TimeFormat))
-			writeCodedError(w, http.StatusUnauthorized, codeClockSkew, "request timestamp is more than 5 minutes from server time")
 			return
 		}
 		switch cred.Status {
@@ -84,6 +54,49 @@ func (s *Server) requireDevice(h handler) http.Handler {
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		h(w, r, auth.Principal{TenantID: cred.TenantID, Role: auth.RoleAgent, DeviceID: cred.DeviceID, Serial: cred.Serial})
 	})
+}
+
+// authenticateDevice checks that a request was signed by the key of the credential it
+// names, within the clock window, and returns that credential whatever its status, the
+// parsed signature headers and the body it read. A pending or revoked credential
+// authenticates: the caller decides what its status allows. On any failure it has written
+// the answer (401, 413 or 503) and returns false.
+func (s *Server) authenticateDevice(w http.ResponseWriter, r *http.Request) (store.DeviceCredential, auth.SignedRequest, []byte, bool) {
+	sr, ok := auth.ParseSignedRequest(r)
+	if !ok {
+		writeCodedError(w, http.StatusUnauthorized, codeCredentialInvalid, "missing or malformed device signature")
+		return store.DeviceCredential{}, sr, nil, false
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBodyBytes))
+	if err != nil {
+		writeError(w, http.StatusRequestEntityTooLarge, "body too large")
+		return store.DeviceCredential{}, sr, nil, false
+	}
+	cred, err := s.store.Credential(r.Context(), sr.DeviceID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeCodedError(w, http.StatusUnauthorized, codeCredentialInvalid, "unknown device credential")
+		return store.DeviceCredential{}, sr, nil, false
+	}
+	if err != nil {
+		s.log.Error("credential lookup", "err", err)
+		writeError(w, http.StatusServiceUnavailable, "could not check credential; retry later")
+		return store.DeviceCredential{}, sr, nil, false
+	}
+	key, err := auth.ParsePublicKey(cred.PublicKey)
+	if err == nil {
+		err = auth.Verify(key, auth.CanonicalString(r.Method, r.URL.RequestURI(), sr.Timestamp, body), sr.Signature)
+	}
+	if err != nil {
+		writeCodedError(w, http.StatusUnauthorized, codeCredentialInvalid, "signature does not verify")
+		return store.DeviceCredential{}, sr, nil, false
+	}
+	now := s.now()
+	if skew := time.Unix(sr.Timestamp, 0).Sub(now); skew > auth.MaxClockSkew || skew < -auth.MaxClockSkew {
+		w.Header().Set("Date", now.UTC().Format(http.TimeFormat))
+		writeCodedError(w, http.StatusUnauthorized, codeClockSkew, "request timestamp is more than 5 minutes from server time")
+		return store.DeviceCredential{}, sr, nil, false
+	}
+	return cred, sr, body, true
 }
 
 // enrollRequest is decoded leniently: agents add fields, and older servers must ignore

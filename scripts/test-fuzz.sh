@@ -15,4 +15,5 @@ done <<'TARGETS'
 ./backend/internal/auth FuzzRotationProof
 ./backend/internal/command FuzzDecodeCommandResult
 ./backend/internal/api FuzzEnrollmentRequest
+./backend/internal/api FuzzRotationRequest
 TARGETS

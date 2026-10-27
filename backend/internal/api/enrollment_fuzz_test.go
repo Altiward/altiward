@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -130,6 +131,95 @@ func FuzzEnrollmentRequest(f *testing.F) {
 		items, err := st.ClaimExports(context.Background(), "fuzz", 10, time.Minute, now)
 		if err != nil || len(items) != 1 || items[0].Event.Type != event.AgentEnrollment {
 			t.Fatalf("enrolment retries duplicated or lost their export event: %d items, %v", len(items), err)
+		}
+	})
+}
+
+// FuzzRotationRequest sends arbitrary bodies, signed by the current key, to a healthy
+// server. Whatever the body: no 5xx, no key is activated unless the body carries a proof
+// by it for this device, and the same body again gives the same device_id.
+func FuzzRotationRequest(f *testing.F) {
+	const deviceID = "0d9e8f7a-6b5c-4d3e-8f2a-1b0c9d8e7f6a"
+	oldKey, nextKey := newKey(f), newKey(f)
+	oldSPKI, err := x509.MarshalPKIXPublicKey(&oldKey.PublicKey)
+	if err != nil {
+		f.Fatal(err)
+	}
+	valid := rotationBody(f, deviceID, nextKey, "software")
+	f.Add(valid)
+	f.Add(rotationBody(f, "another-device", nextKey, "software")) // a proof for another device
+	f.Add(rotationBody(f, deviceID, oldKey, "software"))          // the current key
+	f.Add(bytes.Replace(valid, []byte(`"software"`), []byte(`"future_storage","future_field":{"a":[1]}`), 1))
+	for _, raw := range []string{"", "null", "{}", `{"public_key":1}`, `{"public_key":"%%%","proof":"%%%"}`} {
+		f.Add([]byte(raw))
+	}
+	tokens, err := auth.Parse("acme="+agentToken, "")
+	if err != nil {
+		f.Fatal(err)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	enrolledAt := testfixture.Time(f, "2026-10-26T12:00:00Z")
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) > 128<<10 {
+			t.Skip()
+		}
+		// A fresh store, so an earlier iteration's rotation can't change this one's answer.
+		st := store.NewMemory(nil)
+		clock := &testClock{t: enrolledAt}
+		h := api.New(st, tokens, log, clock.now)
+		if _, err := st.Enroll(context.Background(), store.DeviceCredential{
+			DeviceID: deviceID, TenantID: "acme", Serial: fixtureSerial, HardwareUUID: "fuzz-hardware",
+			PublicKey: oldSPKI, KeyStorage: store.KeyStorageSoftware, Token: "fuzz", CreatedAt: enrolledAt,
+		}, store.DefaultEnrollLimits()); err != nil {
+			t.Fatal(err)
+		}
+		clock.advance(store.MinRotationInterval)
+		mac := &agent{h: h, key: oldKey, deviceID: deviceID, clock: clock}
+
+		rec, _ := mac.postTo(t, rotatePath, raw)
+		if rec.Code >= 500 {
+			t.Fatalf("HTTP %d: %s", rec.Code, rec.Body)
+		}
+		if bytes.Equal(raw, valid) && rec.Code != http.StatusCreated {
+			t.Fatalf("the valid seed got HTTP %d: %s", rec.Code, rec.Body)
+		}
+		creds, err := st.ListCredentials(context.Background(), "acme", store.CredentialFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Code != http.StatusCreated {
+			if len(creds) != 1 || creds[0].DeviceID != deviceID || creds[0].Status != store.CredentialActive {
+				t.Fatalf("HTTP %d changed the credentials: %+v", rec.Code, creds)
+			}
+			return
+		}
+		if len(creds) != 2 {
+			t.Fatalf("HTTP 201 left %d credentials", len(creds))
+		}
+		// The key that was activated must have signed the statement for this device.
+		var req struct {
+			PublicKey string `json:"public_key"`
+			Proof     string `json:"proof"`
+		}
+		if err := json.NewDecoder(bytes.NewReader(raw)).Decode(&req); err != nil {
+			t.Fatalf("accepted a body that doesn't decode: %v", err)
+		}
+		spki, err1 := base64.StdEncoding.DecodeString(req.PublicKey)
+		proof, err2 := base64.StdEncoding.DecodeString(req.Proof)
+		if err1 != nil || err2 != nil || auth.VerifyRotationProof(deviceID, spki, proof) != nil {
+			t.Fatalf("activated a key without a valid proof: %s", raw)
+		}
+		var reply map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &reply); err != nil || reply["status"] != "active" {
+			t.Fatalf("answer = %s (%v)", rec.Body, err)
+		}
+		retry, _ := mac.postTo(t, rotatePath, raw)
+		var again map[string]string
+		if err := json.Unmarshal(retry.Body.Bytes(), &again); err != nil || retry.Code != http.StatusOK || again["device_id"] != reply["device_id"] {
+			t.Fatalf("retry: HTTP %d %s, want 200 and device_id %s", retry.Code, retry.Body, reply["device_id"])
+		}
+		if creds, err = st.ListCredentials(context.Background(), "acme", store.CredentialFilter{}); err != nil || len(creds) != 2 {
+			t.Fatalf("the retry changed the credentials: %v", err)
 		}
 	})
 }

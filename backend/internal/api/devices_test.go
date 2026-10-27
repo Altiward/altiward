@@ -39,6 +39,8 @@ type agent struct {
 	deviceID string
 	status   string
 	skew     time.Duration // added to the server's clock when signing
+	// clock, when set, is the server's clock; without it the server's clock is serverNow.
+	clock *testClock
 
 	// What the Mac says when it enrols. Left empty, the hardware UUID is "HW-" and the
 	// serial, and the key storage and User-Agent are left out.
@@ -106,7 +108,11 @@ func (a *agent) post(t *testing.T, body []byte) (*httptest.ResponseRecorder, map
 // send signs req over body and serves it. The test server's clock is serverNow.
 func (a *agent) send(t *testing.T, req *http.Request, body []byte) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
-	ts := serverNow(t).Add(a.skew).Unix()
+	now := serverNow(t)
+	if a.clock != nil {
+		now = a.clock.now()
+	}
+	ts := now.Add(a.skew).Unix()
 	digest := sha256.Sum256([]byte(auth.CanonicalString(req.Method, req.URL.RequestURI(), ts, body)))
 	sig, err := ecdsa.SignASN1(rand.Reader, a.key, digest[:])
 	if err != nil {
@@ -122,7 +128,7 @@ func (a *agent) send(t *testing.T, req *http.Request, body []byte) (*httptest.Re
 	return rec, out
 }
 
-func newKey(t *testing.T) *ecdsa.PrivateKey {
+func newKey(t testing.TB) *ecdsa.PrivateKey {
 	t.Helper()
 	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
