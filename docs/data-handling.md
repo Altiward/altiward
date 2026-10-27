@@ -63,6 +63,9 @@ or anyone else. It:
 
 - enrolls once with the enrolment token from your profile, registering a key it makes
   on the Mac and saying whether that key is in the Mac's Secure Enclave;
+- when it replaces that key (key rotation), sends the new key's public half, whether it
+  is in the Secure Enclave, and a proof signed with the new key, in a request signed
+  with the old one;
 - sends events as they happen, and a health event every 5 minutes;
 - keeps a request open for commands (such as a revoke), which your server holds for up to
   50 seconds and answers when one is queued, then asks again; after an error it waits 60
@@ -216,8 +219,11 @@ security records ([Backups](install.md#backups)).
 The agent keeps one database, `/Library/Application Support/Altiward/agent.sqlite`,
 readable only by root. It holds events waiting to send (removed once your server
 confirms them), the elevations open now, the Mac's key (or the handle to it in the Secure
-Enclave), and revoke results (removed 30
-days after they are reported). For checking grants against Privileges' log it also holds:
+Enclave), the server's clock offset it last learnt, and revoke results (removed 30
+days after they are reported). While the agent is replacing the Mac's key and doesn't yet
+know the server's answer, it also holds the replacement key (or its handle) and a copy of
+the key it replaces, removed as soon as the answer is known. For checking grants against
+Privileges' log it also holds:
 
 - each grant claim from the hook while it waits, up to a minute, for the log: the account,
   the reason the person typed, the UID of the process that sent it and when it arrived. It is

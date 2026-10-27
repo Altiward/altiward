@@ -9,6 +9,31 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Agent 1.0.0 - unreleased
+
+### Upgrade order
+
+Upgrade the server first.
+
+### Breaking changes
+
+None.
+
+### Security
+
+- The agent can replace its device key with a new one (key rotation), which moves a key
+  kept in a file into the Secure Enclave. It sends the new public key with a proof signed
+  by the new key, in a request signed by the old one. Until the server's answer is known,
+  it keeps both keys in `agent.sqlite` and sends nothing else signed by the old key, in
+  the daemon or in a command run beside it, so a lost answer, a restart, sleep or a busy
+  store never makes a Mac look like a second holder of its own key. A command run while
+  the daemon is rotating says so and changes nothing.
+
+### Changes
+
+- The daemon and commands share the server clock offset they learn, so a command run on a
+  Mac whose clock is wrong no longer needs a round trip to correct it.
+
 ## Server 1.0.0 - unreleased
 
 ### Upgrade order
