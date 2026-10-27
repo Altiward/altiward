@@ -24,7 +24,10 @@ The server maps events to OCSF in `backend/internal/ocsf`. Console audit actions
 export as OCSF API Activity (`class_uid` 6003), with event type `console.<action>`. So
 does `agent.enrollment`, which the server raises when a Mac enrols a key, as activity
 Create. Its severity says which state it is: Informational for `enrolled`, Medium (an
-alert) for `pending` and High (an alert) for `replaced`. In CEF, rules key on the
+alert) for `pending` and High (an alert) for `replaced`. Key rotation is API Activity too,
+with `api.operation` `rotate` and the Mac as the actor: `rotated` is Update and Informational,
+and `rotated_key_used` (a key that rotation had already replaced signed a request) is
+"Stale key used", status Failure, High and an alert. In CEF, rules key on the
 signature `agent.enrollment` and the severity ([syslog](syslog/README.md#starter-rules)).
 `ocsf-examples/`: the server's OCSF output for sample events (and altiward-siem's
 fixtures), kept current by

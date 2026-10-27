@@ -10,6 +10,21 @@ import (
 	"github.com/Altiward/altiward/backend/internal/testfixture"
 )
 
+func TestValidateAcceptsRotationStates(t *testing.T) {
+	for _, state := range []string{"rotated", "rotated_key_used"} {
+		e := testfixture.Event(t, "agent-enrollment-pending")
+		e.Detail["state"] = state
+		if err := e.Validate(e.Timestamp); err != nil {
+			t.Errorf("%s: %v", state, err)
+		}
+	}
+	e := testfixture.Event(t, "agent-enrollment-pending")
+	e.Detail["state"] = "rotating"
+	if err := e.Validate(e.Timestamp); err == nil {
+		t.Error("rotating was accepted")
+	}
+}
+
 func TestContractFixturesDecodeAndValidate(t *testing.T) {
 	for _, name := range testfixture.Names {
 		t.Run(name, func(t *testing.T) {
@@ -72,14 +87,18 @@ func TestValidate(t *testing.T) {
 		{"enrollment pending", "agent-enrollment-pending", func(e *event.Event) {}, ""},
 		{"enrollment enrolled", "agent-enrollment-enrolled", func(e *event.Event) {}, ""},
 		{"enrollment replaced", "agent-enrollment-enrolled", func(e *event.Event) { e.Detail["state"] = "replaced" }, ""},
+		{"enrollment rotated", "agent-enrollment-rotated", func(e *event.Event) {}, ""},
+		{"enrollment rotated key used", "agent-enrollment-rotated-key-used", func(e *event.Event) {}, ""},
+		{"enrollment with a state that is still rotating", "agent-enrollment-rotated", func(e *event.Event) { e.Detail["state"] = "rotating" },
+			"agent.enrollment requires detail.state (enrolled, pending, replaced, rotated or rotated_key_used) and detail.device_id"},
 		{"enrollment with a bogus state", "agent-enrollment-pending", func(e *event.Event) { e.Detail["state"] = "bogus" },
-			"agent.enrollment requires detail.state (enrolled, pending or replaced) and detail.device_id"},
+			"agent.enrollment requires detail.state (enrolled, pending, replaced, rotated or rotated_key_used) and detail.device_id"},
 		{"enrollment without a state", "agent-enrollment-pending", func(e *event.Event) { delete(e.Detail, "state") },
-			"agent.enrollment requires detail.state (enrolled, pending or replaced) and detail.device_id"},
+			"agent.enrollment requires detail.state (enrolled, pending, replaced, rotated or rotated_key_used) and detail.device_id"},
 		{"enrollment without a device id", "agent-enrollment-pending", func(e *event.Event) { delete(e.Detail, "device_id") },
-			"agent.enrollment requires detail.state (enrolled, pending or replaced) and detail.device_id"},
+			"agent.enrollment requires detail.state (enrolled, pending, replaced, rotated or rotated_key_used) and detail.device_id"},
 		{"enrollment with an empty device id", "agent-enrollment-pending", func(e *event.Event) { e.Detail["device_id"] = "" },
-			"agent.enrollment requires detail.state (enrolled, pending or replaced) and detail.device_id"},
+			"agent.enrollment requires detail.state (enrolled, pending, replaced, rotated or rotated_key_used) and detail.device_id"},
 		{"nil detail defaults", "agent-health", func(e *event.Event) { e.Detail = nil }, ""},
 		{"persistence", "persistence-detected", func(e *event.Event) {}, ""},
 		{"persistence without session", "persistence-detected", func(e *event.Event) { e.SessionID = nil }, "requires session_id"},

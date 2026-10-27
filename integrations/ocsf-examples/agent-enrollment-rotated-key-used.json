@@ -1,0 +1,77 @@
+[
+  {
+    "activity_id": 99,
+    "activity_name": "Stale key used",
+    "actor": {
+      "user": {
+        "name": "C02XK0AAJGH5"
+      }
+    },
+    "api": {
+      "operation": "rotate",
+      "service": {
+        "name": "Altiward server"
+      }
+    },
+    "category_name": "Application Activity",
+    "category_uid": 6,
+    "class_name": "API Activity",
+    "class_uid": 6003,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "is_alert": true,
+    "message": "C02XK0AAJGH5 used a key it had already replaced",
+    "metadata": {
+      "logged_time": 1792143900000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "1.0.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "e6b2d9a4-3c18-4f70-9d5e-1a8c4b7e2f93",
+      "version": "1.9.0"
+    },
+    "resources": [
+      {
+        "name": "C02XK0AAJGH5",
+        "type": "Enrollment",
+        "uid": "5d2c8e1a-7b4f-4a93-8c6d-0f1e2a3b4c5d"
+      }
+    ],
+    "severity": "High",
+    "severity_id": 4,
+    "src_endpoint": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "status": "Failure",
+    "status_id": 2,
+    "time": 1792143900000,
+    "type_name": "API Activity: Stale key used",
+    "type_uid": 600399,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "device_id": "5d2c8e1a-7b4f-4a93-8c6d-0f1e2a3b4c5d",
+          "key_fingerprint": "3c9a1f5e7b2d4086a1b3c5d7e9f024681d3f5a7c9e0b2d4f6a8c0e2b4d6f8a1c",
+          "revoked_device_id": "9b4e7d2c-1a63-4f85-b0d9-6c3a5e8f1d27",
+          "rotated_to": "9b4e7d2c-1a63-4f85-b0d9-6c3a5e8f1d27",
+          "state": "rotated_key_used"
+        },
+        "event_type": "agent.enrollment"
+      }
+    }
+  }
+]

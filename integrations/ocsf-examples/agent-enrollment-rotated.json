@@ -1,0 +1,78 @@
+[
+  {
+    "activity_id": 3,
+    "activity_name": "Update",
+    "actor": {
+      "user": {
+        "name": "C02XK0AAJGH5"
+      }
+    },
+    "api": {
+      "operation": "rotate",
+      "service": {
+        "name": "Altiward server"
+      }
+    },
+    "category_name": "Application Activity",
+    "category_uid": 6,
+    "class_name": "API Activity",
+    "class_uid": 6003,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "message": "C02XK0AAJGH5 replaced its key by rotation",
+    "metadata": {
+      "logged_time": 1792139400000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "1.0.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "d3a6c1f8-2b57-5e94-a0c3-7f1e8b2d4a65",
+      "version": "1.9.0"
+    },
+    "resources": [
+      {
+        "name": "C02XK0AAJGH5",
+        "type": "Enrollment",
+        "uid": "9b4e7d2c-1a63-4f85-b0d9-6c3a5e8f1d27"
+      }
+    ],
+    "severity": "Informational",
+    "severity_id": 1,
+    "src_endpoint": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792139400000,
+    "type_name": "API Activity: Update",
+    "type_uid": 600303,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "device_id": "9b4e7d2c-1a63-4f85-b0d9-6c3a5e8f1d27",
+          "hardware_uuid_matches": true,
+          "key_fingerprint": "7e1d3b5f9a0c2e4681b3d5f7a9c1e3052b4d6f8a0c2e4a6c8e0b2d4f6a8c0e1d",
+          "key_storage": "secure_enclave",
+          "previous_device_id": "5d2c8e1a-7b4f-4a93-8c6d-0f1e2a3b4c5d",
+          "previous_key_storage": "secure_enclave",
+          "state": "rotated"
+        },
+        "event_type": "agent.enrollment"
+      }
+    }
+  }
+]

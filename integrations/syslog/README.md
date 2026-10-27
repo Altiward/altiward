@@ -92,6 +92,11 @@ sign-outs are OCSF Authentication records, with the event types `console.sign_in
   is a Mac's first key, 5 a new key waiting for approval and 8 a key that replaced the
   previous one without approval. Alert on 5 and 8. `dvchost` is the serial, `deviceExternalId`
   the hardware UUID the Mac claimed, and `msg` says which of the three it was.
+- **Keys rotated:** signature `agent.enrollment`, named `API Activity: Update` (severity 1,
+  a Mac replaced its own key by proving it held the old one) or `API Activity: Stale key used`
+  (severity 8, a key that rotation had already replaced signed a request). Alert on the
+  `Stale key used` name: a rule keyed on `API Activity: Create` doesn't see it. `suser` is
+  the serial, `cs5` `target` the stale key's device ID, and `msg` says what happened.
 - **Macs that stopped checking in:** signature `altiward.agent_silent`. The Mac checking in
   again sends `act=Close` with the same `cs5`.
 - **Use of a permanent admin account:** signature `admin.permanent_use`. `act=Logon` is a

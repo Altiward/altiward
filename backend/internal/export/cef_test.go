@@ -75,6 +75,21 @@ func TestCEFForAnEnrollment(t *testing.T) {
 	}
 }
 
+func TestCEFSeverityForRotation(t *testing.T) {
+	for _, c := range []struct{ fixture, header string }{
+		{"agent-enrollment-rotated", "|agent.enrollment|API Activity: Update|1|"},
+		{"agent-enrollment-rotated-key-used", "|agent.enrollment|API Activity: Stale key used|8|"},
+	} {
+		got := export.CEF(record(t, c.fixture))
+		if !strings.Contains(got, c.header) {
+			t.Errorf("%s header: %s", c.fixture, got)
+		}
+		if !strings.Contains(got, "suser=C02XK0AAJGH5") {
+			t.Errorf("%s actor: %s", c.fixture, got)
+		}
+	}
+}
+
 // A permanent admin's use on someone else's session: duser is the admin account, suser the
 // OCSF actor, whose session it was.
 func TestCEFForPermanentAdminUseOnAnotherSession(t *testing.T) {
