@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -21,7 +22,9 @@ import (
 
 	"github.com/Altiward/altiward/backend/internal/api"
 	"github.com/Altiward/altiward/backend/internal/auth"
+	"github.com/Altiward/altiward/backend/internal/event"
 	"github.com/Altiward/altiward/backend/internal/store"
+	"github.com/Altiward/altiward/backend/internal/testfixture"
 )
 
 const (
@@ -56,7 +59,29 @@ func (c *testClock) set(t time.Time) {
 // flakyStore fails the calls a test turns on, as a database that has gone away would.
 type flakyStore struct {
 	store.Store
-	failRotate, failCredential bool
+	failRotate, failCredential, failIngest, failStaleKeyUsed bool
+	// held, when set, is sent the context of each Ingest of a rotated event, which then
+	// waits until release is closed.
+	held    chan<- context.Context
+	release <-chan struct{}
+}
+
+func (f *flakyStore) Ingest(ctx context.Context, tenantID string, events []event.Event, receivedAt time.Time) (store.IngestResult, error) {
+	if f.failIngest {
+		return store.IngestResult{}, errors.New("disk full")
+	}
+	if f.held != nil && len(events) == 1 && events[0].Detail["state"] == event.EnrollmentStateRotated {
+		f.held <- ctx
+		<-f.release
+	}
+	return f.Store.Ingest(ctx, tenantID, events, receivedAt)
+}
+
+func (f *flakyStore) StaleKeyUsed(ctx context.Context, deviceID string, signedAt, now time.Time) (*store.ContestResult, error) {
+	if f.failStaleKeyUsed {
+		return nil, errors.New("database unavailable")
+	}
+	return f.Store.StaleKeyUsed(ctx, deviceID, signedAt, now)
 }
 
 func (f *flakyStore) Rotate(ctx context.Context, r store.RotateRequest) (store.RotateResult, error) {
@@ -93,7 +118,7 @@ func newRotationServer(t *testing.T) *rotationHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mem := store.NewMemory(nil)
+	mem := store.NewMemory([]string{"splunk"}) // a sink, so stored events can be read back
 	flaky := &flakyStore{Store: mem}
 	rh := &rotationHarness{t: t, store: mem, flaky: flaky, clock: &testClock{t: serverNow(t)}, enrolledAt: serverNow(t), logs: &strings.Builder{}}
 	rh.h = api.New(flaky, tokens, slog.New(slog.NewTextHandler(rh.logs, nil)), rh.clock.now)
@@ -179,6 +204,70 @@ func (rh *rotationHarness) revokeFromConsole(deviceID string) {
 	rh.t.Helper()
 	if rec, _ := do(rh.t, rh.h, "POST", "/v1/enrollments/"+deviceID+"/revoke", consoleToken, nil); rec.Code != http.StatusOK {
 		rh.t.Fatalf("revoke: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// enrollmentEvents returns the stored agent.enrollment events in state, oldest first,
+// failing the test if any of them doesn't validate.
+func (rh *rotationHarness) enrollmentEvents(state string) []event.Event {
+	rh.t.Helper()
+	now := rh.clock.now()
+	queued, err := rh.store.ClaimExports(context.Background(), "splunk", 1000, 0, now)
+	if err != nil {
+		rh.t.Fatal(err)
+	}
+	out := []event.Event{}
+	for _, item := range queued {
+		e := item.Event.Event
+		if e.Type != event.AgentEnrollment || e.Detail["state"] != state {
+			continue
+		}
+		if err := e.Validate(now); err != nil {
+			rh.t.Fatalf("invalid agent.enrollment event %s: %v", e.EventID, err)
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// activeKeys returns the device IDs of the tenant's active keys.
+func (rh *rotationHarness) activeKeys() []string {
+	rh.t.Helper()
+	out := []string{}
+	for _, c := range rh.credentials() {
+		if c.Status == store.CredentialActive {
+			out = append(out, c.DeviceID)
+		}
+	}
+	return out
+}
+
+// wantStaleKeyUsed fails the test unless e reports a use of stale, the key that rotated to
+// rotatedTo, revoking revoked ("" for none), sent by agent version agentVersion.
+func wantStaleKeyUsed(t *testing.T, e event.Event, stale *agent, rotatedTo, revoked, agentVersion string) {
+	t.Helper()
+	want := map[string]any{
+		"state":           event.EnrollmentStateRotatedKeyUsed,
+		"device_id":       stale.deviceID,
+		"key_fingerprint": publicKeyFingerprint(t, stale.key),
+		"rotated_to":      rotatedTo,
+	}
+	if revoked != "" {
+		want["revoked_device_id"] = revoked
+	}
+	if !reflect.DeepEqual(e.Detail, want) {
+		t.Errorf("detail = %v, want %v", e.Detail, want)
+	}
+	wantDevice := event.Device{Serial: fixtureSerial, HardwareUUID: "HW-" + fixtureSerial, AgentVersion: agentVersion}
+	if e.Device != wantDevice {
+		t.Errorf("device = %+v, want %+v", e.Device, wantDevice)
+	}
+	// A random (version 4) ID, which no Mac can claim first.
+	if len(e.EventID) != 36 || e.EventID[14] != '4' {
+		t.Errorf("event_id = %s, want a random UUID", e.EventID)
+	}
+	if e.SessionID != nil || e.User != nil || e.Elevation != nil || e.Delayed {
+		t.Errorf("event = %+v", e)
 	}
 }
 
@@ -290,6 +379,9 @@ func TestRotateFromAPendingKey(t *testing.T) {
 	if n := len(rh.credentials()); n != before {
 		t.Fatalf("%d credentials, was %d", n, before)
 	}
+	// A pending key isn't stale, so a malformed request is still just malformed.
+	rec, out = rh.rotate(pending, []byte(`{"public_key":`))
+	wantCode(t, rec, out, http.StatusBadRequest, "rotation_invalid")
 }
 
 func TestRotateFromARevokedKey(t *testing.T) {
@@ -495,4 +587,407 @@ func TestRotateServerFailures(t *testing.T) {
 			t.Fatalf("got %d %s", rec.Code, rec.Body)
 		}
 	})
+}
+
+// The successor records when the Mac signed the rotation, by the Mac's clock, not when the
+// server received it: that is what an old-key request signed at the same moment is
+// compared with.
+func TestRotateRecordsWhenTheMacSignedIt(t *testing.T) {
+	rh := newRotationServer(t)
+	behind := *rh.agent
+	behind.skew = -30 * time.Second
+	rec, out := rh.rotate(&behind, rh.body(rh.agent, newKey(t), "software"))
+	wantCode(t, rec, out, http.StatusCreated, "")
+	c, err := rh.store.Credential(context.Background(), out["device_id"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed := rh.clock.now().Add(-30 * time.Second)
+	if c.RotationSignedAt == nil || !c.RotationSignedAt.Equal(signed) {
+		t.Fatalf("rotation signed at %v, want %v", c.RotationSignedAt, signed)
+	}
+	if c.ActivatedAt == nil || !c.ActivatedAt.Equal(rh.clock.now()) {
+		t.Fatalf("activated at %v, want %v", c.ActivatedAt, rh.clock.now())
+	}
+}
+
+func TestRotationRaisesRotated(t *testing.T) {
+	rh := newRotationServer(t)
+	old := rh.agent
+	old.userAgent = "altiward-agent/1.0.0"
+	next := newKey(t)
+	body := rh.body(old, next, "secure_enclave")
+	rec, out := rh.rotate(old, body)
+	wantCode(t, rec, out, http.StatusCreated, "")
+	id := out["device_id"].(string)
+
+	got := rh.enrollmentEvents(event.EnrollmentStateRotated)
+	if len(got) != 1 {
+		t.Fatalf("%d rotated events, want 1", len(got))
+	}
+	e := got[0]
+	if want := event.RaisedID("acme/enrollment/" + id); e.EventID != want {
+		t.Errorf("event_id = %s, want %s", e.EventID, want)
+	}
+	if !e.Timestamp.Equal(rh.clock.now()) || e.SessionID != nil || e.User != nil || e.Elevation != nil || e.Delayed {
+		t.Errorf("event = %+v", e)
+	}
+	wantDevice := event.Device{Serial: fixtureSerial, HardwareUUID: "HW-" + fixtureSerial, AgentVersion: "1.0.0"}
+	if e.Device != wantDevice {
+		t.Errorf("device = %+v, want %+v", e.Device, wantDevice)
+	}
+	// No token: a rotation doesn't use one, and the Mac is the actor.
+	wantDetail := map[string]any{
+		"state":                 event.EnrollmentStateRotated,
+		"device_id":             id,
+		"key_fingerprint":       publicKeyFingerprint(t, next),
+		"key_storage":           "secure_enclave",
+		"previous_device_id":    old.deviceID,
+		"previous_key_storage":  "software",
+		"hardware_uuid_matches": true,
+	}
+	if !reflect.DeepEqual(e.Detail, wantDetail) {
+		t.Errorf("detail = %v, want %v", e.Detail, wantDetail)
+	}
+
+	// A retry raises it again, and the same ID stores nothing new.
+	for _, later := range []time.Duration{0, 30 * 24 * time.Hour} {
+		rh.clock.advance(later)
+		rec, out := rh.rotate(old, body)
+		wantCode(t, rec, out, http.StatusOK, "")
+		if n := len(rh.enrollmentEvents(event.EnrollmentStateRotated)); n != 1 {
+			t.Fatalf("%d rotated events after a retry %s later, want 1", n, later)
+		}
+	}
+	if n := len(rh.enrollmentEvents(event.EnrollmentStateRotatedKeyUsed)); n != 0 {
+		t.Fatalf("%d rotated_key_used events, want none", n)
+	}
+}
+
+// The new key is active whether or not the SIEM hears of it, and the agent's retry, which
+// raises the event again, can still record it.
+func TestRotateSucceedsWhenTheEventCannotBeRecorded(t *testing.T) {
+	rh := newRotationServer(t)
+	body := rh.body(rh.agent, newKey(t), "software")
+	rh.flaky.failIngest = true
+	rec, out := rh.rotate(rh.agent, body)
+	wantCode(t, rec, out, http.StatusCreated, "")
+	id := out["device_id"].(string)
+	if logs := rh.logs.String(); !strings.Contains(logs, "level=ERROR") || !strings.Contains(logs, `msg="rotation event not recorded"`) ||
+		!strings.Contains(logs, "device_id="+id) || !strings.Contains(logs, "disk full") {
+		t.Fatalf("log = %s", logs)
+	}
+	rh.flaky.failIngest = false
+	if n := len(rh.enrollmentEvents(event.EnrollmentStateRotated)); n != 0 {
+		t.Fatalf("%d rotated events, want none yet", n)
+	}
+	rec, out = rh.rotate(rh.agent, body)
+	wantCode(t, rec, out, http.StatusOK, "")
+	got := rh.enrollmentEvents(event.EnrollmentStateRotated)
+	if len(got) != 1 || got[0].Detail["device_id"] != id {
+		t.Fatalf("events = %+v, want the rotation to %s", got, id)
+	}
+}
+
+// answerWatch records when the handler starts its answer.
+type answerWatch struct {
+	*httptest.ResponseRecorder
+	once    sync.Once
+	written chan struct{}
+}
+
+func (w *answerWatch) WriteHeader(status int) {
+	w.once.Do(func() { close(w.written) })
+	w.ResponseRecorder.WriteHeader(status)
+}
+
+func (w *answerWatch) Write(b []byte) (int, error) {
+	w.once.Do(func() { close(w.written) })
+	return w.ResponseRecorder.Write(b)
+}
+
+// The answer names the new device_id, which the event's ID is made from, so the event is
+// stored first: a Mac can't then claim that ID with an event of its own.
+func TestRotatedEventIsStoredBeforeTheAnswer(t *testing.T) {
+	rh := newRotationServer(t)
+	held := make(chan context.Context, 1)
+	release := make(chan struct{})
+	rh.flaky.held, rh.flaky.release = held, release
+
+	body := rh.body(rh.agent, newKey(t), "software")
+	req := httptest.NewRequest("POST", rotatePath, bytes.NewReader(body))
+	rh.agent.sign(t, req, body)
+	w := &answerWatch{ResponseRecorder: httptest.NewRecorder(), written: make(chan struct{})}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		rh.h.ServeHTTP(w, req)
+	}()
+
+	var ctx context.Context
+	select {
+	case ctx = <-held:
+	case <-done:
+		t.Fatalf("answered %d without storing the rotated event", w.Code)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the rotated event was never stored")
+	}
+	select {
+	case <-w.written:
+		close(release)
+		t.Fatal("the answer was written before the rotated event was stored")
+	case <-time.After(100 * time.Millisecond):
+	}
+	// The write outlives the request, but not a database that never answers.
+	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 10*time.Second {
+		t.Errorf("the event was written with deadline %v (set: %v), want at most 10s away", deadline, ok)
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the handler did not finish")
+	}
+	if w.Code != http.StatusCreated {
+		t.Fatalf("got %d %s", w.Code, w.Body)
+	}
+	if n := len(rh.enrollmentEvents(event.EnrollmentStateRotated)); n != 1 {
+		t.Fatalf("%d rotated events, want 1", n)
+	}
+}
+
+func TestRotateFromAStaleKeyToAnotherKey(t *testing.T) {
+	rh := newRotationServer(t)
+	stale := rh.agent
+	successor := rh.rotated()
+	stale.userAgent = "altiward-agent/0.9.0"
+	rec, out := rh.rotate(stale, rh.body(stale, newKey(t), "software"))
+	wantCode(t, rec, out, http.StatusUnauthorized, "credential_invalid")
+
+	got := rh.enrollmentEvents(event.EnrollmentStateRotatedKeyUsed)
+	if len(got) != 1 {
+		t.Fatalf("%d rotated_key_used events, want 1", len(got))
+	}
+	wantStaleKeyUsed(t, got[0], stale, successor.deviceID, successor.deviceID, "0.9.0")
+	if !got[0].Timestamp.Equal(rh.clock.now()) {
+		t.Errorf("timestamp = %v, want %v", got[0].Timestamp, rh.clock.now())
+	}
+	if got := rh.polls(successor); got != http.StatusUnauthorized {
+		t.Fatalf("the successor polls with %d, want 401", got)
+	}
+	if active := rh.activeKeys(); len(active) != 0 {
+		t.Fatalf("active keys %v, want none", active)
+	}
+}
+
+// A stale key's rotation that doesn't even check out is still a stale key's use: 401, and
+// a contest once the rotation can no longer be in flight.
+func TestStaleKeyWithABadRotationIsAContest(t *testing.T) {
+	rh := newRotationServer(t)
+	stale := rh.agent
+	successor := rh.rotated()
+	rh.clock.advance(store.InFlightGrace + time.Second)
+	rec, out := rh.rotate(stale, []byte(`{"public_key":`))
+	wantCode(t, rec, out, http.StatusUnauthorized, "credential_invalid")
+
+	got := rh.enrollmentEvents(event.EnrollmentStateRotatedKeyUsed)
+	if len(got) != 1 {
+		t.Fatalf("%d rotated_key_used events, want 1", len(got))
+	}
+	wantStaleKeyUsed(t, got[0], stale, successor.deviceID, successor.deviceID, "")
+	if got := rh.polls(successor); got != http.StatusUnauthorized {
+		t.Fatalf("the successor polls with %d, want 401", got)
+	}
+}
+
+func TestStaleKeyUseIsAContest(t *testing.T) {
+	rh := newRotationServer(t)
+	stale := rh.agent
+	successor := rh.rotated()
+	rh.clock.advance(2 * time.Minute)
+
+	rec, out := stale.post(t, batch(t, "agent-health"))
+	wantCode(t, rec, out, http.StatusUnauthorized, "credential_invalid")
+	rec, out = stale.get(t, "/v1/agent/commands")
+	wantCode(t, rec, out, http.StatusUnauthorized, "credential_invalid")
+
+	got := rh.enrollmentEvents(event.EnrollmentStateRotatedKeyUsed)
+	if len(got) != 1 {
+		t.Fatalf("%d rotated_key_used events, want 1", len(got))
+	}
+	wantStaleKeyUsed(t, got[0], stale, successor.deviceID, successor.deviceID, "")
+	if got := rh.polls(successor); got != http.StatusUnauthorized {
+		t.Fatalf("the successor polls with %d, want 401", got)
+	}
+	if logs := rh.logs.String(); !strings.Contains(logs, "level=WARN") || !strings.Contains(logs, `msg="rotated device key used"`) ||
+		!strings.Contains(logs, "device_id="+stale.deviceID) || !strings.Contains(logs, "revoked_device_id="+successor.deviceID) {
+		t.Errorf("log = %s", logs)
+	}
+
+	// Within a day, past midnight UTC, further uses report nothing.
+	rh.clock.advance(23 * time.Hour)
+	rec, out = stale.get(t, "/v1/agent/commands")
+	wantCode(t, rec, out, http.StatusUnauthorized, "credential_invalid")
+	if n := len(rh.enrollmentEvents(event.EnrollmentStateRotatedKeyUsed)); n != 1 {
+		t.Fatalf("%d rotated_key_used events within a day, want 1", n)
+	}
+
+	// A day on, one more, revoking nothing.
+	rh.clock.advance(time.Hour + time.Second)
+	rec, out = stale.post(t, batch(t, "agent-health"))
+	wantCode(t, rec, out, http.StatusUnauthorized, "credential_invalid")
+	rec, out = stale.get(t, "/v1/agent/commands")
+	wantCode(t, rec, out, http.StatusUnauthorized, "credential_invalid")
+	got = rh.enrollmentEvents(event.EnrollmentStateRotatedKeyUsed)
+	if len(got) != 2 {
+		t.Fatalf("%d rotated_key_used events a day later, want 2", len(got))
+	}
+	wantStaleKeyUsed(t, got[1], stale, successor.deviceID, "", "")
+	if got[0].EventID == got[1].EventID {
+		t.Fatalf("both reports have event_id %s", got[0].EventID)
+	}
+}
+
+func TestInFlightOldKeyRequestRaisesNothing(t *testing.T) {
+	rh := newRotationServer(t)
+	successor := rh.rotated()
+	// Signed at the rotation's own moment, by the Mac's clock, and received 30 seconds on.
+	rh.clock.advance(30 * time.Second)
+	inFlight := *rh.agent
+	inFlight.skew = -30 * time.Second
+
+	rec, out := inFlight.post(t, batch(t, "agent-health"))
+	wantCode(t, rec, out, http.StatusUnauthorized, "credential_invalid")
+	rec, out = inFlight.get(t, "/v1/agent/commands")
+	wantCode(t, rec, out, http.StatusUnauthorized, "credential_invalid")
+
+	if n := len(rh.enrollmentEvents(event.EnrollmentStateRotatedKeyUsed)); n != 0 {
+		t.Fatalf("%d rotated_key_used events, want none", n)
+	}
+	if got := rh.polls(successor); got != http.StatusOK {
+		t.Fatalf("the successor polls with %d, want 200", got)
+	}
+}
+
+func TestConcurrentRotationsRaiseOneStaleKeyEvent(t *testing.T) {
+	rh := newRotationServer(t)
+	const n = 20
+	bodies := make([][]byte, n)
+	for i := range bodies {
+		bodies[i] = rh.body(rh.agent, newKey(t), "software")
+	}
+	codes := make([]int, n)
+	ids := make([]string, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() {
+			rec, out := rh.agent.postTo(t, rotatePath, bodies[i])
+			codes[i] = rec.Code
+			ids[i], _ = out["device_id"].(string)
+		})
+	}
+	wg.Wait()
+
+	winner := ""
+	for i, code := range codes {
+		switch code {
+		case http.StatusCreated:
+			if winner != "" {
+				t.Fatalf("two rotations committed: %s and %s", winner, ids[i])
+			}
+			winner = ids[i]
+		case http.StatusUnauthorized:
+		default:
+			t.Fatalf("a rotation answered %d", code)
+		}
+	}
+	if winner == "" {
+		t.Fatalf("no rotation committed: %v", codes)
+	}
+	if active := rh.activeKeys(); len(active) != 0 {
+		t.Fatalf("active keys %v, want none", active)
+	}
+	if n := len(rh.enrollmentEvents(event.EnrollmentStateRotated)); n != 1 {
+		t.Fatalf("%d rotated events, want 1", n)
+	}
+	got := rh.enrollmentEvents(event.EnrollmentStateRotatedKeyUsed)
+	if len(got) != 1 {
+		t.Fatalf("%d rotated_key_used events, want 1", len(got))
+	}
+	wantStaleKeyUsed(t, got[0], rh.agent, winner, winner, "")
+}
+
+func TestRevokedKeyWithoutSuccessorRaisesNothing(t *testing.T) {
+	rh := newRotationServer(t)
+	rh.revokeFromConsole(rh.agent.deviceID)
+	rh.clock.advance(time.Hour)
+
+	rec, out := rh.agent.post(t, batch(t, "agent-health"))
+	wantCode(t, rec, out, http.StatusUnauthorized, "credential_invalid")
+	rec, out = rh.agent.get(t, "/v1/agent/commands")
+	wantCode(t, rec, out, http.StatusUnauthorized, "credential_invalid")
+	rec, out = rh.rotate(rh.agent, rh.body(rh.agent, newKey(t), "software"))
+	wantCode(t, rec, out, http.StatusUnauthorized, "credential_invalid")
+	rec, out = rh.rotate(rh.agent, []byte(`{"public_key":`))
+	wantCode(t, rec, out, http.StatusUnauthorized, "credential_invalid")
+
+	for _, state := range []string{event.EnrollmentStateRotated, event.EnrollmentStateRotatedKeyUsed} {
+		if n := len(rh.enrollmentEvents(state)); n != 0 {
+			t.Fatalf("%d %s events, want none", n, state)
+		}
+	}
+}
+
+// A store that fails the contest still leaves the stale key refused, and says why.
+func TestStaleKeyUseWhenTheContestFails(t *testing.T) {
+	rh := newRotationServer(t)
+	stale := rh.agent
+	successor := rh.rotated()
+	rh.clock.advance(2 * time.Minute)
+	rh.flaky.failStaleKeyUsed = true
+	rec, out := stale.get(t, "/v1/agent/commands")
+	wantCode(t, rec, out, http.StatusUnauthorized, "credential_invalid")
+	if logs := rh.logs.String(); !strings.Contains(logs, "level=ERROR") || !strings.Contains(logs, "device_id="+stale.deviceID) ||
+		!strings.Contains(logs, "database unavailable") {
+		t.Fatalf("log = %s", logs)
+	}
+	if got := rh.polls(successor); got != http.StatusOK {
+		t.Fatalf("the successor polls with %d, want 200", got)
+	}
+}
+
+// An event ID that a Mac can work out can be taken first by an event of its own, which
+// would make the alert a duplicate. The alert's ID is random, so it is stored anyway.
+func TestPreclaimedIDsDoNotHideTheAlert(t *testing.T) {
+	rh := newRotationServer(t)
+	stale := rh.agent
+	day := rh.clock.now().UTC().Format("2006-01-02")
+	claimed := event.RaisedID("acme/rotated-key-used/" + stale.deviceID + "/" + day)
+	var health map[string]any
+	if err := json.Unmarshal(testfixture.Raw(t, "agent-health"), &health); err != nil {
+		t.Fatal(err)
+	}
+	health["event_id"] = claimed
+	raw, err := json.Marshal(map[string]any{"events": []any{health}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, out := stale.post(t, raw)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), claimed) {
+		t.Fatalf("pre-claim: %d %v", rec.Code, out)
+	}
+
+	successor := rh.rotated()
+	rh.clock.advance(2 * time.Minute)
+	rec, out = stale.post(t, batch(t, "agent-health"))
+	wantCode(t, rec, out, http.StatusUnauthorized, "credential_invalid")
+
+	got := rh.enrollmentEvents(event.EnrollmentStateRotatedKeyUsed)
+	if len(got) != 1 {
+		t.Fatalf("%d rotated_key_used events, want 1", len(got))
+	}
+	if got[0].EventID == claimed {
+		t.Fatalf("the alert has the pre-claimed ID %s", claimed)
+	}
+	wantStaleKeyUsed(t, got[0], stale, successor.deviceID, successor.deviceID, "")
 }

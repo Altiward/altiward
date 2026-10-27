@@ -88,20 +88,29 @@ details. That includes every permanent admin use event the agent sends: sign-in
 times, terminals and SSH addresses, who approved prompts, and screen sharing viewers' addresses, as listed above. Console
 actions go there too, naming the person who made them.
 
-The server also raises an `agent.enrollment` event of its own each time a key enrols. Its
-state is `enrolled` for a Mac's first key, or its first after earlier ones were revoked
-with approval off, `pending` for a new key waiting for an admin's approval, and `replaced`
-for a new key that took the place of the active one without approval. It carries the Mac's
-serial, hardware UUID and agent version (from the agent's `User-Agent`), the new key's
-device ID, its SHA-256 fingerprint and where the Mac says it is kept, and the enrolment
-token's name (`token:` and a short fingerprint, never the token). When a key was active
-before, it also carries that key's device ID and storage and whether the two keys came
-from the same hardware UUID. It holds no public key. A Mac that sends its key again, as a
-retry, raises nothing new.
+The server also raises an `agent.enrollment` event of its own each time a key enrols, a
+Mac replaces its key by rotation, or a key that rotation replaced is used again. Its state
+is `enrolled` for a Mac's first key, or its first after earlier ones were revoked with
+approval off, `pending` for a new key waiting for an admin's approval, `replaced` for a
+new key that took the place of the active one without approval, `rotated` for a new key
+that replaced the Mac's own by rotation, and `rotated_key_used` when a key that rotation
+replaced signs a request again. It carries the Mac's serial, hardware UUID and agent
+version (from the agent's `User-Agent`), the new key's device ID, its SHA-256 fingerprint
+and where the Mac says it is kept, and the enrolment token's name (`token:` and a short
+fingerprint, never the token), which a rotation doesn't use and so doesn't carry. When a
+key was active before, it also carries that key's device ID and storage and whether the
+two keys came from the same hardware UUID. A `rotated_key_used` event carries instead the
+replaced key's device ID and fingerprint, the device ID of the key that replaced it, the
+device ID of the key the server revoked because of it (if any), and the agent version
+that sent the request. It is raised at most once a day for each replaced key, unless it
+revoked one. None of these events holds a public key. A Mac that sends its key again, as
+a retry, raises nothing new.
 
-For these enrolment events, CEF puts the token fingerprint in `suser` and the new key's
-device ID in `cs5` with label `target`. Sentinel also puts the token fingerprint in its
-`UserName` column. The full OCSF record carries the same fields as described above.
+For these enrolment events, CEF puts the token fingerprint in `suser` and the device ID
+the event names (the new key's, or the replaced key's for `rotated_key_used`) in `cs5`
+with label `target`. Sentinel also puts the token fingerprint in its `UserName` column.
+For the two rotation states, which carry no token, both hold the Mac's serial instead.
+The full OCSF record carries the same fields as described above.
 
 In the example deployment, Caddy also asks Let's Encrypt for TLS certificates unless you
 provide your own. If you pull the image from the registry instead of loading the file,

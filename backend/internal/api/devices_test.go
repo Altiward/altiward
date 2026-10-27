@@ -108,6 +108,18 @@ func (a *agent) post(t *testing.T, body []byte) (*httptest.ResponseRecorder, map
 // send signs req over body and serves it. The test server's clock is serverNow.
 func (a *agent) send(t *testing.T, req *http.Request, body []byte) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
+	a.sign(t, req, body)
+	rec := httptest.NewRecorder()
+	a.h.ServeHTTP(rec, req)
+	var out map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	return rec, out
+}
+
+// sign sets the headers of a request signed by a over body at the clock's time plus its
+// skew, and its User-Agent when it has one.
+func (a *agent) sign(t *testing.T, req *http.Request, body []byte) {
+	t.Helper()
 	now := serverNow(t)
 	if a.clock != nil {
 		now = a.clock.now()
@@ -121,11 +133,9 @@ func (a *agent) send(t *testing.T, req *http.Request, body []byte) (*httptest.Re
 	req.Header.Set("Authorization", "AltiwardDevice "+a.deviceID)
 	req.Header.Set("X-Altiward-Timestamp", strconv.FormatInt(ts, 10))
 	req.Header.Set("X-Altiward-Signature", base64.StdEncoding.EncodeToString(sig))
-	rec := httptest.NewRecorder()
-	a.h.ServeHTTP(rec, req)
-	var out map[string]any
-	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	return rec, out
+	if a.userAgent != "" {
+		req.Header.Set("User-Agent", a.userAgent)
+	}
 }
 
 func newKey(t testing.TB) *ecdsa.PrivateKey {

@@ -42,13 +42,28 @@ type rotateRequest struct {
 // authenticated like any other agent request, but the status of the key is the store's
 // call: it decides under the Mac's lock, so a retry of a rotation that already happened
 // is told so even though the key that signed it is revoked by now.
+//
+// A key that rotation replaced and that asks for anything else shows a second holder of
+// the Mac's identity: the store's contest settles it, and this raises rotated_key_used
+// when the contest calls for it.
 func (s *Server) rotate(w http.ResponseWriter, r *http.Request) {
 	cred, sr, body, ok := s.authenticateDevice(w, r)
 	if !ok {
 		return
 	}
-	req, spki, ok := s.checkRotationBody(w, cred, body)
-	if !ok {
+	req, spki, problem := checkRotationBody(cred, body)
+	if problem != "" {
+		if cred.Status != store.CredentialRevoked {
+			writeCodedError(w, http.StatusBadRequest, codeRotationInvalid, problem)
+			return
+		}
+		// A revoked key is refused for being revoked, whatever it asks. A retry of a real
+		// rotation carries the body that worked, so a replaced key sending a bad one is a
+		// stale key's use like any other.
+		if cred.RotatedTo != "" {
+			s.staleKeyUsed(r, cred, sr)
+		}
+		writeCodedError(w, http.StatusUnauthorized, codeCredentialInvalid, "device credential revoked")
 		return
 	}
 	id, err := store.NewDeviceID()
@@ -64,6 +79,9 @@ func (s *Server) rotate(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, store.ErrRotatedElsewhere), errors.Is(err, store.ErrRevoked), errors.Is(err, store.ErrNotFound):
 		// A key that has been rotated away, whoever now holds it, is as dead as a revoked one.
+		if res.Contest != nil {
+			s.reportStaleKeyUse(r, cred.TenantID, *res.Contest, now)
+		}
 		writeCodedError(w, http.StatusUnauthorized, codeCredentialInvalid, "device credential revoked")
 	case errors.Is(err, store.ErrInvalidState):
 		writeCodedError(w, http.StatusForbidden, codeEnrollmentPending, "this enrollment is awaiting approval in the console")
@@ -77,25 +95,34 @@ func (s *Server) rotate(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		s.log.Error("rotate", "tenant", cred.TenantID, "serial", cred.Serial, "device_id", cred.DeviceID, "err", err)
 		writeError(w, http.StatusServiceUnavailable, "could not rotate; retry later")
-	case res.Retry:
-		// The same request again: the rotation is stored, and the answer is its current state.
-		writeJSON(w, http.StatusOK, map[string]string{"device_id": res.Credential.DeviceID, "status": string(res.Credential.Status)})
 	default:
-		c := res.Credential
-		s.log.Info("device key rotated", "tenant", c.TenantID, "serial", c.Serial, "device_id", c.DeviceID,
-			"from_device_id", cred.DeviceID, "key_storage", c.KeyStorage)
-		writeJSON(w, http.StatusCreated, map[string]string{"device_id": c.DeviceID, "status": string(c.Status)})
+		// The same request again (a retry) is answered with the rotation's current state.
+		// Either way the event goes first: the answer names the successor's device_id,
+		// which the event's ID is made from, so the event must be stored before a Mac can
+		// claim that ID with one of its own. A retry raises it again, and the store keeps
+		// one. A Mac that can't be reported still rotates, and a retry, if one comes, tries again.
+		c, status := res.Credential, http.StatusCreated
+		if res.Retry {
+			status = http.StatusOK
+		}
+		if err := s.storeRaised(r, c.TenantID, rotationEvent(c.TenantID, res, r.UserAgent(), now), now); err != nil {
+			s.log.Error("rotation event not recorded", "tenant", c.TenantID, "serial", c.Serial, "device_id", c.DeviceID, "err", err)
+		}
+		if !res.Retry {
+			s.log.Info("device key rotated", "tenant", c.TenantID, "serial", c.Serial, "device_id", c.DeviceID,
+				"from_device_id", cred.DeviceID, "key_storage", c.KeyStorage)
+		}
+		writeJSON(w, status, map[string]string{"device_id": c.DeviceID, "status": string(c.Status)})
 	}
 }
 
 // checkRotationBody requires a body that decodes, with a P-256 key that isn't the
-// signer's own and a proof by that key for the signer's device ID. Otherwise it writes
-// 400 rotation_invalid. It returns the request and the new key's DER.
-func (s *Server) checkRotationBody(w http.ResponseWriter, cred store.DeviceCredential, body []byte) (rotateRequest, []byte, bool) {
+// signer's own and a proof by that key for the signer's device ID. It returns the request
+// and the new key's DER, or what is wrong with the body.
+func checkRotationBody(cred store.DeviceCredential, body []byte) (rotateRequest, []byte, string) {
 	var req rotateRequest
-	refuse := func(msg string) (rotateRequest, []byte, bool) {
-		writeCodedError(w, http.StatusBadRequest, codeRotationInvalid, msg)
-		return req, nil, false
+	refuse := func(msg string) (rotateRequest, []byte, string) {
+		return req, nil, msg
 	}
 	if len(body) > maxRotateBytes {
 		return refuse("body too large")
@@ -120,7 +147,7 @@ func (s *Server) checkRotationBody(w http.ResponseWriter, cred store.DeviceCrede
 	if err != nil {
 		return refuse("proof must be a base64 signature by the new key over the rotation statement")
 	}
-	return req, spki, true
+	return req, spki, ""
 }
 
 // rotationRetryAfter is the whole seconds until prev may rotate, rounded up and at least 1.

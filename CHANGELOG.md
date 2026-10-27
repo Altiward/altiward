@@ -30,12 +30,17 @@ None.
 
 ### Changes
 
-- A Mac can replace its key with one it proves it holds.
-- `POST /v1/agent/rotate` replaces the key that signs the request with the one in its body,
-  after checking a proof signed by the new key. The new key is active at once, with the
-  Mac's serial and hardware UUID, and the old key is revoked in the same step. A key must
-  have been active for 24 hours first, and a key kept in the Secure Enclave is never
-  replaced. Sending the same request again answers with the key it made.
+- A Mac can replace its key with one it proves it holds: `POST /v1/agent/rotate` replaces
+  the key that signs the request with the one in its body, after checking a proof signed
+  by the new key. The new key is active at once, with the Mac's serial and hardware UUID,
+  and the old key is revoked in the same step. A key must have been active for 24 hours
+  first, and a key kept in the Secure Enclave is never replaced. Sending the same request
+  again answers with the key it made.
+- A rotation raises an `agent.enrollment` event with state `rotated`. A key that rotation
+  replaced and that signs a request again raises one with state `rotated_key_used`: a
+  High alert that names the key the server revoked as a result, if any. It is raised at
+  most once a day for each key, unless it revoked one. A request signed just before the
+  rotation and arriving within a minute of it raises nothing.
 
 ## Agent 0.9.0 - 2026-10-27
 

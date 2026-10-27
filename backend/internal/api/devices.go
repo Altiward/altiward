@@ -31,15 +31,15 @@ const (
 // counts over an hour.
 const enrollRetryAfter = "3600"
 
-// enrollEventTimeout bounds the write of an enrolment's event, which doesn't stop when the
-// request does.
+// enrollEventTimeout bounds the write of an event the server raises about a key (an
+// enrolment, a rotation or a stale key's use), which doesn't stop when the request does.
 const enrollEventTimeout = 10 * time.Second
 
 // requireDevice authenticates a request signed by an enrolled Mac and hands the
 // handler a principal carrying its tenant, device ID and serial.
 func (s *Server) requireDevice(h handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cred, _, body, ok := s.authenticateDevice(w, r)
+		cred, sr, body, ok := s.authenticateDevice(w, r)
 		if !ok {
 			return
 		}
@@ -48,12 +48,58 @@ func (s *Server) requireDevice(h handler) http.Handler {
 			writeCodedError(w, http.StatusForbidden, codeEnrollmentPending, "this enrollment is awaiting approval in the console")
 			return
 		case store.CredentialRevoked:
+			if cred.RotatedTo != "" {
+				s.staleKeyUsed(r, cred, sr)
+			}
 			writeCodedError(w, http.StatusUnauthorized, codeCredentialInvalid, "device credential revoked")
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		h(w, r, auth.Principal{TenantID: cred.TenantID, Role: auth.RoleAgent, DeviceID: cred.DeviceID, Serial: cred.Serial})
 	})
+}
+
+// staleKeyUsed resolves the contest when cred, a key that rotation replaced, signed sr and
+// the signature verified. The request is refused with 401 whatever this finds, so a failure
+// is only logged.
+func (s *Server) staleKeyUsed(r *http.Request, cred store.DeviceCredential, sr auth.SignedRequest) {
+	now := s.now()
+	c, err := s.store.StaleKeyUsed(r.Context(), cred.DeviceID, time.Unix(sr.Timestamp, 0), now)
+	if err != nil {
+		s.log.Error("stale key contest", "tenant", cred.TenantID, "serial", cred.Serial, "device_id", cred.DeviceID, "err", err)
+		return
+	}
+	if c != nil {
+		s.reportStaleKeyUse(r, cred.TenantID, *c, now)
+	}
+}
+
+// reportStaleKeyUse raises rotated_key_used for a contest that calls for it: one that
+// revoked a key, or the first use of the stale key in a day.
+func (s *Server) reportStaleKeyUse(r *http.Request, tenantID string, c store.ContestResult, now time.Time) {
+	if !c.Report {
+		return
+	}
+	revoked := ""
+	if c.Revoked != nil {
+		revoked = c.Revoked.DeviceID
+	}
+	st := c.Stale
+	s.log.Warn("rotated device key used", "tenant", tenantID, "serial", st.Serial, "device_id", st.DeviceID,
+		"rotated_to", st.RotatedTo, "revoked_device_id", revoked)
+	if err := s.storeRaised(r, tenantID, rotatedKeyUsedEvent(tenantID, c, r.UserAgent(), now), now); err != nil {
+		s.log.Error("rotated key use event not recorded", "tenant", tenantID, "serial", st.Serial, "device_id", st.DeviceID, "err", err)
+	}
+}
+
+// storeRaised stores e, an event the server raised about a change it has already stored.
+// A client that gives up now must not stop the event being stored, but a database that
+// doesn't answer still mustn't hold the handler, so the write gets enrollEventTimeout.
+func (s *Server) storeRaised(r *http.Request, tenantID string, e event.Event, now time.Time) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), enrollEventTimeout)
+	defer cancel()
+	_, err := s.store.Ingest(ctx, tenantID, []event.Event{e}, now)
+	return err
 }
 
 // authenticateDevice checks that a request was signed by the key of the credential it
@@ -160,14 +206,10 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal
 	if c.DeviceID == id {
 		status = http.StatusCreated
 		// The credential is stored either way; a Mac that can't be reported still enrols. The
-		// agent's retry gets the stored credential and raises nothing, so a client that gives
-		// up now must not stop the event being stored. A database that doesn't answer still
-		// mustn't hold the handler, so the write gets enrollEventTimeout.
+		// agent's retry gets the stored credential and raises nothing, so the event is stored
+		// even if the client has given up.
 		e := enrollmentEvent(p.TenantID, res, r.UserAgent(), now)
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), enrollEventTimeout)
-		_, err := s.store.Ingest(ctx, p.TenantID, []event.Event{e}, now)
-		cancel()
-		if err != nil {
+		if err := s.storeRaised(r, p.TenantID, e, now); err != nil {
 			s.log.Error("enrollment event not recorded", "tenant", p.TenantID, "serial", c.Serial, "device_id", c.DeviceID, "err", err)
 		}
 		s.log.Info("device enrolled", "tenant", p.TenantID, "serial", c.Serial, "device_id", c.DeviceID,
