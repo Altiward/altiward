@@ -46,7 +46,10 @@ None.
 
 ### Security
 
-None.
+- If storing a `rotated_key_used` alert failed, the server had already revoked the Mac's
+  current key and marked the use as reported, so an admin saw a revoked key with no alert,
+  and the key's other uses that day raised none. The alert is now stored in the same step:
+  if it can't be, nothing changes, and the key's next use is checked again.
 
 ### Changes
 
@@ -60,9 +63,9 @@ None.
   their pane instead of scrolling sideways. As the pane narrows, the time-used bar shows
   only its text, then the columns the inspector also shows give way: Started and Time
   used, or Queued, macOS and Privileges.
-- The oldest supported agent is now 1.0, so the console tags a Mac with an older agent as
-  outdated, and the server no longer promises to accept older agents' events. The frozen
-  compatibility fixtures keep only agent 1.0's.
+- The console's help tags stay inside the window. Near the right edge of a page or in the
+  inspector, they used to run off the screen or be cut off, and the inspector could scroll
+  sideways because of them.
 
 ## Agent 1.0.0 - 2026-10-27
 

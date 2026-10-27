@@ -113,55 +113,64 @@ func (p *Postgres) migrate(ctx context.Context) error {
 }
 
 func (p *Postgres) Ingest(ctx context.Context, tenantID string, events []event.Event, receivedAt time.Time) (IngestResult, error) {
-	res := IngestResult{Accepted: []string{}, Duplicate: []string{}}
+	var res IngestResult
 	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
-		res = IngestResult{Accepted: []string{}, Duplicate: []string{}}
-		// Absent session rows cannot be protected by SELECT FOR UPDATE. Serialise
-		// ingestion within a tenant before any writes, covering first writers and
-		// opposite event orders with one bounded advisory lock per transaction.
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, ingestLockID(tenantID)); err != nil {
-			return fmt.Errorf("lock ingestion: %w", err)
-		}
-		for _, e := range events {
-			body, err := json.Marshal(e)
-			if err != nil {
-				return err
-			}
-			tag, err := tx.Exec(ctx, `
-				INSERT INTO events (tenant_id, event_id, type, session_id, device_serial, occurred_at, received_at, body)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-				ON CONFLICT (tenant_id, event_id) DO NOTHING`,
-				tenantID, e.EventID, string(e.Type), e.SessionID, e.Device.Serial, e.Timestamp, receivedAt, body)
-			if err != nil {
-				return fmt.Errorf("insert event: %w", err)
-			}
-			if tag.RowsAffected() == 0 {
-				res.Duplicate = append(res.Duplicate, e.EventID)
-				continue
-			}
-			if e.SessionID != nil {
-				if err := p.applySession(ctx, tx, tenantID, *e.SessionID, e, receivedAt); err != nil {
-					return err
-				}
-			}
-			if err := p.applyDevice(ctx, tx, tenantID, e, receivedAt); err != nil {
-				return err
-			}
-			for _, sink := range p.sinks {
-				if _, err := tx.Exec(ctx, `
-					INSERT INTO export_outbox (tenant_id, sink, event_id, next_attempt_at) VALUES ($1, $2, $3, $4)
-					ON CONFLICT DO NOTHING`, tenantID, sink, e.EventID, receivedAt); err != nil {
-					return fmt.Errorf("queue export: %w", err)
-				}
-			}
-			res.Accepted = append(res.Accepted, e.EventID)
-		}
-		return nil
+		var err error
+		res, err = p.ingest(ctx, tx, tenantID, events, receivedAt)
+		return err
 	})
 	if err != nil {
 		return IngestResult{Accepted: []string{}, Duplicate: []string{}}, err
 	}
-	return res, err
+	return res, nil
+}
+
+// ingest stores events in tx, with the session, device and export changes they make. A
+// contest calls it under a Mac's serial lock to store its alert; nothing takes a serial lock
+// after the ingest lock, so the two can't deadlock.
+func (p *Postgres) ingest(ctx context.Context, tx pgx.Tx, tenantID string, events []event.Event, receivedAt time.Time) (IngestResult, error) {
+	res := IngestResult{Accepted: []string{}, Duplicate: []string{}}
+	// Absent session rows cannot be protected by SELECT FOR UPDATE. Serialise
+	// ingestion within a tenant before any writes, covering first writers and
+	// opposite event orders with one bounded advisory lock per transaction.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, ingestLockID(tenantID)); err != nil {
+		return res, fmt.Errorf("lock ingestion: %w", err)
+	}
+	for _, e := range events {
+		body, err := json.Marshal(e)
+		if err != nil {
+			return res, err
+		}
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO events (tenant_id, event_id, type, session_id, device_serial, occurred_at, received_at, body)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			ON CONFLICT (tenant_id, event_id) DO NOTHING`,
+			tenantID, e.EventID, string(e.Type), e.SessionID, e.Device.Serial, e.Timestamp, receivedAt, body)
+		if err != nil {
+			return res, fmt.Errorf("insert event: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			res.Duplicate = append(res.Duplicate, e.EventID)
+			continue
+		}
+		if e.SessionID != nil {
+			if err := p.applySession(ctx, tx, tenantID, *e.SessionID, e, receivedAt); err != nil {
+				return res, err
+			}
+		}
+		if err := p.applyDevice(ctx, tx, tenantID, e, receivedAt); err != nil {
+			return res, err
+		}
+		for _, sink := range p.sinks {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO export_outbox (tenant_id, sink, event_id, next_attempt_at) VALUES ($1, $2, $3, $4)
+				ON CONFLICT DO NOTHING`, tenantID, sink, e.EventID, receivedAt); err != nil {
+				return res, fmt.Errorf("queue export: %w", err)
+			}
+		}
+		res.Accepted = append(res.Accepted, e.EventID)
+	}
+	return res, nil
 }
 
 func ingestLockID(tenantID string) int64 {
