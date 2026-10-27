@@ -100,6 +100,9 @@ Start with README.md; the agent's trust model is in agent/README.md (Design note
   `@unchecked Sendable`; the existing uses are lock-protected.
 - Altiward is Apache 2.0 (`LICENSE`). A new dependency must use a licence on the allowlist
   in `scripts/third-party-notices.mjs`; ask before adding anything else.
+- `REUSE.toml` gives every file its copyright and licence, so new files need no SPDX
+  header, and CI runs `reuse lint`. A file under another licence needs its own SPDX lines
+  and the licence text in `LICENSES/`.
 - No secrets or signing material in the repo. Dev tokens live only in the Makefile.
   Local builds are signed ad hoc; release signing happens only in `release-agent.yml`, from
   repository secrets (`release-server.yml` signs keyless).

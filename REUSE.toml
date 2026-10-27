@@ -1,0 +1,15 @@
+version = 1
+
+# Every file is Altiward's own and under Apache 2.0 unless it says otherwise in its own
+# SPDX header (https://reuse.software/).
+[[annotations]]
+path = "**"
+SPDX-FileCopyrightText = "2026 Phil Chatham"
+SPDX-License-Identifier = "Apache-2.0"
+
+# The notices quote third-party copyright lines, which are not the files' own.
+[[annotations]]
+path = ["NOTICE", "THIRD_PARTY_NOTICES.md", "deploy/caddy/THIRD_PARTY_NOTICES.md"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Phil Chatham"
+SPDX-License-Identifier = "Apache-2.0"

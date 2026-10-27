@@ -190,6 +190,14 @@ jobs:
           jq -e --slurpfile t deploy/azure/azuredeploy.json \
             '[.parameters.outputs | keys[]] - [$t[0].parameters | keys[]] | length == 0' deploy/azure/createUiDefinition.json
 
+  reuse:
+    name: Copyright and licence information (REUSE)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Every file has copyright and licence information
+        uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
+
   # Signing and notarization run in a separate release workflow that reads the
   # Developer ID certificate and notary credentials from repository secrets.
   # Nothing signing-related is committed to this repository.

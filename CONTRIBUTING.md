@@ -55,6 +55,14 @@ that you understand it is public. Forgot? Run `git commit --amend -s` for the la
 or `git rebase --signoff main` for a branch. Every commit must be signed off; we don't merge
 pull requests with commits that aren't.
 
+## Copyright and licence information
+
+The repository follows the [REUSE](https://reuse.software/) specification:
+[`REUSE.toml`](REUSE.toml) puts every file under Apache 2.0, so a new file needs no header.
+A file under another licence keeps its own `SPDX-FileCopyrightText` and
+`SPDX-License-Identifier` lines, and that licence's text goes in [`LICENSES/`](LICENSES/).
+CI runs `reuse lint`; run it yourself with `pipx run reuse lint`.
+
 ## The rules that keep Altiward safe to upgrade
 
 Some things are contracts with people who already run Altiward. Please keep to them.
