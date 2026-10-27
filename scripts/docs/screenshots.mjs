@@ -1,7 +1,7 @@
 // Regenerates the console screenshots in the install guide (docs/images/install/), in light
 // and dark, from `make console-seed`'s demo data. Rerun it after a console change that
 // alters a pictured screen. The README's docs/images/console-overview.png isn't one of
-// them: it needs months of history, which the seed doesn't make.
+// them: site-screenshots.mjs makes it, with altiward.com's pictures, from months of history.
 //
 // Usage: make docs-screenshots. Needs `make console-install` and, once,
 // `npx --prefix console playwright install chromium`. It runs its own API on :8091 against

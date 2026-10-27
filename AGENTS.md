@@ -40,6 +40,11 @@ Start with README.md; the agent's trust model is in agent/README.md (Design note
   `docs/images/install/`, light and dark, from the seed (run
   `npx --prefix console playwright install chromium` once). Rerun it when a console change
   alters a pictured screen.
+- `make site-screenshots SITE=../altiward.com`: regenerates the console pictures in that
+  altiward.com checkout's `images/`, light and dark with their WebP copies, and the README's
+  `docs/images/console-overview.png`, from `dev/seed-site.mjs`'s larger example organisation
+  (needs `cwebp`). Rerun it when a release changes a pictured screen, and check the site's
+  alt text and captions against the new pictures.
 - `make app-icon`: rebuilds `agent/packaging/AppIcon.icns`, the Installer backgrounds in
   `agent/packaging/installer/` and the square avatar (`altiward-avatar.png`, the GitHub
   organisation's picture) from the brand SVGs in `assets/brand/`. It also renders
