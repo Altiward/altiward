@@ -72,6 +72,8 @@ None.
 
 ### Changes
 
+- The supported agent minor releases are 0.9 and 1.0. The frozen compatibility fixtures
+  retain both, and the console flags agents older than 0.9 as out of support.
 - A Mac can replace its key with one it proves it holds: `POST /v1/agent/rotate` replaces
   the key that signs the request with the one in its body, after checking a proof signed
   by the new key. The new key is active at once, with the Mac's serial and hardware UUID,

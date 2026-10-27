@@ -88,7 +88,8 @@ Semantic versions, separately for the server and the agent: a patch for fixes
 whenever needed, a minor for features about once a quarter, and a major only when
 dropping support for something people relied on. Support and agent compatibility count
 the last two minors, so more frequent minors shorten the support window. The first
-releases are Server 0.1.0 and Agent 0.1.0. When to tag 1.0.0 is open.
+releases are Server 0.1.0 and Agent 0.1.0. Server 1.0.0 and Agent 1.0.0 are the first
+stable releases.
 
 ## Agent release
 
