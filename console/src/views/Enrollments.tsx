@@ -99,7 +99,7 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
           )}
           {data && rows.length === 0 ? (
             <Empty title={data.length ? "No matching enrollments" : "No Macs enrolled yet"}>
-              {data.length ? "Try another filter." : "A Mac enrolls the first time its agent reaches the server with your enrollment token."}
+              {data.length ? "Try another filter." : "A Mac enrols the first time its agent reaches the server with your enrolment token."}
             </Empty>
           ) : (
             <Table label="Enrollments" rows={rows} rowKey={(e) => e.device_id} selected={selected} onSelect={setSelected}
@@ -260,7 +260,7 @@ function EnrollmentInspector({ enrollment: e, active, predecessor, successor, in
             ? active
               ? "The Mac keeps reporting with its previous key."
               : "This Mac has no active key, so it can’t report until it enrols again with a new key."
-            : "The Mac can’t report with this key. Unless re-enrollment needs approval, it enrolls again on its next check-in."}
+            : "The Mac can’t report with this key. Unless re-enrolment needs approval, it enrols again on its next check-in."}
           confirm={e.status === "pending" ? "Reject" : "Revoke"} destructive busy={busy}
           onConfirm={() => act("revoke")} onCancel={() => setConfirming(false)} />
       )}

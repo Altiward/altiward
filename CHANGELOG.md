@@ -14,7 +14,9 @@ Every section has the four headings below, with "None." under any that don't app
 ### Upgrade order
 
 Upgrade the server first. An agent that can rotate its key, on a server that can't, keeps
-its key and asks again a day later.
+its key and asks again a day later. Anything between the Macs and the server, such as a
+firewall or TLS-inspecting proxy, must pass the whole of `/v1/agent/` to the server
+unaltered, including the new `/v1/agent/rotate`.
 
 ### Breaking changes
 
@@ -27,10 +29,10 @@ None.
   by the new key, in a request signed by the old one. Until the server's answer is known,
   it keeps both keys in `agent.sqlite` and sends nothing else signed by the old key, in
   the daemon or in a command run beside it, so a lost answer, a restart, sleep or a busy
-  store never makes a Mac look like a second holder of its own key. Only the server's
-  refusal, with its code, makes the agent give up a rotation, so a proxy's block page or
-  throttle can't either. A command run while the daemon is rotating says so and changes
-  nothing.
+  store never makes a Mac look like a second holder of its own key. Once a rotate request
+  may have reached the server, only the server's refusal, with its code, makes the agent
+  give up the rotation, so a proxy's block page or throttle can't either. A command run
+  while the daemon is rotating says so and changes nothing.
 
 ### Changes
 

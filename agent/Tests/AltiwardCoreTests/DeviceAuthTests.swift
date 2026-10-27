@@ -1938,15 +1938,18 @@ extension DeviceAuthenticatorTests {
         #expect(oldKeyRequests(server, oldID, after: start).isEmpty)
     }
 
-    /// A load balancer throttles the rotate request without the server's code: that is no
-    /// refusal of the rotation, so the agent holds and asks again.
-    @Test(.timeLimit(.minutes(1))) func anUncodedRateLimitLeavesTheRotationUnknown() async throws {
+    /// A load balancer throttles a retry without the server's code: that is no refusal of
+    /// the rotation, so the agent holds and asks again.
+    @Test(.timeLimit(.minutes(1))) func anUncodedRateLimitOfARetryLeavesTheRotationUnknown() async throws {
         let store = try makeStore()
         let server = FakeServer(clock: clock)
         let (auth, oldID) = try await readyToRotate(store, server)
         let start = server.requests.count
 
+        server.failRotate(URLError(.timedOut))
+        #expect(await auth.rotate(reason: "test") == .unknown)
         server.answerRotate(status: 429, retryAfter: 60, body: Data("Too Many Requests".utf8), times: 1)
+        clock.advance(15)
         #expect(await auth.rotate(reason: "test") == .unknown)
         #expect(try nextRecord(store) != nil)
         #expect(server.successors[oldID] == nil)
@@ -1958,18 +1961,73 @@ extension DeviceAuthenticatorTests {
         #expect(oldKeyRequests(server, oldID, after: start).isEmpty)
     }
 
-    /// A 4xx whose code belongs to another refusal is no refusal of the rotation either.
-    @Test(.timeLimit(.minutes(1))) func aMismatchedRefusalCodeLeavesTheRotationUnknown() async throws {
+    /// On a retry, a 4xx whose code belongs to another refusal is no refusal of the
+    /// rotation either.
+    @Test(.timeLimit(.minutes(1))) func aMismatchedRefusalCodeOnARetryLeavesTheRotationUnknown() async throws {
         let store = try makeStore()
         let server = FakeServer(clock: clock)
         let (auth, oldID) = try await readyToRotate(store, server)
 
+        server.failRotate(URLError(.networkConnectionLost))
+        #expect(await auth.rotate(reason: "test") == .unknown)
         server.answerRotate(status: 409, code: "rotation_rate_limited", times: 1)
+        clock.advance(15)
         #expect(await auth.rotate(reason: "test") == .unknown)
         #expect(try nextRecord(store) != nil)
         clock.advance(15)
         #expect(await auth.rotate(reason: "test") == .rotated(.secureEnclave))
         #expect(server.successors[oldID] != nil)
+        #expect(server.staleKeyUses == 0)
+    }
+
+    /// A proxy or firewall refuses the very first rotate request with a page of its own.
+    /// Nothing can have committed, so the rotation is dropped for a day and the Mac keeps
+    /// reporting with its key, rather than holding everything behind a path it can't use.
+    @Test(.timeLimit(.minutes(1))) func aProxyRefusingTheFirstRequestDefersTheRotation() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (logged, log) = logLines()
+        let (auth, oldID) = try await readyToRotate(store, server, log: log)
+
+        server.answerRotate(
+            status: 403, body: Data("<html><body>Blocked by your organisation's web policy</body></html>".utf8))
+        #expect(await auth.rotate(reason: "test") == .deferred(until: clock.now.addingTimeInterval(86400)))
+        #expect(try nextRecord(store) == nil)
+        #expect(logged.withLock { $0 }.contains { $0.contains("Check that the whole of /v1/agent/ reaches the server") })
+        #expect(try await postEvents(auth) == 200)
+        #expect(server.requests.last?.deviceID == oldID)
+        #expect(await auth.keyStorage == .software)
+        #expect(server.successors.isEmpty)
+        #expect(server.staleKeyUses == 0)
+
+        // The same for an uncoded throttle, which waits a day whatever Retry-After says.
+        clock.advance(86400)
+        server.stopAnsweringRotate()
+        server.answerRotate(status: 429, retryAfter: 60, body: Data("Too Many Requests".utf8))
+        #expect(await auth.rotate(reason: "test") == .deferred(until: clock.now.addingTimeInterval(86400)))
+        #expect(try nextRecord(store) == nil)
+        #expect(server.staleKeyUses == 0)
+    }
+
+    /// A saved rotation from before the agent recorded whether it was sent counts as sent:
+    /// a proxy's refusal of it holds, since an earlier attempt may have committed.
+    @Test(.timeLimit(.minutes(1))) func aSavedRotationThatDoesNotSayCountsAsSent() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (_, oldID) = try await readyToRotate(store, server)
+        _ = try saveNextRecord(store, from: oldID)
+        var record = try JSONSerialization.jsonObject(
+            with: Data(try #require(try store.value(forKey: "device_credential_next")).utf8)) as! [String: Any]
+        #expect(record.removeValue(forKey: "sent") != nil)
+        try store.setValue(
+            String(decoding: try JSONSerialization.data(withJSONObject: record), as: UTF8.self),
+            forKey: "device_credential_next")
+        #expect(try nextRecord(store)?.sent == true)
+
+        let restarted = authenticator(store, server)
+        server.answerRotate(status: 403, body: Data("<html>Blocked</html>".utf8), times: 1)
+        #expect(await restarted.rotate(reason: "test") == .unknown)
+        #expect(try nextRecord(store) != nil)
         #expect(server.staleKeyUses == 0)
     }
 

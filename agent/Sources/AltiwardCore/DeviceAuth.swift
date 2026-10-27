@@ -179,6 +179,25 @@ struct PendingRotation: Codable {
     var privateKey: Data
     var storage: KeyStorage
     var madeAt: Date
+    /// Whether the rotate request may have left the Mac. Set, and saved, before the first
+    /// send, so a refusal of a request never sent before can't hide an earlier commit.
+    /// Read leniently, and true when missing: a record that doesn't say is treated as sent.
+    var sent = true
+}
+
+extension PendingRotation {
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        serverURL = try c.decode(String.self, forKey: .serverURL)
+        fromDeviceID = try c.decode(String.self, forKey: .fromDeviceID)
+        fromPrivateKey = try c.decode(Data.self, forKey: .fromPrivateKey)
+        serial = try c.decode(String.self, forKey: .serial)
+        hardwareUUID = try c.decode(String.self, forKey: .hardwareUUID)
+        privateKey = try c.decode(Data.self, forKey: .privateKey)
+        storage = try c.decode(KeyStorage.self, forKey: .storage)
+        madeAt = try c.decode(Date.self, forKey: .madeAt)
+        sent = (try? c.decodeIfPresent(Bool.self, forKey: .sent)) ?? true
+    }
 }
 
 private extension DeviceInfo {
@@ -628,7 +647,7 @@ public actor DeviceAuthenticator {
                 let pending = PendingRotation(
                     serverURL: serverURL.absoluteString, fromDeviceID: fromDeviceID,
                     fromPrivateKey: current.credential.privateKey, serial: serial, hardwareUUID: hardwareUUID,
-                    privateKey: key, storage: storage, madeAt: now())
+                    privateKey: key, storage: storage, madeAt: now(), sent: false)
                 try store.setValue(Self.encode(pending), forKey: PendingRotation.storeKey)
                 return .saved(pending)
             }
@@ -759,6 +778,17 @@ public actor DeviceAuthenticator {
     /// retry, and what its answer means. Holding the gate.
     private func requestRotation(_ pending: PendingRotation, _ proven: Proven) async -> RotationOutcome {
         lastRotationAttempt = now()
+        // A request that has never left the Mac can't have committed, so any refusal of
+        // its first send is final. That it went is saved before it goes, so a restart after
+        // sending never takes a retry for a first send.
+        let firstSend = !pending.sent
+        if firstSend {
+            do {
+                guard try markSent(pending) else { return settled(.notDue) }
+            } catch {
+                return holding("couldn't save that the rotation is being sent: \(error)")
+            }
+        }
         let old = Stored(
             credential: Credential(
                 serverURL: pending.serverURL, privateKey: pending.fromPrivateKey, deviceID: pending.fromDeviceID,
@@ -806,17 +836,23 @@ public actor DeviceAuthenticator {
             return dropRotation(pending, alsoTheOldKey: true, .enrolAgain)
         case 400, 403, 404, 405, 409, 429:
             // Not done, now or on any earlier attempt: the server answers a retry before
-            // anything else. The current key stays. But only Altiward's own refusal, with
-            // its code, says so: a proxy's block page or throttle says nothing about an
-            // earlier attempt, which may have committed. A server without rotation has no
-            // code to send with its 404 or 405.
-            guard status == 404 || status == 405 || Self.refusesRotation(status, code: Self.code(data)) else {
+            // anything else. The current key stays. But on a retry only Altiward's own
+            // refusal, with its code, says so: a proxy's block page or throttle says nothing
+            // about an earlier attempt, which may have committed. A server without rotation
+            // has no code to send with its 404 or 405.
+            let coded = Self.refusesRotation(status, code: Self.code(data))
+            guard status == 404 || status == 405 || coded || firstSend else {
                 return holding("HTTP \(status) without the server's refusal code: \(Self.excerpt(data))")
             }
-            let wait = status == 429 ? retryDelay(response.value(forHTTPHeaderField: "Retry-After")) : Self.rotationDeferral
+            let wait = status == 429 && coded
+                ? retryDelay(response.value(forHTTPHeaderField: "Retry-After")) : Self.rotationDeferral
             let until = now().addingTimeInterval(wait)
             if status == 404 || status == 405 {
                 log("the server does not support key rotation yet; keeping the current key")
+            } else if !coded {
+                log("something other than the server refused the request to rotate this Mac's key (HTTP \(status): "
+                    + "\(Self.excerpt(data))); keeping the current key until \(until.formatted(.iso8601)). "
+                    + "Check that the whole of /v1/agent/ reaches the server")
             } else {
                 log("the server refused to rotate this Mac's key (HTTP \(status): \(Self.excerpt(data))); "
                     + "keeping the current key until \(until.formatted(.iso8601))")
@@ -861,6 +897,20 @@ public actor DeviceAuthenticator {
             log("rotated this Mac's key")
         }
         return settled(.rotated(pending.storage))
+    }
+
+    /// Saves that `pending`'s rotate request is about to leave the Mac, if the saved rotation
+    /// still holds its key. False when it doesn't, and nothing is to be sent.
+    private func markSent(_ pending: PendingRotation) throws -> Bool {
+        try store.transaction {
+            guard let raw = try store.value(forKey: PendingRotation.storeKey),
+                var saved = try? JSONDecoder().decode(PendingRotation.self, from: Data(raw.utf8)),
+                saved.privateKey == pending.privateKey
+            else { return false }
+            saved.sent = true
+            try store.setValue(Self.encode(saved), forKey: PendingRotation.storeKey)
+            return true
+        }
     }
 
     /// Drops the saved rotation if it still holds `pending`'s key, and with
