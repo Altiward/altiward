@@ -328,7 +328,18 @@ Revoking a rotated key is refused: revoke the key in use, which the console link
 Rolling out agent 1.0 therefore adds a `rotated` event and a **Rotated** row for each Mac
 whose key moves. A new agent on an older server finds it doesn't support rotation, keeps
 its key, and asks again a day later. If the server doesn't answer a rotation, the Mac
-keeps both keys and holds its events, which queue on the Mac, until it does.
+keeps both keys and holds its events, which queue on the Mac, until it does. A firewall or
+proxy that answers the rotate request with a server error, or drops it, does the same, and
+the Mac shows as **Not checking in**. On the Mac, `altiward-agent status` then shows the
+rotation in progress and the last answer that kept it waiting:
+
+```
+key rotation: in progress since 2026-11-02T09:14:05.112Z; reports wait until the server answers
+  last logged 2026-11-02T10:14:20.384Z: HTTP 502: Bad Gateway. If this goes on, check that the whole of /v1/agent/ reaches the server
+```
+
+Once `/v1/agent/rotate` reaches the server, the Mac finishes the rotation at its next try
+and sends what it held.
 
 ## 3. Check it works
 
@@ -938,6 +949,7 @@ Logs aren't included. If a maintainer asks for them:
 | A `rotated_key_used` alert, or a Mac that enrolled again by itself | A key that was replaced was used again: two holders of one Mac's identity ([A rotated key was used](#a-rotated-key-was-used)) |
 | `upgrade.sh` stopped and left `compose.yaml.new` | You changed `compose.yaml` and so did the release: merge, then run it again with `--merged` ([Releases and updates](#releases-and-updates)) |
 | `upgrade.sh` says a file doesn't match `SHA256SUMS` | The download is incomplete or was changed: download the release again |
+| A Mac shows **Not checking in** while it's on and online | Something between the Mac and the server answers or drops its key rotation request, so it holds its reports. `altiward-agent status` shows `key rotation:` and the last answer ([Key rotation](#key-rotation)) |
 | A Mac shows **Not checking in** | It has been off, offline or unable to reach the agent hostname for longer than the limit. Its events wait on the Mac and arrive when it reconnects. If laptops show this when they're away from the office, the agent hostname isn't reachable from the internet ([Two hostnames](#what-youre-installing)). |
 | **Needs attention** on a Mac | An integrity check failed, for example the agent's files changed, or `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`, `OutOfBandEnforcement`, `OutOfBandGraceMinutes` or `HookCodeRequirement` was set outside MDM. The Mac's details say which. |
 
