@@ -77,8 +77,7 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
   period. Check that `HookCodeRequirement` names the right Team ID before turning `enforce`
   on. A kept, paused or failed removal leaves the finding open, retries at every heartbeat
   and is logged on the Mac. A Privileges grant whose hook never reached the agent looks like
-  rights nobody granted and can be removed; the person can request again. Upgrade the
-  server to 0.3.0 first.
+  rights nobody granted and can be removed; the person can request again.
 - **Records use of permanent admin accounts** (`admin.permanent_use`), always on for every
   account in `PermanentAdmins`. It is evidence, not an alert: it changes nothing in
   **Admins now** or the alerts.
@@ -110,8 +109,8 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
     macOS doesn't keep a log line for them.
   - `sudo altiward-agent permanent-uses [HOURS]` prints what the agent reads (default 24
     hours; run as root).
-  - Needs server 0.4.0. The SIEM gets every event the agent sends; for the console, the
-    server keeps each Mac's open sign-ins and its newest 20 other uses.
+  - The SIEM gets every event the agent sends; for the console, the server keeps each
+    Mac's open sign-ins and its newest 20 other uses.
 - **Runs revokes from the console** (below), removing the user from `admin` itself.
   Permanent admins are never removed.
 - **Runs tamper checks** each heartbeat and sends `agent.tamper` when one changes: the
@@ -140,7 +139,7 @@ profile that arrives after the package, or a later change, applies within second
 
 The agent enrols with the `EnrollmentToken` on first delivery, then signs every request
 with its own P-256 key. On a Mac with a Secure Enclave the daemon makes the key there; on
-other Macs, and on Macs that enrolled before agent 0.2.0, the key starts in the agent
+other Macs, and when the Secure Enclave fails at enrolment, the key starts in the agent
 store under the root-only data directory. `altiward-agent status` shows the device ID,
 where the key is kept, and the key's fingerprint as the console's Enrollments view shows
 it. Only the daemon can use a Secure Enclave key, so on such a Mac
@@ -344,16 +343,15 @@ Secure Enclave can't use while a throwaway key works (the store came from anothe
 backup) is dropped and the Mac enrols again. The store also records the serial and
 hardware UUID of the Mac that made the key, so a file key copied to another Mac (by
 Migration Assistant, a clone or a restore) is dropped there the same way, instead of
-signing as the first Mac; a key stored by an earlier agent is given this Mac's identity
-and stays enrolled. A file key and a Secure Enclave key have separate records, so agent
-0.1 installed over this one finds no key it can't read and enrols again with a file key.
-Where the Mac says its key is kept is its own claim: the server can't check it.
+signing as the first Mac. Where the Mac says its key is kept is its own claim: the server
+can't check it.
 
-**Rotation makes a copied file key go stale.** A copied file key used to work for as long
-as the original did, with both holders unseen. Now the original is replaced, by the move
-into the Secure Enclave or by the 30-day rotation, and the server revokes a replaced key.
-A copy that is then used is refused. If the Mac and the copy both go on using one lineage
-of keys, the second use shows the server two holders: it can't tell which is the Mac, so
+**Rotation makes a copied file key go stale.** Without rotation, a copied file key would
+work for as long as the original did, with both holders unseen. Instead the original is
+replaced, by the move into the Secure Enclave or by the 30-day rotation, and the server
+revokes a replaced key. A copy that is then used is refused. If the Mac and the copy both
+go on using one lineage of keys, the second use shows the server two holders: it can't
+tell which is the Mac, so
 it revokes the lineage's current key, raises a High `rotated_key_used` alert, and the Mac
 enrols again, waiting for an admin's approval when approval is on. The copy's holder gets
 one visible disruption, and no quiet takeover. That disruption can also be caused on

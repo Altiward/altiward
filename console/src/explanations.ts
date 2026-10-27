@@ -10,7 +10,7 @@ export const explanations = {
   withoutGrant:
     "Admin rights that nobody granted through Privileges: someone was added to the admin group directly, " +
     "or an account was created as an admin. Each one is a finding in your SIEM. " +
-    "From agent 0.2.0, Macs whose profile sets OutOfBandEnforcement to enforce remove them after a grace period.",
+    "Macs whose profile sets OutOfBandEnforcement to enforce remove them after a grace period.",
   needsALook: "Things that need someone to look at them now. Each one clears by itself once it’s fixed.",
   pastExpiry:
     "Someone still holds admin rights after their allowed time ran out, usually because Privileges’ timer was stopped.",
@@ -29,15 +29,14 @@ export const explanations = {
     "An unsupported agent is older than the oldest release this server supports. Update it with the latest package.",
   keyStorage:
     "Where the Mac said its key is kept when it enrolled; Altiward can’t check it. A key in the Secure Enclave " +
-    "can’t be copied off the Mac. A key in a file can be copied by someone with admin rights on the Mac. " +
-    "Agents before 0.2.0 don’t say, and keep their key in a file.",
+    "can’t be copied off the Mac. A key in a file can be copied by someone with admin rights on the Mac.",
   rotated:
     "The Mac replaced this key with a new one, which it proved it holds, so nobody revoked this one. If a " +
     "rotated_key_used alert names this key, a copy of it was used, or the Mac was restored from a backup: see " +
     "“A rotated key was used” in the install guide.",
   enrolledWith:
     "The enrolment token the Mac enrolled with: its fingerprint, not the token. Search for it to find every key " +
-    "one token enrolled, such as after it leaked. Keys enrolled before server 0.9.0 don’t have one.",
+    "one token enrolled, such as after it leaked.",
   siemState:
     "Delivering: keeping up. Behind: events have waited more than 15 minutes. Failing: sending failed, and " +
     "Settings shows the error. Nothing sent yet: no events since the SIEM was set up.",
