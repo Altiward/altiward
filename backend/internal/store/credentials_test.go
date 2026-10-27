@@ -9,10 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Altiward/altiward/backend/internal/event"
 	"github.com/Altiward/altiward/backend/internal/testfixture"
 )
 
@@ -703,7 +705,7 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 		return s.Rotate(ctx, RotateRequest{
 			TenantID: tenant, FromDeviceID: from, DeviceID: id, PublicKey: key, KeyStorage: KeyStorageSoftware,
-			SignedAt: now.Add(-2 * time.Second), Now: now,
+			SignedAt: now.Add(-2 * time.Second), Now: now, Alert: alertAt(now),
 		})
 	}
 	rotate := func(t *testing.T, s Store, tenant, from string, now time.Time) DeviceCredential {
@@ -728,7 +730,7 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 	}
 	staleKeyUsed := func(t *testing.T, s Store, id string, signedAt, now time.Time) *ContestResult {
 		t.Helper()
-		c, err := s.StaleKeyUsed(ctx, id, signedAt, now)
+		c, err := s.StaleKeyUsed(ctx, id, signedAt, now, alertAt(now))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1012,7 +1014,7 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		if c := staleKeyUsed(t, s, b.DeviceID, rotation.Add(26*time.Hour), rotation.Add(26*time.Hour)); c != nil {
 			t.Fatalf("a key with no successor = %+v", c)
 		}
-		if _, err := s.StaleKeyUsed(ctx, newUUID(t), rotation, rotation); !errors.Is(err, ErrNotFound) {
+		if _, err := s.StaleKeyUsed(ctx, newUUID(t), rotation, rotation, alertAt(rotation)); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("an unknown key: err = %v", err)
 		}
 	})
@@ -1295,7 +1297,174 @@ func rotateRequest(t *testing.T, tenant, from string, key []byte, now time.Time)
 	t.Helper()
 	return RotateRequest{
 		TenantID: tenant, FromDeviceID: from, DeviceID: newUUID(t), PublicKey: key,
-		KeyStorage: KeyStorageSecureEnclave, SignedAt: now.Add(-time.Second), Now: now,
+		KeyStorage: KeyStorageSecureEnclave, SignedAt: now.Add(-time.Second), Now: now, Alert: alertAt(now),
+	}
+}
+
+// alertAt makes a contest's rotated_key_used event, raised at at, as the API does.
+func alertAt(at time.Time) ContestAlert {
+	return func(c ContestResult) event.Event {
+		id, _ := NewDeviceID()
+		detail := map[string]any{
+			"state": event.EnrollmentStateRotatedKeyUsed, "device_id": c.Stale.DeviceID, "rotated_to": c.Stale.RotatedTo,
+		}
+		if c.Revoked != nil {
+			detail["revoked_device_id"] = c.Revoked.DeviceID
+		}
+		return event.Event{
+			SchemaVersion: event.SchemaVersion, EventID: id, Type: event.AgentEnrollment, Timestamp: at.UTC(),
+			Device: event.Device{Serial: c.Stale.Serial, HardwareUUID: c.Stale.HardwareUUID}, Detail: detail,
+		}
+	}
+}
+
+// contestAlertSuite checks that a contest that reports stores its alert with it, queued for
+// export like any event, and that one that doesn't report stores none.
+func contestAlertSuite(t *testing.T, newStore func(t *testing.T, sink string) Store) {
+	ctx := context.Background()
+	t0 := testfixture.Time(t, "2026-10-16T12:00:00Z")
+	rotation := t0.Add(24 * time.Hour)
+	// stale enrols a Mac and rotates its key, returning the store, the export sink, the
+	// replaced key and its successor.
+	stale := func(t *testing.T) (Store, string, DeviceCredential, DeviceCredential) {
+		sink := "sink-" + randomHex(t)
+		s := newStore(t, sink)
+		old := enrolFirst(t, s, "tenant-"+randomHex(t), "C02"+randomHex(t), "HW", t0)
+		res, err := s.Rotate(ctx, rotateRequest(t, old.TenantID, old.DeviceID, newKey(t), rotation))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s, sink, old, res.Credential
+	}
+	// alerts returns the tenant's rotated_key_used events queued for export since the last
+	// call, and marks them delivered.
+	alerts := func(t *testing.T, s Store, sink, tenant string, now time.Time) []event.Event {
+		t.Helper()
+		queued, err := s.ClaimExports(ctx, sink, 100, time.Minute, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids := make([]int64, len(queued))
+		for i, item := range queued {
+			ids[i] = item.ID
+		}
+		if err := s.CompleteExports(ctx, ids, now); err != nil {
+			t.Fatal(err)
+		}
+		var out []event.Event
+		for _, item := range queued {
+			if item.TenantID == tenant && item.Event.Type == event.AgentEnrollment &&
+				item.Event.Detail["state"] == event.EnrollmentStateRotatedKeyUsed {
+				out = append(out, item.Event.Event)
+			}
+		}
+		return out
+	}
+
+	t.Run("a stale key's use stores its alert", func(t *testing.T) {
+		s, sink, old, next := stale(t)
+		at := rotation.Add(2 * time.Minute)
+		c, err := s.StaleKeyUsed(ctx, old.DeviceID, at, at, alertAt(at))
+		if err != nil || c == nil || !c.Report || c.Revoked == nil {
+			t.Fatalf("contest = %+v, %v", c, err)
+		}
+		got := alerts(t, s, sink, old.TenantID, at)
+		if len(got) != 1 || got[0].Detail["device_id"] != old.DeviceID || got[0].Detail["revoked_device_id"] != next.DeviceID {
+			t.Fatalf("alerts = %+v", got)
+		}
+		// A use the same day reports nothing, so its alert isn't even made.
+		later := at.Add(time.Hour)
+		called := false
+		c, err = s.StaleKeyUsed(ctx, old.DeviceID, later, later, func(c ContestResult) event.Event {
+			called = true
+			return alertAt(later)(c)
+		})
+		if err != nil || c == nil || c.Report || called {
+			t.Fatalf("the same day: contest = %+v, %v, alert made: %v", c, err, called)
+		}
+		if got := alerts(t, s, sink, old.TenantID, later.Add(time.Hour)); len(got) != 0 {
+			t.Fatalf("alerts the same day = %+v", got)
+		}
+	})
+
+	t.Run("a stale key's rotation stores its alert", func(t *testing.T) {
+		s, sink, old, next := stale(t)
+		at := rotation.Add(2 * time.Minute)
+		res, err := s.Rotate(ctx, rotateRequest(t, old.TenantID, old.DeviceID, newKey(t), at))
+		if !errors.Is(err, ErrRotatedElsewhere) || res.Contest == nil || !res.Contest.Report {
+			t.Fatalf("rotate = %+v, %v", res, err)
+		}
+		got := alerts(t, s, sink, old.TenantID, at)
+		if len(got) != 1 || got[0].Detail["device_id"] != old.DeviceID || got[0].Detail["revoked_device_id"] != next.DeviceID {
+			t.Fatalf("alerts = %+v", got)
+		}
+	})
+}
+
+// TestPostgresContestUndoneWhenItsAlertFails checks that a contest whose alert can't be
+// stored changes nothing, so the stale key's next use contests, revokes and reports. Past
+// ContestWindow a contest revokes nothing and reports only because its marker moved, which
+// shows that the marker was rolled back too.
+func TestPostgresContestUndoneWhenItsAlertFails(t *testing.T) {
+	p := openTestPostgres(t)
+	ctx := context.Background()
+	t0 := testfixture.Time(t, "2026-10-16T12:00:00Z")
+	rotation := t0.Add(24 * time.Hour)
+	// The events table refuses an event ID that isn't a UUID, as it would refuse any write
+	// when the database fails.
+	failing := func(at time.Time) ContestAlert {
+		return func(c ContestResult) event.Event {
+			e := alertAt(at)(c)
+			e.EventID = "not-a-uuid"
+			return e
+		}
+	}
+	for _, tc := range []struct {
+		path    string
+		after   time.Duration
+		revokes bool
+	}{
+		{"use", 2 * time.Minute, true}, {"rotation", 2 * time.Minute, true},
+		{"use past the window", ContestWindow + time.Hour, false}, {"rotation past the window", ContestWindow + time.Hour, false},
+	} {
+		path := strings.Fields(tc.path)[0]
+		t.Run(tc.path, func(t *testing.T) {
+			old := enrolFirst(t, p, "tenant-"+randomHex(t), "C02"+randomHex(t), "HW", t0)
+			res, err := p.Rotate(ctx, rotateRequest(t, old.TenantID, old.DeviceID, newKey(t), rotation))
+			if err != nil {
+				t.Fatal(err)
+			}
+			next := res.Credential
+			contest := func(at time.Time, alert ContestAlert) (*ContestResult, error) {
+				if path == "use" {
+					return p.StaleKeyUsed(ctx, old.DeviceID, at, at, alert)
+				}
+				req := rotateRequest(t, old.TenantID, old.DeviceID, newKey(t), at)
+				req.Alert = alert
+				res, err := p.Rotate(ctx, req)
+				if errors.Is(err, ErrRotatedElsewhere) {
+					err = nil
+				}
+				return res.Contest, err
+			}
+
+			at := rotation.Add(tc.after)
+			if c, err := contest(at, failing(at)); err == nil || errors.Is(err, ErrRotatedElsewhere) {
+				t.Fatalf("contest with a failing alert = %+v, %v; want an error", c, err)
+			}
+			if got, err := p.Credential(ctx, next.DeviceID); err != nil || got.Status != CredentialActive {
+				t.Fatalf("successor after a failed contest = %+v, %v", got, err)
+			}
+			// Nothing marked the use as reported: the next one, the same day, does it all.
+			at = at.Add(time.Minute)
+			c, err := contest(at, alertAt(at))
+			if err != nil || c == nil || !c.Report || (c.Revoked != nil) != tc.revokes {
+				t.Fatalf("the next use = %+v, %v", c, err)
+			}
+			if tc.revokes && c.Revoked.DeviceID != next.DeviceID {
+				t.Fatalf("the next use revoked %s, want %s", c.Revoked.DeviceID, next.DeviceID)
+			}
+		})
 	}
 }
 

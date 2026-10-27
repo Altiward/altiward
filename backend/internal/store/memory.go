@@ -73,6 +73,11 @@ func NewMemory(exportSinks []string) *Memory {
 func (m *Memory) Ingest(_ context.Context, tenantID string, events []event.Event, receivedAt time.Time) (IngestResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.ingest(tenantID, events, receivedAt)
+}
+
+// ingest expects m.mu held, so a contest can store its alert with it.
+func (m *Memory) ingest(tenantID string, events []event.Event, receivedAt time.Time) (IngestResult, error) {
 	res := IngestResult{Accepted: []string{}, Duplicate: []string{}}
 	// Validate the whole batch before committing any event, device or export state.
 	// BindOwner changes only value ownership fields on these session copies.

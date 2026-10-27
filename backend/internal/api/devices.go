@@ -32,11 +32,12 @@ const (
 const enrollRetryAfter = "3600"
 
 // enrollEventTimeout bounds the write of an event the server raises about a key (an
-// enrolment, a rotation or a stale key's use), which doesn't stop when the request does.
+// enrolment or a rotation), which doesn't stop when the request does.
 const enrollEventTimeout = 10 * time.Second
 
-// staleKeyContestTimeout bounds the contest a stale key's use starts, which, like the event
-// it may raise, doesn't stop when the request does.
+// staleKeyContestTimeout bounds the contest a stale key's use starts, with the event it may
+// raise, which doesn't stop when the request does. A rotate request gets it too, since a
+// stale key's rotate request is a contest.
 const staleKeyContestTimeout = 10 * time.Second
 
 // requireDevice authenticates a request signed by an enrolled Mac and hands the
@@ -65,25 +66,33 @@ func (s *Server) requireDevice(h handler) http.Handler {
 
 // staleKeyUsed resolves the contest when cred, a key that rotation replaced, signed sr and
 // the signature verified. The request is refused with 401 whatever this finds, so a failure
-// is only logged. A client that gives up now must not stop the contest, as for storeRaised,
-// but a database that doesn't answer still mustn't hold the handler.
+// is only logged; it changed nothing, so the key's next use contests again. A client that
+// gives up now must not stop the contest, as for storeRaised, but a database that doesn't
+// answer still mustn't hold the handler.
 func (s *Server) staleKeyUsed(r *http.Request, cred store.DeviceCredential, sr auth.SignedRequest) {
 	now := s.now()
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), staleKeyContestTimeout)
 	defer cancel()
-	c, err := s.store.StaleKeyUsed(ctx, cred.DeviceID, time.Unix(sr.Timestamp, 0), now)
+	c, err := s.store.StaleKeyUsed(ctx, cred.DeviceID, time.Unix(sr.Timestamp, 0), now, staleKeyAlert(r, now))
 	if err != nil {
 		s.log.Error("stale key contest", "tenant", cred.TenantID, "serial", cred.Serial, "device_id", cred.DeviceID, "err", err)
 		return
 	}
 	if c != nil {
-		s.reportStaleKeyUse(r, cred.TenantID, *c, now)
+		s.logStaleKeyUse(cred.TenantID, *c)
 	}
 }
 
-// reportStaleKeyUse raises rotated_key_used for a contest that calls for it: one that
-// revoked a key, or the first use of the stale key in a day.
-func (s *Server) reportStaleKeyUse(r *http.Request, tenantID string, c store.ContestResult, now time.Time) {
+// staleKeyAlert makes the rotated_key_used event for a contest that calls for one: one that
+// revoked a key, or the first use of the stale key in a day. The store writes it with the
+// contest.
+func staleKeyAlert(r *http.Request, now time.Time) store.ContestAlert {
+	userAgent := r.UserAgent()
+	return func(c store.ContestResult) event.Event { return rotatedKeyUsedEvent(c, userAgent, now) }
+}
+
+// logStaleKeyUse logs a contest that raised rotated_key_used.
+func (s *Server) logStaleKeyUse(tenantID string, c store.ContestResult) {
 	if !c.Report {
 		return
 	}
@@ -94,9 +103,6 @@ func (s *Server) reportStaleKeyUse(r *http.Request, tenantID string, c store.Con
 	st := c.Stale
 	s.log.Warn("rotated device key used", "tenant", tenantID, "serial", st.Serial, "device_id", st.DeviceID,
 		"rotated_to", st.RotatedTo, "revoked_device_id", revoked)
-	if err := s.storeRaised(r, tenantID, rotatedKeyUsedEvent(c, r.UserAgent(), now), now); err != nil {
-		s.log.Error("rotated key use event not recorded", "tenant", tenantID, "serial", st.Serial, "device_id", st.DeviceID, "err", err)
-	}
 }
 
 // storeRaised stores e, an event the server raised about a change it has already stored.
