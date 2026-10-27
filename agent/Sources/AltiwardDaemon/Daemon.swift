@@ -272,7 +272,10 @@ final class Daemon: Sendable {
             print("key fingerprint: \(fingerprint ?? "(not known until the agent next reports)")")
         }
         if let since = await authenticator?.rotationPendingSince {
-            print("key rotation: in progress since \(AltiwardJSON.format(since))")
+            print("key rotation: in progress since \(AltiwardJSON.format(since)); reports wait until the server answers")
+            if let last = await authenticator?.rotationLastAnswer {
+                print("  last answer, \(AltiwardJSON.format(last.at)): \(last.answer)")
+            }
         }
         print("queued events: \(try store.pendingCount())")
         let sessions = try store.openSessions()

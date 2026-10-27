@@ -1656,11 +1656,23 @@ extension DeviceAuthenticatorTests {
         #expect(server.rotations.count == 1 + 24 * 4)
         let holding = logged.withLock { $0 }.filter { $0.hasPrefix("the rotation's outcome is not known yet") }
         #expect((24...25).contains(holding.count))  // once an hour
+        // Something on the way may be what keeps the request from the server, so each says
+        // what to check.
+        let advice = "If this goes on, check that the whole of /v1/agent/ reaches the server"
+        #expect(holding.allSatisfy { $0.contains(advice) })
+
+        // altiward-agent status, a command, shows the last answer the daemon logged.
+        let status = authenticator(store, server, role: .command)
+        let last = try #require(await status.rotationLastAnswer)
+        #expect(last.answer == "HTTP 503: upstream unavailable. \(advice)")
+        #expect(last.at <= clock.now && clock.now.timeIntervalSince(last.at) < 3600)
+        #expect(try nextRecord(store)?.sent == true)
 
         server.stopAnsweringRotate()
         clock.advance(900)
         #expect(try await postEvents(auth) == 200)
         #expect(await auth.rotationPendingSince == nil)
+        #expect(await status.rotationLastAnswer == nil)
         let newID = try #require(server.successors[oldID])
         #expect(server.requests.last?.deviceID == newID)
         #expect(server.staleKeyUses == 0)
