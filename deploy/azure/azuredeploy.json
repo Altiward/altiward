@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.48.1.52935",
-      "templateHash": "17279135649434157321"
+      "templateHash": "8859952540908712416"
     },
     "description": "The Altiward server on Azure Container Apps, with Postgres on a private network and its tokens in Key Vault."
   },
@@ -70,7 +70,7 @@
     "$fxv#0": "# The caddy container next to Altiward in the Deploy to Azure template (README.md). The\n# Container Apps ingress terminates TLS and sends everything here, on one hostname:\n# Macs report from any network, so the agent endpoints answer everyone; the console and\n# its API answer only the networks in ALTIWARD_CONSOLE_ALLOW (space separated).\n{\n\tadmin off\n\tauto_https off\n\tservers {\n\t\t# The ingress adds the address it saw to the right of X-Forwarded-For. Trust only\n\t\t# the ingress's own addresses, and read right to left, so an address a client\n\t\t# puts in the header itself is never taken as theirs. The ingress connects from\n\t\t# Container Apps' internal 100.100.x.x addresses, which no client on the internet\n\t\t# can have.\n\t\ttrusted_proxies static {$ALTIWARD_INGRESS_PROXIES:100.64.0.0/10}\n\t\ttrusted_proxies_strict\n\t}\n}\n\n:8081 {\n\t@agent path /v1/agent/* /healthz\n\thandle @agent {\n\t\treverse_proxy 127.0.0.1:8080\n\t}\n\t@allowed client_ip {$ALTIWARD_CONSOLE_ALLOW}\n\thandle @allowed {\n\t\treverse_proxy 127.0.0.1:8080\n\t}\n\thandle {\n\t\trespond 403\n\t}\n}\n",
     "version": "1.0.0",
     "image": "[format('ghcr.io/altiward/altiward-api:{0}', variables('version'))]",
-    "caddyImage": "ghcr.io/altiward/caddy:2.11.7-altiward.1@sha256:960049cdbf07b7659a0622d3b88c22e8c2dd2582cd4049d2308911adb91bab0d",
+    "caddyImage": "ghcr.io/altiward/caddy:2.11.7-altiward.2@sha256:7bb2e4e5b387752ea67d60a636526bd0c9f040af94814dbb7a0c301b3c0258d3",
     "suffix": "[uniqueString(resourceGroup().id, parameters('namePrefix'))]",
     "names": {
       "workspace": "[format('{0}-logs', parameters('namePrefix'))]",

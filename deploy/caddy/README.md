@@ -1,7 +1,7 @@
 # The deployment proxy
 
 Compose and Azure use the same digest-pinned Caddy image from `image.txt`. It is Caddy
-2.11.7, rebuilt with Go 1.27.3 and `golang.org/x/net` 0.60.0. The upstream image still
+2.11.7, rebuilt with Go 1.27.3 and `golang.org/x/net` 0.62.0. The upstream image still
 contains older vulnerable dependencies, so copying its tag alone does not fix them.
 This image includes the standard Caddy modules and the upstream image's
 `nomysql,nopgx,nobadger` tags. Its runtime contains the binary, trusted CA certificates

@@ -78,13 +78,18 @@ func (p *Provider) discover(ctx context.Context) (*oauth2.Config, *oidc.IDTokenV
 	return p.oauth, p.verifier, nil
 }
 
-// AuthCodeURL is where to send the browser to sign in.
-func (p *Provider) AuthCodeURL(ctx context.Context, state, nonce, verifier string) (string, error) {
+// AuthCodeURL is where to send the browser to sign in; selectAccount asks the provider to
+// show its account picker instead of reusing the browser's signed-in account.
+func (p *Provider) AuthCodeURL(ctx context.Context, state, nonce, verifier string, selectAccount bool) (string, error) {
 	oc, _, err := p.discover(ctx)
 	if err != nil {
 		return "", err
 	}
-	return oc.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)), nil
+	opts := []oauth2.AuthCodeOption{oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)}
+	if selectAccount {
+		opts = append(opts, oauth2.SetAuthURLParam("prompt", "select_account"))
+	}
+	return oc.AuthCodeURL(state, opts...), nil
 }
 
 // Exchange redeems the code the provider sent back and verifies the ID token it returns.
