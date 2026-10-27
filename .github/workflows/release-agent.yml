@@ -78,7 +78,7 @@ jobs:
         working-directory: ${{ runner.temp }}/package
         run: |
           cp "$RUNNER_TEMP/RELEASE_NOTES.md" .
-          shasum -a 256 -- *.pkg corp.sap.privileges.plist RELEASE_NOTES.md > SHA256SUMS
+          shasum -a 256 -- *.pkg corp.sap.privileges.plist corp.sap.privileges.mobileconfig RELEASE_NOTES.md > SHA256SUMS
           cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
           cosign verify-blob --bundle SHA256SUMS.sigstore.json \
             --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release-agent.yml@$GITHUB_REF" \
@@ -92,6 +92,7 @@ jobs:
           path: |
             ${{ runner.temp }}/package/*.pkg
             ${{ runner.temp }}/package/corp.sap.privileges.plist
+            ${{ runner.temp }}/package/corp.sap.privileges.mobileconfig
             ${{ runner.temp }}/package/RELEASE_NOTES.md
             ${{ runner.temp }}/package/SHA256SUMS
             ${{ runner.temp }}/package/SHA256SUMS.sigstore.json
@@ -120,6 +121,6 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
-          # The pkg, the example plist, RELEASE_NOTES.md, SHA256SUMS and its sigstore bundle.
+          # The pkg, the Privileges plist and profile, RELEASE_NOTES.md, SHA256SUMS and its sigstore bundle.
           gh release create "$TAG" files/* \
             --verify-tag --title "$TAG" --notes-file files/RELEASE_NOTES.md

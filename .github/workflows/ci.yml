@@ -31,7 +31,7 @@ jobs:
       - name: Changelog fragments
         run: make changelog-check
       - name: gofmt
-        run: test -z "$(gofmt -l backend integrations deploy/sentinel deploy/intune deploy/caddy)" || (gofmt -l backend integrations deploy/sentinel deploy/intune deploy/caddy; exit 1)
+        run: test -z "$(gofmt -l backend integrations deploy/sentinel deploy/intune deploy/mdm deploy/caddy)" || (gofmt -l backend integrations deploy/sentinel deploy/intune deploy/mdm deploy/caddy; exit 1)
       - name: go vet
         run: |
           go vet ./...
@@ -147,6 +147,8 @@ jobs:
             grep -E '^-rwxr-xr-x .*/integrations/sentinel/setup\.sh$'
           tar -tvzf "$RUNNER_TEMP/bundle/altiward-server-0.0.0.tar.gz" |
             grep -E '^-rwxr-xr-x .*/integrations/intune/setup\.sh$'
+          tar -tzf "$RUNNER_TEMP/bundle/altiward-server-0.0.0.tar.gz" |
+            grep -E '/profiles/com\.altiward\.agent\.mobileconfig$'
       - name: A release installs and upgrades with upgrade.sh
         run: scripts/test-upgrade.sh altiward-api:ci
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0

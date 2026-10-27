@@ -107,7 +107,8 @@ releases are Server 1.0.0 and Agent 1.0.0.
    It needs the Developer ID and notary secrets that `release-agent.yml` lists, which live only
    in the repository's secrets.
 4. **The GitHub Release** is created by the workflow's last job, as for the server, with
-   the package, the example `corp.sap.privileges.plist`, `RELEASE_NOTES.md`, `SHA256SUMS`
+   the package, the Privileges keys as `corp.sap.privileges.plist` and
+   `corp.sap.privileges.mobileconfig`, `RELEASE_NOTES.md`, `SHA256SUMS`
    and its signature (also kept for 90 days as the run's artifact
    `altiward-agent-agent-vX.Y.Z`). Ship a server release first if the agent needs it.
 5. **Verify and update the public release record.** Download the published package and

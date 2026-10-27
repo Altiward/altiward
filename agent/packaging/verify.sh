@@ -49,6 +49,13 @@ check "Privileges profile pins the built hook" test "$(plist "$PROFILE" PostChan
 check "Privileges profile points at the installed hook" test "$(plist "$PROFILE" PostChangeExecutablePath)" = "$INSTALL_DIR/Altiward.app/Contents/MacOS/Altiward"
 check "Privileges profile turns on tamper protection" test "$(plist "$PROFILE" EnableSystemExtension)" = true
 
+# The same settings as a ready-made profile, for MDMs that take a .mobileconfig (Intune).
+MCP="$OUT/corp.sap.privileges.mobileconfig"
+check "Privileges .mobileconfig is valid" plutil -lint "$MCP"
+check "Privileges .mobileconfig pins the built hook" test "$(plist "$MCP" PayloadContent:0:PostChangeExecutableChecksum)" = "$(shasum -a 256 "$APP/Contents/MacOS/Altiward" | cut -d' ' -f1)"
+check "Privileges .mobileconfig points at the installed hook" test "$(plist "$MCP" PayloadContent:0:PostChangeExecutablePath)" = "$INSTALL_DIR/Altiward.app/Contents/MacOS/Altiward"
+check "Privileges .mobileconfig has no placeholder left" bash -c "! grep -q REPLACE_WITH_SHA256 '$MCP'"
+
 check "package exists" test -f "$PKG"
 check "bundle is not relocatable" bash -c "pkgutil --expand '$PKG' '$OUT/.check' >/dev/null && grep -q 'relocatable=\"false\"' \$(find '$OUT/.check' -name PackageInfo); rc=\$?; rm -rf '$OUT/.check'; exit \$rc"
 check "package installs over any version, so MDM can roll back" bash -c "pkgutil --expand '$PKG' '$OUT/.check' >/dev/null && grep -q '<bundle-version/>' \$(find '$OUT/.check' -name PackageInfo); rc=\$?; rm -rf '$OUT/.check'; exit \$rc"

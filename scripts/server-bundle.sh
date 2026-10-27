@@ -51,10 +51,11 @@ chmod 755 "$D/integrations/intune/setup.sh"
 cp integrations/splunk/altiward_overview.xml "$D/integrations/splunk/"
 # The Altiward overview workbook, as a template to deploy and as JSON to paste.
 cp integrations/sentinel/workbook.json integrations/sentinel/workbook.arm.json "$D/integrations/sentinel/"
-# The agent's Mac profiles. Not corp.sap.privileges.plist: its checksum is a placeholder
-# until the agent build fills it in, and Privileges won't run a hook whose checksum doesn't
-# match, so admins take that file from the agent release.
-cp deploy/mdm/com.altiward.agent.plist deploy/mdm/altiward-login-items.mobileconfig "$D/profiles/"
+# The agent's Mac profiles. Not the Privileges plist or profile: their checksum is a
+# placeholder until the agent build fills it in, and Privileges won't run a hook whose
+# checksum doesn't match, so admins take those files from the agent release.
+cp deploy/mdm/com.altiward.agent.plist deploy/mdm/com.altiward.agent.mobileconfig \
+  deploy/mdm/altiward-login-items.mobileconfig "$D/profiles/"
 cp LICENSE NOTICE THIRD_PARTY_NOTICES.md "$D/"
 [ -z "$NOTES" ] || cp "$NOTES" "$D/RELEASE_NOTES.md"
 cat > "$D/README.md" <<README

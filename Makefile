@@ -21,7 +21,7 @@ help: ## List targets
 test: agent-test backend-test console-test ## Run all unit tests (no database needed)
 
 lint: go-check changelog-check ## gofmt + go vet, and the changelog fragments
-	@test -z "$$(gofmt -l backend integrations deploy/sentinel deploy/intune)" || (gofmt -l backend integrations deploy/sentinel deploy/intune; echo "run gofmt -w"; exit 1)
+	@test -z "$$(gofmt -l backend integrations deploy/sentinel deploy/intune deploy/mdm)" || (gofmt -l backend integrations deploy/sentinel deploy/intune deploy/mdm; echo "run gofmt -w"; exit 1)
 	go vet ./...
 	cd integrations && go vet ./...
 

@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Agent settings (domain com.altiward.agent) as a ready-made profile: the same keys and
+  values as com.altiward.agent.plist, which explains each one. Example values.
+
+  Edit ServerURL and EnrollmentToken, and PermanentAdmins, UserPrincipalNames and
+  HookCodeRequirement (replace TEAMID) to suit you, then upload it as a Custom profile
+  (Intune: deployment channel "Device channel"), or run deploy/intune/Push-AltiwardProfiles.ps1,
+  which refuses a file that still has the example server or token.
+
+  MDMDeviceID is {{deviceid}} for Intune, which fills in the Mac's device ID.
+  Leave the profile's identifiers and UUIDs alone: a re-upload then replaces this profile
+  on the Mac.
+-->
+<plist version="1.0">
+<dict>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+    <key>PayloadIdentifier</key>
+    <string>com.altiward.profile.agent</string>
+    <key>PayloadUUID</key>
+    <string>85BE4007-C6EA-47E9-8D04-65D3D6567FC1</string>
+    <key>PayloadDisplayName</key>
+    <string>Altiward agent settings</string>
+    <key>PayloadScope</key>
+    <string>System</string>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadType</key>
+            <string>com.altiward.agent</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>PayloadIdentifier</key>
+            <string>com.altiward.profile.agent.settings</string>
+            <key>PayloadUUID</key>
+            <string>A34D3A14-3839-4937-AEFD-14C4CB972C36</string>
+            <key>ServerURL</key>
+            <string>https://api.altiward.example</string>
+            <key>EnrollmentToken</key>
+            <string>REPLACE_WITH_TENANT_AGENT_TOKEN</string>
+            <key>MDMDeviceID</key>
+            <string>{{deviceid}}</string>
+            <key>HeartbeatInterval</key>
+            <integer>300</integer>
+            <key>PermanentAdmins</key>
+            <array>
+                <string>itadmin</string>
+            </array>
+            <key>UserPrincipalNames</key>
+            <dict>
+                <key>$SHORTNAME</key>
+                <string>$EMAIL</string>
+            </dict>
+            <key>ExpiryEnforcement</key>
+            <string>alert</string>
+            <key>ExpiryGraceMinutes</key>
+            <integer>5</integer>
+            <key>OutOfBandEnforcement</key>
+            <string>alert</string>
+            <key>OutOfBandGraceMinutes</key>
+            <integer>5</integer>
+            <key>CommandPollInterval</key>
+            <integer>60</integer>
+            <key>HookCodeRequirement</key>
+            <string>identifier "com.altiward.hook" and anchor apple generic and certificate leaf[subject.OU] = "TEAMID"</string>
+        </dict>
+    </array>
+</dict>
+</plist>

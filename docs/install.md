@@ -79,7 +79,8 @@ You need:
   `RELEASE_NOTES.md`, `SHA256SUMS` and its signature, `SHA256SUMS.sigstore.json`. An
   agent release is the signed package
   (`Altiward-<version>.pkg`), the SAP Privileges keys pinned to that package's hook
-  (`corp.sap.privileges.plist`), and its own notes and checksums. Server releases are tagged
+  (`corp.sap.privileges.plist`, and the same keys as a ready-made profile,
+  `corp.sap.privileges.mobileconfig`), and its own notes and checksums. Server releases are tagged
   `server-vX.Y.Z` and agent releases `agent-vX.Y.Z`. Nothing needs an account.
 
 ## 1. Start the server
@@ -159,7 +160,8 @@ warning, or no page at all, is a Caddy problem: see
 Create these in your MDM and scope them to a pilot group first.
 
 1. **Configuration profile for `com.altiward.agent`**, from the example
-   `com.altiward.agent.plist`. Set at least:
+   `com.altiward.agent.plist`, or `com.altiward.agent.mobileconfig` for an MDM that takes
+   a profile file. Set at least:
    - `ServerURL`: `https://<agent hostname>`
    - `EnrollmentToken`: the token after `yourcompany=` in `ALTIWARD_AGENT_TOKENS`
    - `PermanentAdmins`: accounts that should always be admins, such as your IT or
@@ -240,17 +242,20 @@ Create these in your MDM and scope them to a pilot group first.
 **In Intune** (the Microsoft Intune admin center):
 
 - Agent settings: **Devices › Manage devices › Configuration › Create › New policy**,
-  platform **macOS**, profile type **Templates › Preference file**, preference domain name
-  `com.altiward.agent`. Intune wants the keys alone: upload a copy of your edited
-  `com.altiward.agent.plist` without the `<?xml`, `<!DOCTYPE` and comment lines, the
-  `<plist>` lines and the outermost `<dict>` lines.
-- Login items: the same path with **Templates › Custom**, deployment channel **Device
-  channel**, then `altiward-login-items.mobileconfig`.
+  platform **macOS**, profile type **Templates › Custom**, deployment channel **Device
+  channel**, then your edited `com.altiward.agent.mobileconfig` (the same settings as the
+  plist, in a profile Intune takes as it is). Its `MDMDeviceID` is `{{deviceid}}`, which
+  Intune fills in with the Mac's device ID: leave it.
+- Login items: the same path, then `altiward-login-items.mobileconfig`.
+- SAP Privileges: if Privileges has no profile yet, the same path, then
+  `corp.sap.privileges.mobileconfig` from the agent release. If it has one, add the
+  keys to that profile instead.
 - The package: **Apps › All Apps › Create**, platform **macOS**, type **macOS app (PKG)**.
   That type takes packages that install outside `/Applications`, as Altiward's does.
 
 In any MDM, the SAP Privileges keys go into the profile that already configures
-Privileges.
+Privileges. The ready-made `.mobileconfig` files keep their identifiers, so an edited copy
+replaces the earlier profile on a Mac rather than installing beside it.
 
 **You should see**, on a pilot Mac, the Altiward profiles under **System Settings ›
 General › Device Management**. The Mac then appears in the console ([step 3](#3-check-it-works)).
