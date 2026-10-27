@@ -16,11 +16,11 @@ export const macColumn: Column<Session> = {
   key: "mac", title: "Mac", sort: (s) => s.device_serial, render: (s) => <span className="data">{s.device_serial}</span>,
 };
 export const startedColumn: Column<Session> = {
-  key: "started", title: "Started", sort: (s) => time(s.started_at),
+  key: "started", title: "Started", sort: (s) => time(s.started_at), drop: 1,
   render: (s) => <span className="secondary small">{dateTime(s.started_at)}</span>,
 };
 export const usedColumn: Column<Session> = {
-  key: "used", title: "Time used", sort: (s) => s.actual_seconds ?? 0,
+  key: "used", title: "Time used", sort: (s) => s.actual_seconds ?? 0, drop: 2,
   render: (s) => <Gauge actual={s.actual_seconds} allowed={s.allowed_seconds} ended={!s.open} />,
 };
 export const stateColumn: Column<Session> = {

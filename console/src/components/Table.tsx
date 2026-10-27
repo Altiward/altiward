@@ -7,7 +7,13 @@ export interface Column<T> {
   /** Value to sort by; omit to make the column unsortable. */
   sort?: (row: T) => string | number;
   align?: "right";
+  /** Hidden when the table's pane is narrow, as when the inspector is open on a laptop:
+   *  level 1 first, then 2 (styles.css). Only for what the inspector shows too. */
+  drop?: 1 | 2;
 }
+
+const cellClass = <T,>(c: Column<T>) =>
+  [c.align === "right" && "num", c.drop && `drop-${c.drop}`].filter(Boolean).join(" ") || undefined;
 
 interface Props<T> {
   label: string;
@@ -53,7 +59,7 @@ export function Table<T>({ label, rows, columns, rowKey, selected, onSelect, ini
           {columns.map((c) => {
             const active = sort?.key === c.key;
             return (
-              <th key={c.key} className={c.align === "right" ? "num" : undefined}
+              <th key={c.key} className={cellClass(c)}
                 aria-sort={active ? (sort!.descending ? "descending" : "ascending") : undefined}>
                 {c.sort ? (
                   <button type="button" onClick={() => setSort({ key: c.key, descending: active ? !sort!.descending : false })}>
@@ -74,7 +80,7 @@ export function Table<T>({ label, rows, columns, rowKey, selected, onSelect, ini
           return (
             <tr key={key} aria-selected={key === selected} onClick={() => onSelect?.(key === selected ? null : key)}>
               {columns.map((c) => (
-                <td key={c.key} className={c.align === "right" ? "num" : undefined}>{c.render(row)}</td>
+                <td key={c.key} className={cellClass(c)}>{c.render(row)}</td>
               ))}
             </tr>
           );
