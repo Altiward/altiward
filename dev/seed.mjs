@@ -10,7 +10,7 @@ const ENROLL = "dev-agent-token-0001";
 const CONSOLE = "dev-console-token-001";
 const now = Date.now();
 const ago = (min) => new Date(now - min * 60_000).toISOString();
-const { request, enroll } = agentClient(server, ENROLL);
+const { request, enroll, rotate } = agentClient(server, ENROLL);
 
 /** Waits up to 30 seconds for the API, which may still be starting, then explains. */
 async function waitForAPI() {
@@ -135,6 +135,13 @@ await send(e, [grant(e, mia, 1500, 60, "Configuring a VPN client", s5),
     problem: "Privileges' tamper protection (EnableSystemExtension) is off" } }),
   health(e, 4, ["itadmin"], { ...passing, privileges_tamper_protection: false })]);
 
+// That Mac has no Secure Enclave, so agent 1.0 replaces its file key every 30 days, and it
+// just has: Enrollments shows the key it enrolled with as Rotated. The server rotates only a
+// key active for 24 hours, so first move the key's enrolment back 30 days in `make db`'s
+// Postgres. SEED_BACKDATE=external backdates only after the seed, too late for this, so
+// then the key isn't rotated.
+const rotated = process.env.SEED_BACKDATE !== "external" && await rotateFileKey(e, ago(30 * 24 * 60));
+
 // A Mac last heard from four days ago: within a minute the API's monitor raises agent.silent.
 // Check-ins are timed by the server's clock, so the API records this one as now; backdate
 // the stored device in `make db`'s Postgres to match. SEED_BACKDATE=external leaves that to
@@ -144,8 +151,26 @@ const silent = process.env.SEED_BACKDATE === "external" || backdate(f.serial, ag
 
 /** Sets a device's server-side check-in time, so the silence monitor sees it as quiet. */
 function backdate(serial, at) {
-  const sql = `UPDATE devices SET last_seen_at = '${at}',
-    state = jsonb_set(state, '{last_received_at}', to_jsonb('${at}'::text)) WHERE serial = '${serial}'`;
+  return psql(`UPDATE devices SET last_seen_at = '${at}',
+    state = jsonb_set(state, '{last_received_at}', to_jsonb('${at}'::text)) WHERE serial = '${serial}'`,
+  `backdate ${serial} in make db's Postgres, so it won't go silent`);
+}
+
+/** Moves mac's key's enrolment back to `at`, then rotates the key to a new file key. */
+async function rotateFileKey(mac, at) {
+  if (!psql(`UPDATE device_credentials SET created_at = '${at}', activated_at = '${at}' WHERE device_id = '${mac.deviceID}'`,
+    `backdate ${mac.serial}'s key in make db's Postgres, so it won't rotate`)) return false;
+  try {
+    await rotate(mac);
+    return true;
+  } catch (err) {
+    console.warn(`Couldn't rotate ${mac.serial}'s key: ${err.message}`);
+    return false;
+  }
+}
+
+/** Runs sql in `make db`'s Postgres, or warns that it couldn't do `what` and returns false. */
+function psql(sql, what) {
   try {
     execFileSync("docker", ["compose", "-f", new URL("compose.yaml", import.meta.url).pathname,
       "exec", "-T", "postgres", "psql", "-q", "-v", "ON_ERROR_STOP=1", "-U", "altiward",
@@ -153,7 +178,7 @@ function backdate(serial, at) {
     { stdio: ["ignore", "ignore", "pipe"] });
     return true;
   } catch (err) {
-    console.warn(`Couldn't backdate ${serial} in make db's Postgres, so it won't go silent: ${err.stderr?.toString().trim() || err.message}`);
+    console.warn(`Couldn't ${what}: ${err.stderr?.toString().trim() || err.message}`);
     return false;
   }
 }
@@ -162,5 +187,5 @@ function backdate(serial, at) {
 await request("POST", `/v1/devices/${b.serial}/revoke`, { bearer: CONSOLE, body: {} });
 await request("PUT", "/v1/settings", { bearer: CONSOLE, body: { reenrollment_requires_approval: true } });
 const again = await enroll(a.serial);
-console.log(`Seeded 6 Macs (${silent ? 1 : 0} silent), 6 sessions, 3 tamper alerts, 3 uses of a permanent admin, 1 queued revoke; ${a.serial} re-enrolled (${again.status}).`);
+console.log(`Seeded 6 Macs (${silent ? 1 : 0} silent, ${rotated ? 1 : 0} with a rotated key), 6 sessions, 3 tamper alerts, 3 uses of a permanent admin, 1 queued revoke; ${a.serial} re-enrolled (${again.status}).`);
 console.log("Re-enrollment approval is now on; turn it off in Settings if you prefer.");
