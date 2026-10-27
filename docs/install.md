@@ -335,7 +335,7 @@ rotation in progress and the last answer that kept it waiting:
 
 ```
 key rotation: in progress since 2026-11-02T09:14:05.112Z; reports wait until the server answers
-  last answer, 2026-11-02T10:14:20.384Z: HTTP 502: Bad Gateway. If this goes on, check that the whole of /v1/agent/ reaches the server
+  last logged 2026-11-02T10:14:20.384Z: HTTP 502: Bad Gateway. If this goes on, check that the whole of /v1/agent/ reaches the server
 ```
 
 Once `/v1/agent/rotate` reaches the server, the Mac finishes the rotation at its next try

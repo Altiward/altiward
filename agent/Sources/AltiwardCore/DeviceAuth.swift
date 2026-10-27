@@ -184,7 +184,7 @@ struct PendingRotation: Codable {
     /// Read leniently, and true when missing: a record that doesn't say is treated as sent.
     var sent = true
     /// What last kept the rotation waiting, and when, for `altiward-agent status`. Saved
-    /// when the daemon logs it. Agent 1.0.0 ignores them.
+    /// when the daemon logs it, so at most an hour old. Agent 1.0.0 ignores them.
     var lastAnswer: String?
     var lastAnswerAt: Date?
 }
@@ -826,8 +826,9 @@ public actor DeviceAuthenticator {
             }
             (data, response) = (answer, http)
         } catch {
-            // Whether or not it left the Mac, an earlier attempt may have reached the server.
-            return holding("\(error)", pending, onTheWay: true)
+            // Whether or not it left the Mac, an earlier attempt may have reached the server. A
+            // URLError is the network's; anything else failed on the Mac, such as signing.
+            return holding("\(error)", pending, onTheWay: error is URLError)
         }
 
         struct Answer: Decodable {
@@ -876,7 +877,8 @@ public actor DeviceAuthenticator {
             }
             return dropRotation(pending, alsoTheOldKey: false, .deferred(until: until))
         default:
-            return holding("HTTP \(status): \(Self.excerpt(data))", pending, onTheWay: true)
+            let body = Self.excerpt(data)
+            return holding(body.isEmpty ? "HTTP \(status)" : "HTTP \(status): \(body)", pending, onTheWay: true)
         }
     }
 
@@ -987,7 +989,9 @@ public actor DeviceAuthenticator {
                 var saved = try? JSONDecoder().decode(PendingRotation.self, from: Data(raw.utf8)),
                 saved.privateKey == pending.privateKey
             else { return }
-            saved.lastAnswer = answer.split(whereSeparator: \.isNewline).joined(separator: " ")
+            // Whatever answered wrote part of it, and `status` prints it to a terminal.
+            saved.lastAnswer = String(
+                String.UnicodeScalarView(answer.unicodeScalars.map { $0.properties.generalCategory == .control ? " " : $0 }))
             saved.lastAnswerAt = at
             try store.setValue(Self.encode(saved), forKey: PendingRotation.storeKey)
         }

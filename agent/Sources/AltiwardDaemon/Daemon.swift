@@ -274,7 +274,7 @@ final class Daemon: Sendable {
         if let since = await authenticator?.rotationPendingSince {
             print("key rotation: in progress since \(AltiwardJSON.format(since)); reports wait until the server answers")
             if let last = await authenticator?.rotationLastAnswer {
-                print("  last answer, \(AltiwardJSON.format(last.at)): \(last.answer)")
+                print("  last logged \(AltiwardJSON.format(last.at)): \(last.answer)")
             }
         }
         print("queued events: \(try store.pendingCount())")

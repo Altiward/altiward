@@ -1642,7 +1642,7 @@ extension DeviceAuthenticatorTests {
         let (logged, log) = logLines()
         let (auth, oldID) = try await readyToRotate(store, server, log: log)
         let start = server.requests.count
-        server.dropNextRotateResponse()
+        server.dropNextRotateResponse(URLError(.networkConnectionLost))
         #expect(await auth.rotate(reason: "test") == .unknown)
         let pending = try #require(try nextRecord(store))
         server.answerRotate(status: 503, body: Data("upstream unavailable".utf8))
@@ -1677,6 +1677,30 @@ extension DeviceAuthenticatorTests {
         #expect(server.requests.last?.deviceID == newID)
         #expect(server.staleKeyUses == 0)
         #expect(oldKeyRequests(server, oldID, after: start).isEmpty)
+    }
+
+    /// The last answer a rotation waits on is shown on one line, without the control
+    /// characters of whatever sent it; a hold caused on the Mac gives no network advice.
+    @Test(.timeLimit(.minutes(1))) func aHeldRotationsLastAnswerIsPrintable() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (logged, log) = logLines()
+        let (auth, _) = try await readyToRotate(store, server, log: log)
+        server.dropNextRotateResponse()  // not a URLError: as if signing failed on the Mac
+        #expect(await auth.rotate(reason: "test") == .unknown)
+        #expect(logged.withLock { $0 }.allSatisfy { !$0.contains("/v1/agent/") })
+
+        server.answerRotate(status: 502, body: Data("<h1>Bad\nGateway</h1>\u{1B}[2J\u{07}".utf8))
+        clock.advance(3600)
+        await #expect(throws: DeviceKeyError.rotationOutcomeUnknown) { try await postEvents(auth) }
+        let last = try #require(await auth.rotationLastAnswer)
+        #expect(last.answer.hasPrefix("HTTP 502: <h1>Bad Gateway</h1> [2J . If this goes on"))
+
+        server.stopAnsweringRotate()
+        server.answerRotate(status: 504, body: Data())
+        clock.advance(3600)
+        await #expect(throws: DeviceKeyError.rotationOutcomeUnknown) { try await postEvents(auth) }
+        #expect(try #require(await auth.rotationLastAnswer).answer.hasPrefix("HTTP 504. If this goes on"))
     }
 
     @Test(.timeLimit(.minutes(1))) func aRotationCopiedToAnotherMacIsDropped() async throws {
