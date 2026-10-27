@@ -53,14 +53,13 @@ await waitForAPI();
 
 // Re-running enrolls the same serials again; without this they would all wait for approval.
 await request("PUT", "/v1/settings", { bearer: CONSOLE, body: { reenrollment_requires_approval: false } });
-// Most keep their key in the Secure Enclave; one has a file key (an Intel Mac without a T2
-// chip) and one runs an agent from before 0.2.0, which doesn't say.
+// Most keep their key in the Secure Enclave; one has a file key (an Intel Mac without a T2 chip).
 const [a, b, c, d, e, f] = await Promise.all([
   ["C02XK0AAJGH5", "secure_enclave"], ["C02VJ4EEMD6R", "secure_enclave"], ["C02ZM1BBMD6T", "secure_enclave"],
-  ["C02YH2CCJG5H", "secure_enclave"], ["C02WQ3DDKL7M", "software"], ["C02TN5FFHV2P", null],
+  ["C02YH2CCJG5H", "secure_enclave"], ["C02WQ3DDKL7M", "software"], ["C02TN5FFHV2P", "secure_enclave"],
 ].map(([serial, keyStorage]) => enroll(serial, { keyStorage })));
-// The Mac without a reported key runs agent 0.4.1, older than the server supports.
-f.agentVersion = "0.4.1";
+// The last Mac runs agent 0.9.0, older than the server supports.
+f.agentVersion = "0.9.0";
 
 const s1 = randomUUID();
 await send(a, [grant(a, jane, 12, 20, "Installing Xcode command line tools", s1), health(a, 2, ["itadmin", "jdoe"])]);

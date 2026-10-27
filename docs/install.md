@@ -818,10 +818,10 @@ set `ALTIWARD_VERSION` in `.env`, copy in any changed files from the new bundle'
 
 **Rolling out a new agent:** upgrade the server first, then upload the new package to
 your MDM and deploy it to a pilot group before everyone. The server accepts agents from
-the last two agent minor releases, so Macs can catch up at your pace. An agent that can
-rotate keys, on a server that can't, keeps its key and tries again a day later, so
-nothing breaks if the order slips, but nothing rotates either. Fleet tags Macs
-whose agent is older than that **Agent outdated**.
+the last two agent minor releases, none older than 1.0, so Macs can catch up at your
+pace. An agent that can rotate keys, on a server that can't, keeps its key and tries
+again a day later, so nothing breaks if the order slips, but nothing rotates either.
+Fleet tags Macs whose agent is older than that **Agent outdated**.
 Each agent build's hook has its own checksum: update `PostChangeExecutableChecksum` in your
 Privileges profile to the value in the release's `corp.sap.privileges.plist` before or
 together with the package, scoped to the same Macs. While the checksum doesn't match the
