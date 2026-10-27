@@ -55,6 +55,7 @@ type Store interface {
 	Commands
 	Audit
 	ConsoleSessions
+	MDM
 
 	// Ingest stores events in order, folding each new one into its session and device
 	// and queueing it for every configured export sink. A session ownership conflict

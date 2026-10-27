@@ -31,7 +31,7 @@ func TestPostgresReenrollmentUpgradeEnablesApprovalOnce(t *testing.T) {
 	sort.Strings(names)
 	applyFirst(t, old, names[:2])
 	now := testfixture.Time(t, "2026-10-25T12:00:00Z")
-	seedOldData(t, old, now)
+	seedOldData(t, old, now, names[:2])
 	for name, flag := range map[string]string{"false": `false`, "missing": ``, "null": `null`, "true": `true`} {
 		body := `{"silent_after_hours":24,"silent_alerts_off":true,"preserved":{"value":"keep"}`
 		if flag != "" {

@@ -38,6 +38,8 @@ type Memory struct {
 	consoleSessions map[string]ConsoleSession // by token hash
 	// installation starts when the store does: a memory store is a new server each run.
 	installation Installation
+
+	mdm map[key]*memMDM // by tenant and source
 }
 
 type key struct{ tenant, id string }
@@ -67,6 +69,8 @@ func NewMemory(exportSinks []string) *Memory {
 
 		consoleSessions: map[string]ConsoleSession{},
 		installation:    Installation{CreatedAt: time.Now().UTC()},
+
+		mdm: map[key]*memMDM{},
 	}
 }
 

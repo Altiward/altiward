@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -43,7 +44,7 @@ func TestPostgresUpgradesFromEveryMigration(t *testing.T) {
 				t.Fatal(err)
 			}
 			applyFirst(t, old, names[:applied])
-			seedOldData(t, old, now)
+			seedOldData(t, old, now, names[:applied])
 			old.Close()
 
 			s, err := OpenPostgres(ctx, scoped, nil)
@@ -105,16 +106,41 @@ func TestPostgresUpgradesFromEveryMigration(t *testing.T) {
 			if in, err := s.Installation(ctx); err != nil || in.CreatedAt.IsZero() {
 				t.Fatalf("installation after upgrade: %+v, %v", in, err)
 			}
+			// A copy of Intune's Macs written at 0007 reads back, with its defaults, and every
+			// upgrade can sync.
+			if slices.Contains(names[:applied], mdmMigration) {
+				old, err := s.MDMDevicesBySerial(ctx, "acme", MDMIntune, "C02OLD000001")
+				if err != nil || len(old) != 1 || old[0].DeviceID != oldMDMDeviceID || old[0].Name != "" || !old[0].LastCheckIn.IsZero() {
+					t.Fatalf("old Intune copy: %+v, %v", old, err)
+				}
+				if st, err := s.MDMSyncStatus(ctx, "acme", MDMIntune); err != nil || st.Devices != 1 || st.LastSuccessAt == nil ||
+					st.LastErrorAt != nil || st.SilenceHeldAt != nil {
+					t.Fatalf("old Intune sync: %+v, %v", st, err)
+				}
+			}
+			if ok, err := s.ClaimMDMSync(ctx, "acme", MDMIntune, now, 15*time.Minute); err != nil || !ok {
+				t.Fatalf("claim the Intune sync after upgrade: %v, %v", ok, err)
+			}
+			if err := s.ReplaceMDMDevices(ctx, "acme", MDMIntune, []MDMDevice{
+				{DeviceID: newUUID(t), Serial: "C02NEW000001", Name: "New", LastCheckIn: now},
+			}, now); err != nil {
+				t.Fatalf("Intune sync after upgrade: %v", err)
+			}
 			st, err := s.Stats(ctx, now)
 			if err != nil || len(st.MigrationsPending) != 0 || len(st.MigrationsApplied) != len(names) ||
-				st.Devices != 1 || st.AuditEntries != 2 || st.InstalledAt == nil {
+				st.Devices != 1 || st.AuditEntries != 2 || st.InstalledAt == nil ||
+				len(st.MDM) != 1 || st.MDM[0].TenantID != "acme" || st.MDM[0].Devices != 1 {
 				t.Fatalf("stats after upgrade: %+v, %v", st, err)
 			}
 		})
 	}
 }
 
-const oldSessionID = "5b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d"
+const (
+	oldSessionID   = "5b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d"
+	oldMDMDeviceID = "9a0b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d"
+	mdmMigration   = "migrations/0007_mdm.sql"
+)
 
 // inSchema returns url pointing at a fresh schema, dropped when the test ends.
 func inSchema(t *testing.T, url, schema string) string {
@@ -162,10 +188,10 @@ func applyFirst(t *testing.T, pool *pgxpool.Pool, names []string) {
 
 // seedOldData writes rows the way the first release did, with only the fields it always
 // sets, so a field added later must decode from its absence: a device, an open session
-// with its event and that event's export, a credential and an audit entry. It seeds only
-// tables the first migration creates; when a later migration adds a table, seed that
-// table only in the cases where its migration has been applied.
-func seedOldData(t *testing.T, pool *pgxpool.Pool, now time.Time) {
+// with its event and that event's export, a credential and an audit entry. A table a later
+// migration adds is seeded only when that migration is in applied, the migrations already
+// run: from 0007, a copy of one Mac from Intune and its sync.
+func seedOldData(t *testing.T, pool *pgxpool.Pool, now time.Time, applied []string) {
 	t.Helper()
 	ctx := context.Background()
 	seen := now.Add(-time.Hour).Format(time.RFC3339)
@@ -180,10 +206,11 @@ func seedOldData(t *testing.T, pool *pgxpool.Pool, now time.Time) {
 		"session_id":%q,"timestamp":%q,"device":{"serial":"C02OLD000001","hardware_uuid":"HW-OLD","privileges_version":"2.4.0"},
 		"user":{"local_name":"jdoe","upn":null},"elevation":{"reason":"old","expires":null,"source":"privileges"},
 		"delayed":false,"detail":{}}`, oldSessionID, seen)
-	for _, q := range []struct {
+	type seed struct {
 		sql  string
 		args []any
-	}{
+	}
+	seeds := []seed{
 		{`INSERT INTO devices (tenant_id, serial, state, last_seen_at) VALUES ('acme', 'C02OLD000001', $1, $2)`, []any{device, seen}},
 		{`INSERT INTO sessions (tenant_id, session_id, device_serial, local_user, started_at, state, updated_at)
 			VALUES ('acme', $1, 'C02OLD000001', 'jdoe', $2, $3, $2)`, []any{oldSessionID, seen, session}},
@@ -198,7 +225,15 @@ func seedOldData(t *testing.T, pool *pgxpool.Pool, now time.Time) {
 		{`INSERT INTO audit_log (tenant_id, id, at, actor, action, target, detail)
 			VALUES ('acme', '8f90a1b2-c3d4-4e5f-8a6b-7c8d9e0f1a2b', $1, 'token:3f2a9c1b', 'change_settings', 'settings', '{}')`,
 			[]any{seen}},
-	} {
+	}
+	if slices.Contains(applied, mdmMigration) {
+		seeds = append(seeds,
+			seed{`INSERT INTO mdm_devices (tenant_id, source, device_id, serial) VALUES ('acme', 'intune', $1, 'C02OLD000001')`,
+				[]any{oldMDMDeviceID}},
+			seed{`INSERT INTO mdm_sync (tenant_id, source, last_success_at, devices) VALUES ('acme', 'intune', $1, 1)`, []any{seen}},
+		)
+	}
+	for _, q := range seeds {
 		if _, err := pool.Exec(ctx, q.sql, q.args...); err != nil {
 			t.Fatalf("seed: %v", err)
 		}

@@ -473,6 +473,7 @@ func TestMemory(t *testing.T) {
 	contestAlertSuite(t, withSink)
 	commandSuite(t, func(t *testing.T) Store { return NewMemory(nil) })
 	auditSuite(t, func(t *testing.T) Store { return NewMemory(nil) })
+	mdmSuite(t, func(t *testing.T) Store { return NewMemory(nil) })
 }
 
 // TestPostgres runs when ALTIWARD_TEST_DATABASE_URL is set (see dev/compose.yaml).
@@ -502,6 +503,7 @@ func TestPostgres(t *testing.T) {
 	contestAlertSuite(t, withSink)
 	commandSuite(t, openPlain)
 	auditSuite(t, openPlain)
+	mdmSuite(t, openPlain)
 }
 
 // TestPostgresStats checks the diagnosis counts. The test database is shared, so it checks
