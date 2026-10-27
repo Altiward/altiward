@@ -5,6 +5,7 @@ Reusable Go transport clients used by `backend/internal/export`:
 | Directory | Client |
 | --- | --- |
 | [`splunk/`](splunk/) | Splunk HTTP Event Collector |
+| [`entra/`](entra/) | Microsoft Entra ID sign-in (client secret, certificate or managed identity) for a scope or resource the caller names; `sentinel/` builds on it |
 | [`sentinel/`](sentinel/) | Azure Monitor Logs Ingestion, with client-secret, certificate or managed-identity authentication |
 | [`syslog/`](syslog/) | Syslog over TLS or TCP, with CEF or OCSF JSON bodies |
 
