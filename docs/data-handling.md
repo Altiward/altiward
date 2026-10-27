@@ -7,9 +7,11 @@ on your infrastructure. The Altiward project receives none of it.
 ## In short
 
 - **Nothing is sent to Altiward.** The agent talks only to your server. The server talks
-  only to your database and to the SIEM and identity provider you configure. There is no
-  telemetry, crash reporting or registration. Altiward is open source (Apache 2.0) and
-  has no licence to check, so nothing in it can stop working over one.
+  only to your database and to the SIEM and identity provider you configure. It never
+  updates itself: the host contacts GitHub only when an admin runs `upgrade.sh` with a
+  version. There is no telemetry, crash reporting or registration. Altiward is open
+  source (Apache 2.0) and has no licence to check, so nothing in it can stop working over
+  one.
 - **The update check runs in the admin's browser, not on the server.** For people with
   the admin role, the console's browser asks `api.github.com` for Altiward's release list:
   at most once a day per admin's browser after a successful check, and at most once an
@@ -122,6 +124,12 @@ provide your own. If you pull the image from the registry instead of loading the
 Docker connects to `ghcr.io`. With the Deploy to Azure template, Azure pulls the images
 from `ghcr.io`, Caddy's included, and Container Apps gets the certificate
 for your own domain.
+
+The server never fetches updates itself. When an admin runs `upgrade.sh` with a version,
+the host downloads that release's files from GitHub with `curl` (from `github.com`, which
+sends them from `release-assets.githubusercontent.com`), through `HTTPS_PROXY` if it's
+set. The requests name only the files, nothing about your fleet. Given a directory of
+release files instead, `upgrade.sh` contacts nobody.
 
 ### In the browser
 
