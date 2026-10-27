@@ -41,6 +41,11 @@ None.
   High alert that names the key the server revoked as a result, if any. It is raised at
   most once a day for each key, unless it revoked one. A request signed just before the
   rotation and arriving within a minute of it raises nothing.
+- Enrollments shows a key that rotation replaced as Rotated, not Revoked, with the date and a
+  link to the key that replaced it, and a key made by rotation says which key it came from.
+  Revoking a rotated key answers 409 `credential_rotated` and names the key in use
+  (`current_device_id`), which is the one to revoke. For a key kept in a file, the console now
+  says the agent moves it into the Secure Enclave by itself, instead of suggesting a revoke.
 
 ## Agent 0.9.0 - 2026-10-27
 

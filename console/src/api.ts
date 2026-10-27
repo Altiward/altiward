@@ -124,6 +124,10 @@ export interface Enrollment {
   created_at: string;
   activated_at: string | null;
   revoked_at: string | null;
+  /** The key this one replaced by rotation; missing for an enrolled key. */
+  rotated_from?: string;
+  /** The key that replaced this one by rotation; present on a stale key, which is revoked. */
+  rotated_to?: string;
 }
 
 export interface CommandResult {
@@ -282,10 +286,18 @@ export interface About {
   app?: string;
 }
 
+/** What a refusal carries besides its message. */
+export interface ApiErrorBody {
+  code?: string;
+  /** With "credential_rotated": the key in use, which is the one to revoke. */
+  current_device_id?: string;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly body: ApiErrorBody = {},
   ) {
     super(message);
     this.name = "ApiError";
@@ -319,7 +331,8 @@ export function createApi(credentials: Credentials, { fetch: fetchImpl = (u, i) 
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       if (res.status === 401) onUnauthorized?.();
-      throw new ApiError(res.status, (data as { error?: string }).error ?? `The server returned ${res.status}.`);
+      const { error, code, current_device_id } = data as { error?: string } & ApiErrorBody;
+      throw new ApiError(res.status, error ?? `The server returned ${res.status}.`, { code, current_device_id });
     }
     return data as T;
   }

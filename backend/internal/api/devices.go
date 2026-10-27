@@ -252,6 +252,25 @@ func (s *Server) revokeEnrollment(w http.ResponseWriter, r *http.Request, p auth
 		return
 	}
 	c, err := s.store.RevokeCredential(r.Context(), p.TenantID, r.PathValue("id"), s.now(), a)
+	if errors.Is(err, store.ErrRotated) {
+		// A rotated key is already revoked: the key to revoke is the lineage's active one,
+		// which the answer names. Nothing changed, so nothing is audited.
+		active, lerr := s.store.LineageActive(r.Context(), r.PathValue("id"))
+		if lerr == nil {
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error":             "this key was rotated; revoke the key in use instead",
+				"code":              codeCredentialRotated,
+				"current_device_id": active.DeviceID,
+			})
+			return
+		}
+		if errors.Is(lerr, store.ErrNotFound) {
+			// The key in use was revoked in between, so this one is the lineage's last: revoke as usual.
+			c, err = s.store.RevokeCredential(r.Context(), p.TenantID, r.PathValue("id"), s.now(), a)
+		} else {
+			err = lerr
+		}
+	}
 	s.credentialResult(w, "revoke enrollment", c, err)
 	if err == nil {
 		s.log.Info("device credential revoked", "tenant", p.TenantID, "serial", c.Serial, "device_id", c.DeviceID)

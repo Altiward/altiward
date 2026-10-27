@@ -14,6 +14,8 @@ export const VerifiedGlyph = () => <svg {...base}><path d="M2 7.5l3.5 3.5L12 3.5
 export const ClaimedGlyph = () => <svg {...base}><path d="M5 5a2 2 0 114 0c0 1.5-2 1.5-2 3M7 11.5v.5" /></svg>;
 export const NotGrantedGlyph = () => <svg {...base}><path d="M2 2l10 10M12 2L2 12" /></svg>;
 export const EndedGlyph = () => <svg {...base}><path d="M2 11h10" /></svg>;
+/** A key replaced by rotation: an arrow handing on to a new mark. */
+export const RotatedGlyph = () => <svg {...base}><path d="M2 5h9M8 2l3 3-3 3M2 11h10" /></svg>;
 /** A key kept in the Secure Enclave: a chip. */
 export const ChipGlyph = () => <svg {...base}><path d="M4 4h6v6H4zM1 6h3M1 8.5h3M10 6h3M10 8.5h3" /></svg>;
 /** A key kept in a file: a page. */

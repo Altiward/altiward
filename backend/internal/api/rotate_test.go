@@ -991,3 +991,65 @@ func TestPreclaimedIDsDoNotHideTheAlert(t *testing.T) {
 	}
 	wantStaleKeyUsed(t, got[0], stale, successor.deviceID, successor.deviceID, "")
 }
+
+func TestListEnrollmentsShowsLineage(t *testing.T) {
+	rh := newRotationServer(t)
+	old := rh.agent
+	next := rh.rotated()
+
+	rec, out := do(t, rh.h, "GET", "/v1/enrollments", consoleToken, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list: %d %s", rec.Code, rec.Body)
+	}
+	rows, _ := out["enrollments"].([]any)
+	if len(rows) != 2 {
+		t.Fatalf("%d enrollments, want the old key and its successor: %s", len(rows), rec.Body)
+	}
+	for _, r := range rows {
+		row := r.(map[string]any)
+		switch row["device_id"] {
+		case old.deviceID:
+			if row["status"] != "revoked" || row["rotated_to"] != next.deviceID || row["rotated_from"] != nil {
+				t.Errorf("stale key = %v", row)
+			}
+		case next.deviceID:
+			if row["status"] != "active" || row["rotated_from"] != old.deviceID || row["rotated_to"] != nil {
+				t.Errorf("successor = %v", row)
+			}
+		default:
+			t.Errorf("unexpected key %v", row["device_id"])
+		}
+	}
+}
+
+func TestRevokeARotatedKeyNamesTheKeyInUse(t *testing.T) {
+	rh := newRotationServer(t)
+	old := rh.agent
+	next := rh.rotated()
+	before, err := rh.store.ListAudit(context.Background(), "acme", store.AuditFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec, out := do(t, rh.h, "POST", "/v1/enrollments/"+old.deviceID+"/revoke", consoleToken, nil)
+	wantCode(t, rec, out, http.StatusConflict, "credential_rotated")
+	if out["current_device_id"] != next.deviceID {
+		t.Fatalf("current_device_id = %v, want %s", out["current_device_id"], next.deviceID)
+	}
+	if got := rh.polls(next); got != http.StatusOK {
+		t.Errorf("the key in use polls with %d after the refused revoke", got)
+	}
+	after, err := rh.store.ListAudit(context.Background(), "acme", store.AuditFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("%d audit entries, want %d: a refused revoke changes nothing", len(after), len(before))
+	}
+
+	// Once the key in use is revoked, the stale key is already revoked: 200, as for any revoke.
+	rh.revokeFromConsole(next.deviceID)
+	if rec, _ := do(t, rh.h, "POST", "/v1/enrollments/"+old.deviceID+"/revoke", consoleToken, nil); rec.Code != http.StatusOK {
+		t.Errorf("revoking the stale key of a revoked lineage: %d %s", rec.Code, rec.Body)
+	}
+}

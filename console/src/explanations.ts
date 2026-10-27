@@ -31,6 +31,9 @@ export const explanations = {
     "Where the Mac said its key is kept when it enrolled; Altiward can’t check it. A key in the Secure Enclave " +
     "can’t be copied off the Mac. A key in a file can be copied by someone with admin rights on the Mac. " +
     "Agents before 0.2.0 don’t say, and keep their key in a file.",
+  rotated:
+    "The Mac replaced this key with a new one, which it proved it holds. Nobody revoked this one, and it needs " +
+    "nothing from you. The key that replaced it is the one in use.",
   enrolledWith:
     "The enrolment token the Mac enrolled with: its fingerprint, not the token. Search for it to find every key " +
     "one token enrolled, such as after it leaked. Keys enrolled before server 0.9.0 don’t have one.",
