@@ -61,11 +61,13 @@ The agent connects only to the server address in your MDM profile (`ServerURL`),
 HTTPS. It contains no third-party code, and makes no connections to Apple, SAP, Altiward
 or anyone else. It:
 
-- enrolls once with the enrolment token from your profile, registering a key it makes
-  on the Mac and saying whether that key is in the Mac's Secure Enclave;
-- when it replaces that key (key rotation), sends the new key's public half, whether it
-  is in the Secure Enclave, and a proof signed with the new key, in a request signed
-  with the old one;
+- enrols with the enrolment token from your profile, registering a key it makes on the Mac
+  and saying whether that key is in the Mac's Secure Enclave;
+- replaces that key from time to time (key rotation): a file key moves into the Secure
+  Enclave where the Mac has one, and a file key on another Mac is replaced every 30 days.
+  It sends the new key's public half, whether it is in the Secure Enclave, and a proof
+  signed with the new key, in a request signed with the old one. It doesn't use the
+  enrolment token for that;
 - sends events as they happen, and a health event every 5 minutes;
 - keeps a request open for commands (such as a revoke), which your server holds for up to
   50 seconds and answers when one is queued, then asks again; after an error it waits 60
@@ -105,8 +107,8 @@ key was active before, it also carries that key's device ID and storage and whet
 two keys came from the same hardware UUID. A `rotated_key_used` event carries instead the
 replaced key's device ID and fingerprint, the device ID of the key that replaced it, the
 device ID of the key the server revoked because of it (if any), and the agent version
-that sent the request. It is raised at most once a day for each replaced key, unless it
-revoked one. None of these events holds a public key. A Mac that sends its key again, as
+that sent the request. It is raised at most once a day for each replaced key, unless that
+use revoked a key. None of these events holds a public key. A Mac that sends its key again, as
 a retry, raises nothing new.
 
 For these enrolment events, CEF puts the token fingerprint in `suser` and the device ID
@@ -158,7 +160,7 @@ Everything is in your Postgres database.
 | Every event from every Mac, in full, and each `agent.enrollment` event the server raises | Forever, for now |
 | Elevation sessions, including the person's UPN and reason | Forever, for now |
 | Each Mac's latest state: versions, admins, health, its open permanent admin sign-ins (up to 20) and its newest 20 other permanent admin uses (the console shows up to 10, open sign-ins first) | Forever, replaced as it changes |
-| Each Mac's enrollment: serial, hardware UUID, **public** key, whether the Mac says its key is in its Secure Enclave, and the fingerprint of the enrolment token it used (never the token). For each key, also the key it replaced by rotation, when the Mac signed that rotation, and when a use of the key after it was replaced was last reported | Forever; revoking stops the Mac reporting |
+| Each Mac's enrolment: serial, hardware UUID, **public** key, whether the Mac says its key is in its Secure Enclave, and the fingerprint of the enrolment token it used (never the token). For each key, also the key it replaced by rotation, when the Mac signed that rotation, and when a use of the key after it was replaced was last reported | Forever; revoking stops the Mac reporting |
 | Commands sent from the console, who sent them, and their results | Forever |
 | Activity: every change made in the console, and every sign-in | Forever by default; or from 365 days, with `ALTIWARD_AUDIT_RETENTION_DAYS` |
 | Console sign-in sessions: the person's email, name, identity-provider ID and role | 12 hours at most, 1 hour idle; removed on sign-out, or when an admin ends it |
@@ -175,21 +177,30 @@ security records ([Backups](install.md#backups)).
 
 ## Secrets and keys
 
-- **Mac keys.** Each Mac makes its own key pair when it enrolls. The private key stays
-  on the Mac; the server stores only the public key. Every request after enrollment is
+- **Mac keys.** Each Mac makes its own key pair when it enrols. The private key stays
+  on the Mac; the server stores only the public key. Every request after enrolment is
   signed with it, and the server refuses requests more than 5 minutes old or from a
   revoked Mac. The agent stores the Mac's serial and hardware UUID with its key, and
   enrols a new key if it finds the store on a different Mac.
+- **Key rotation.** The agent replaces a Mac's key by itself: a file key moves into the
+  Secure Enclave on a Mac that has one, and on other Macs a file key is replaced every 30
+  days. The old key signs the request that introduces the new one, so no approval is
+  needed, and the server revokes the old key and records which key replaced it. A copied
+  key therefore goes stale. If a replaced key is used again, the server treats the Mac's
+  identity as held by two parties, revokes the Mac's current key (when the replaced key
+  was replaced in the last 30 days), and raises an alert. The Mac then enrols again, and
+  waits for approval when approval is on.
 - **Where the Mac's key lives.** In the Mac's Secure Enclave, on Macs that have one
-  (Apple silicon, and Intel Macs with a T2 chip) and enrolled with agent 0.2.0 or later.
-  The agent keeps a handle to it in a file under `/Library/Application Support/Altiward/`
-  that only root can read, and only that Mac's Secure Enclave can use the handle, so a
-  copy is no use anywhere else. Someone with admin rights on the Mac can still have it
-  sign while they're there. On other Macs, and on Macs that enrolled before agent 0.2.0
-  until they enroll again, the key itself is in that file. That protects it from standard
-  users but not from someone with admin rights on the Mac. Revoking a Mac's key in
-  **Enrollments** makes it enroll again with a new one. The key isn't in the Keychain, so
-  removing the agent with `--purge` leaves nothing behind.
+  (Apple silicon, and Intel Macs with a T2 chip). The agent keeps a handle to it in a file
+  under `/Library/Application Support/Altiward/` that only root can read, and only that
+  Mac's Secure Enclave can use the handle, so a copy is no use anywhere else. Someone with
+  admin rights on the Mac can still have it sign while they're there. On other Macs, the
+  key itself is in that file, and so it is on a Mac with a Secure Enclave until the agent
+  moves it there by rotation (a Mac that enrolled before agent 0.2.0, or whose Secure
+  Enclave failed at enrolment). A key in a file is protected from standard users but not
+  from someone with admin rights on the Mac. Revoking a Mac's key in **Enrollments** makes
+  it enrol again with a new one. The key isn't in the Keychain, so removing the agent with
+  `--purge` leaves nothing behind.
 - **The enrolment token** lets a Mac enrol, and does nothing else. It is in the MDM
   profile, so anyone on a Mac can read it. A new enrolment shows in **Enrollments**, where
   an admin can revoke it. It also reaches your SIEM as an `agent.enrollment` event.

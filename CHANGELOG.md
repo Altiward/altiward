@@ -13,7 +13,8 @@ Every section has the four headings below, with "None." under any that don't app
 
 ### Upgrade order
 
-Upgrade the server first.
+Upgrade the server first. An agent that can rotate its key, on a server that can't, keeps
+its key and asks again a day later.
 
 ### Breaking changes
 
@@ -46,7 +47,13 @@ None.
 
 ### Upgrade order
 
-Upgrade the server before the agents.
+Upgrade the server before the agents: an agent 1.0 on an older server keeps its key and
+asks to rotate it again a day later. The server adds three columns and an index to the
+device credentials table on first start. Don't run 0.9 and 1.0 servers on one database: a
+0.9 server doesn't know the two new `agent.enrollment` states. One rolled back to 0.9 still
+refuses the keys rotation replaced, but raises no alert when one is used again, and
+its diagnostics list migration 0006 as unknown. After restoring a backup, Macs whose key
+rotated since it was taken enrol again and wait for approval.
 
 ### Breaking changes
 
@@ -59,7 +66,9 @@ None.
 - A key replaced by rotation stops working. If it is used again within 30 days of being
   replaced, two holders share the Mac's identity, so the server also revokes the Mac's
   current key and the Mac enrols again (waiting for approval when that is on). A copied key
-  can then cause one visible disruption, not take the Mac's place.
+  can then cause one visible disruption, not take the Mac's place. Someone holding a copy
+  of a key replaced in the last 30 days can cause that disruption once, with or without the
+  enrolment token.
 
 ### Changes
 
@@ -72,7 +81,7 @@ None.
 - A rotation raises an `agent.enrollment` event with state `rotated`. A key that rotation
   replaced and that signs a request again raises one with state `rotated_key_used`: a
   High alert that names the key the server revoked as a result, if any. It is raised at
-  most once a day for each key, unless it revoked one. A request signed just before the
+  most once a day for each key, unless that use revoked a key. A request signed just before the
   rotation and arriving within a minute of it raises nothing.
 - Enrollments shows a key that rotation replaced as Rotated, not Revoked, with the date and a
   link to the key that replaced it, and a key made by rotation says which key it came from.
