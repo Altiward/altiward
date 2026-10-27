@@ -32,8 +32,7 @@ export function agentClient(server, enrollToken) {
   }
 
   /** Enrolls a fake Mac with a new key: { serial, deviceID, status, privateKey }.
-   *  `keyStorage` is where the Mac says its key is kept; null leaves it out, as agents
-   *  before 0.2.0 do. */
+   *  `keyStorage` is where the Mac says its key is kept; null leaves it out. */
   async function enroll(serial, { keyStorage = "secure_enclave" } = {}) {
     const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
     const spki = publicKey.export({ type: "spki", format: "der" }).toString("base64");

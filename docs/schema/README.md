@@ -148,8 +148,8 @@ sends `console`, `terminal` and `ssh` sign-ins, `prompt` and `screen_sharing`. I
 `sudo`, `su` or an SSH use seen only in the log: macOS keeps no log line for them, so they
 wait for Apple's Endpoint Security entitlement. The server accepts them.
 
-Older agents' events are frozen in [`compat/`](compat/), one directory per agent release,
-and the server must keep accepting the last two.
+Released agents' events are frozen in [`compat/`](compat/), one directory per supported
+agent minor release, and the server must keep accepting all of them.
 
 `agent.silent` is raised by the backend's monitor, not the agent. Its `timestamp` is when
 the backend raised it and `device` is the Mac's last known identity and versions. It

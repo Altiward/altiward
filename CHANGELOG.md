@@ -9,6 +9,26 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Server 1.0.1 - unreleased
+
+### Upgrade order
+
+None.
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+- The oldest supported agent is now 1.0, so the console tags a Mac with an older agent as
+  outdated, and the server no longer promises to accept older agents' events. The frozen
+  compatibility fixtures keep only agent 1.0's.
+
 ## Agent 1.0.0 - 2026-10-27
 
 ### Upgrade order
