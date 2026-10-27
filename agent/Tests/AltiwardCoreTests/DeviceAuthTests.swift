@@ -1642,7 +1642,7 @@ extension DeviceAuthenticatorTests {
         let (logged, log) = logLines()
         let (auth, oldID) = try await readyToRotate(store, server, log: log)
         let start = server.requests.count
-        server.dropNextRotateResponse()
+        server.dropNextRotateResponse(URLError(.networkConnectionLost))
         #expect(await auth.rotate(reason: "test") == .unknown)
         let pending = try #require(try nextRecord(store))
         server.answerRotate(status: 503, body: Data("upstream unavailable".utf8))
@@ -1656,15 +1656,51 @@ extension DeviceAuthenticatorTests {
         #expect(server.rotations.count == 1 + 24 * 4)
         let holding = logged.withLock { $0 }.filter { $0.hasPrefix("the rotation's outcome is not known yet") }
         #expect((24...25).contains(holding.count))  // once an hour
+        // Something on the way may be what keeps the request from the server, so each says
+        // what to check.
+        let advice = "If this goes on, check that the whole of /v1/agent/ reaches the server"
+        #expect(holding.allSatisfy { $0.contains(advice) })
+
+        // altiward-agent status, a command, shows the last answer the daemon logged.
+        let status = authenticator(store, server, role: .command)
+        let last = try #require(await status.rotationLastAnswer)
+        #expect(last.answer == "HTTP 503: upstream unavailable. \(advice)")
+        #expect(last.at <= clock.now && clock.now.timeIntervalSince(last.at) < 3600)
+        #expect(try nextRecord(store)?.sent == true)
 
         server.stopAnsweringRotate()
         clock.advance(900)
         #expect(try await postEvents(auth) == 200)
         #expect(await auth.rotationPendingSince == nil)
+        #expect(await status.rotationLastAnswer == nil)
         let newID = try #require(server.successors[oldID])
         #expect(server.requests.last?.deviceID == newID)
         #expect(server.staleKeyUses == 0)
         #expect(oldKeyRequests(server, oldID, after: start).isEmpty)
+    }
+
+    /// The last answer a rotation waits on is shown on one line, without the control
+    /// characters of whatever sent it; a hold caused on the Mac gives no network advice.
+    @Test(.timeLimit(.minutes(1))) func aHeldRotationsLastAnswerIsPrintable() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (logged, log) = logLines()
+        let (auth, _) = try await readyToRotate(store, server, log: log)
+        server.dropNextRotateResponse()  // not a URLError: as if signing failed on the Mac
+        #expect(await auth.rotate(reason: "test") == .unknown)
+        #expect(logged.withLock { $0 }.allSatisfy { !$0.contains("/v1/agent/") })
+
+        server.answerRotate(status: 502, body: Data("<h1>Bad\nGateway</h1>\u{1B}[2J\u{07}".utf8))
+        clock.advance(3600)
+        await #expect(throws: DeviceKeyError.rotationOutcomeUnknown) { try await postEvents(auth) }
+        let last = try #require(await auth.rotationLastAnswer)
+        #expect(last.answer.hasPrefix("HTTP 502: <h1>Bad Gateway</h1> [2J . If this goes on"))
+
+        server.stopAnsweringRotate()
+        server.answerRotate(status: 504, body: Data())
+        clock.advance(3600)
+        await #expect(throws: DeviceKeyError.rotationOutcomeUnknown) { try await postEvents(auth) }
+        #expect(try #require(await auth.rotationLastAnswer).answer.hasPrefix("HTTP 504. If this goes on"))
     }
 
     @Test(.timeLimit(.minutes(1))) func aRotationCopiedToAnotherMacIsDropped() async throws {
