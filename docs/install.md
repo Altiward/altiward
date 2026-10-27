@@ -309,8 +309,8 @@ file only root can read.
 The agent replaces its own device key, so a copy of a file key goes stale and no file key
 stays in use for ever:
 
-- A file key on a Mac with a Secure Enclave, which the agent makes when the Secure Enclave
-  fails at enrolment, moves into it once the key has been active for 24 hours and has
+- A file key on a Mac with a Secure Enclave (the agent makes one when the Secure Enclave
+  fails at enrolment) moves into it once the key has been active for 24 hours and has
   signed a request since the daemon started. The daemon checks after each long poll and at
   least hourly, so a Mac that enrolled today moves tomorrow. There is no need to revoke a
   file key to move it: **Enrollments** says the agent does it by itself.
