@@ -14,12 +14,13 @@ import (
 const (
 	// Interval is how often the copy is refreshed.
 	Interval = 15 * time.Minute
-	// passTimeout bounds one pass: Graph's paging has no page cap, so a list that never
-	// ends must still stop.
-	passTimeout = 5 * time.Minute
 	// maxError bounds a recorded error; a token endpoint's answer can be long.
 	maxError = 1000
 )
+
+// passTimeout bounds one pass: Graph's paging has no page cap, so a list that never ends
+// must still stop. A variable only so tests can shorten it.
+var passTimeout = 5 * time.Minute
 
 // Sync keeps the store's copy of the Macs Intune manages, replacing it whole at each pass.
 // Replicas share the work through a claim in the store, so one of them syncs each round.

@@ -208,6 +208,24 @@ func (e *statusError) Error() string {
 	return s
 }
 
+// requestError is a request that failed before Graph answered, without its URL: the URL
+// holds a device ID in Device's path, and from page 2 on Graph's $skiptoken, which can name
+// the last device read. The error reaches the console and the logs. It keeps the cause, so
+// errors.Is still finds a deadline.
+type requestError struct{ err error }
+
+func (e *requestError) Error() string { return "intune: GET managedDevices: " + e.err.Error() }
+func (e *requestError) Unwrap() error { return e.err }
+
+// withoutURL drops the URL a *url.Error quotes, keeping its cause.
+func withoutURL(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		err = ue.Err
+	}
+	return &requestError{err: err}
+}
+
 // get makes one GET with the bearer token, retrying as Graph asks, and returns the body of
 // a 2xx answer.
 func (c *Client) get(ctx context.Context, u string) ([]byte, error) {
@@ -218,13 +236,13 @@ func (c *Client) get(ctx context.Context, u string) ([]byte, error) {
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 		if err != nil {
-			return nil, fmt.Errorf("intune: %w", err)
+			return nil, withoutURL(err)
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Accept", "application/json")
 		resp, err := c.httpClient().Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("intune: %w", err)
+			return nil, withoutURL(err)
 		}
 		body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 		resp.Body.Close()

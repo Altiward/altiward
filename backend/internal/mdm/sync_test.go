@@ -1,6 +1,7 @@
 package mdm_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,7 +9,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -155,5 +158,89 @@ func TestSyncSkipsWhenAnotherReplicaClaimed(t *testing.T) {
 	// Once its claim is half an interval old, this replica takes over.
 	if err := newSync(st, src, now.Add(mdm.Interval/2)).Once(context.Background()); err != nil || src.calls != 1 {
 		t.Fatalf("after half an interval: %v, %d calls", err, src.calls)
+	}
+}
+
+// lockedBuffer is a log that Run writes while the test reads it.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// TestSyncErrorsNeverShowTheNextLink: from page 2 on, a request's URL is Graph's nextLink,
+// whose $skiptoken can name the last device read. A request that fails there, by running
+// out of time, must not put it in the error viewers see, or in the log.
+func TestSyncErrorsNeverShowTheNextLink(t *testing.T) {
+	const skiptoken = "LastDeviceName='JDOE-MBP',LastDeviceId='9f8e7d6c-0000-4000-8000-000000000009'"
+	for _, c := range []struct {
+		name       string
+		clientWait time.Duration // the HTTP client's timeout; 0 for none
+		passWait   time.Duration // the pass's deadline
+		want       string
+	}{
+		{"past the pass's deadline", 0, 300 * time.Millisecond, "listing the Macs took longer than 300ms"},
+		{"past the HTTP client's timeout", 300 * time.Millisecond, 5 * time.Minute, "Client.Timeout"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			defer mdm.SetPassTimeout(c.passWait)()
+			stop := make(chan struct{})
+			var srv *httptest.Server
+			srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("$skiptoken") == "" {
+					next := srv.URL + "/deviceManagement/managedDevices?$skiptoken=" + url.QueryEscape(skiptoken)
+					_, _ = fmt.Fprintf(w, `{"value":[{"id":"00000000-0000-4000-8000-000000000001","serialNumber":"C02NEW",`+
+						`"operatingSystem":"macOS"}],"@odata.nextLink":%q}`, next)
+					return
+				}
+				select { // page 2 never answers
+				case <-r.Context().Done():
+				case <-stop:
+				}
+			}))
+			defer srv.Close()
+			defer close(stop)
+
+			client := &http.Client{Timeout: c.clientWait}
+			st := store.NewMemory(nil)
+			logs := &lockedBuffer{}
+			graph := &intune.Client{Tokens: staticToken("t"), HTTP: client, BaseURL: srv.URL}
+			s := newSync(st, graph, testfixture.Time(t, "2026-10-27T12:00:00Z"))
+			s.Log = slog.New(slog.NewTextHandler(logs, nil))
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			go func() { s.Run(ctx, time.Hour); close(done) }()
+			for end := time.Now().Add(10 * time.Second); !strings.Contains(logs.String(), "Intune sync failed"); {
+				if time.Now().After(end) {
+					t.Fatal("no warning logged")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			cancel()
+			<-done
+
+			_, status := copyOf(t, st)
+			for what, text := range map[string]string{"last_error": status.LastError, "log": logs.String()} {
+				if !strings.Contains(text, c.want) {
+					t.Errorf("%s %q lacks %q", what, text, c.want)
+				}
+				for _, leak := range []string{"skiptoken", "LastDevice", "JDOE-MBP", "9f8e7d6c"} {
+					if strings.Contains(text, leak) {
+						t.Errorf("%s shows %q: %s", what, leak, text)
+					}
+				}
+			}
+		})
 	}
 }

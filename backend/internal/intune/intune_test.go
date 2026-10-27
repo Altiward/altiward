@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -300,6 +301,88 @@ func TestErrorsNeverCarryTheToken(t *testing.T) {
 	if err == nil || strings.Contains(err.Error(), testToken) {
 		t.Errorf("closed server: err = %v", err)
 	}
+}
+
+// TestTransportErrorsLeaveOutTheURL: a failed request's URL holds what viewers mustn't see,
+// a device ID in Device's path, or from page 2 on Graph's $skiptoken, which can name the last
+// device read. Errors keep the cause, so a deadline is still a deadline.
+func TestTransportErrorsLeaveOutTheURL(t *testing.T) {
+	const (
+		deviceID  = "0a1b2c3d-0000-4000-8000-00000000000a"
+		skiptoken = "LastDeviceName='JDOE-MBP',LastDeviceId='9f8e7d6c-0000-4000-8000-000000000009'"
+	)
+	// The first page sends the client on to page 2; page 2, and Device, fail as each case says.
+	serve := func(t *testing.T, fail func(w http.ResponseWriter, r *http.Request)) *httptest.Server {
+		stop := make(chan struct{})
+		var srv *httptest.Server
+		srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("$skiptoken") == "" && !strings.Contains(r.URL.Path, deviceID) {
+				next := srv.URL + "/v1.0/deviceManagement/managedDevices?$skiptoken=" + url.QueryEscape(skiptoken)
+				fmt.Fprintf(w, `{"value":[],"@odata.nextLink":%q}`, next)
+				return
+			}
+			fail(w, r)
+			select {
+			case <-r.Context().Done():
+			case <-stop:
+			}
+		}))
+		t.Cleanup(func() { close(stop); srv.Close() })
+		return srv
+	}
+	stall := func(http.ResponseWriter, *http.Request) {}
+	hangUp := func(w http.ResponseWriter, _ *http.Request) {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			conn.Close()
+		}
+	}
+	check := func(t *testing.T, err error, deadline bool) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("no error")
+		}
+		msg := err.Error()
+		for _, leak := range []string{deviceID, "skiptoken", "LastDevice", "JDOE-MBP", "select", "127.0.0.1", "?"} {
+			if strings.Contains(msg, leak) {
+				t.Errorf("error %q shows %q", msg, leak)
+			}
+		}
+		if !strings.HasPrefix(msg, "intune: GET managedDevices: ") {
+			t.Errorf("error %q doesn't say what failed", msg)
+		}
+		if deadline && !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("error %q isn't a deadline", msg)
+		}
+	}
+
+	t.Run("Device, when the connection is closed", func(t *testing.T) {
+		c, _ := newClient(serve(t, hangUp))
+		_, err := c.Device(context.Background(), deviceID)
+		check(t, err, false)
+	})
+	t.Run("page 2, when the connection is closed", func(t *testing.T) {
+		c, _ := newClient(serve(t, hangUp))
+		_, err := c.Macs(context.Background())
+		check(t, err, false)
+	})
+	t.Run("page 2, past the context's deadline", func(t *testing.T) {
+		c, _ := newClient(serve(t, stall))
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+		_, err := c.Macs(ctx)
+		check(t, err, true)
+	})
+	t.Run("page 2, past the HTTP client's timeout", func(t *testing.T) {
+		srv := serve(t, stall)
+		c, _ := newClient(srv)
+		c.HTTP = &http.Client{Timeout: 200 * time.Millisecond}
+		_, err := c.Macs(context.Background())
+		check(t, err, false)
+		if !strings.Contains(err.Error(), "Client.Timeout") {
+			t.Errorf("error %q doesn't say it timed out", err)
+		}
+	})
 }
 
 func TestDevicesBySerialEscapesAndValidates(t *testing.T) {
