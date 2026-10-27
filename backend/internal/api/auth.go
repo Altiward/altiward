@@ -293,5 +293,16 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	// Tell the next sign-in to show the account picker, so signing out isn't undone by one
 	// click that signs the same account straight back in.
 	s.setCookie(w, "altiward_signed_out", "1", 0)
+	// The session has ended whatever happens next. With the setting on, the console sends
+	// the browser to the provider to end its session too. The address comes from
+	// configuration and the provider's metadata, never from the request.
+	if s.sso.ProviderSignOut() {
+		if to, ok := s.sso.SignOutURL(r.Context(), s.sso.SignedOutURL()); ok {
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, http.StatusOK, map[string]string{"provider_sign_out_url": to})
+			return
+		}
+		s.log.Warn("signed out of the console only: the identity provider has no end_session_endpoint, or can't be reached")
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

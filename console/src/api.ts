@@ -366,7 +366,8 @@ export function createApi(credentials: Credentials, { fetch: fetchImpl = (u, i) 
     consoleSessions: () => call<{ sessions: ConsoleSignIn[] }>("GET", "/v1/console-sessions").then((r) => r.sessions),
     endConsoleSession: (sessionID: string) => call<void>("DELETE", `/v1/console-sessions/${id(sessionID)}`),
     me: () => call<Me>("GET", "/v1/auth/me"),
-    signOut: () => call<void>("POST", "/v1/auth/logout"),
+    /** Ends the session. With provider sign-out on, the server also gives the identity provider's sign-out address. */
+    signOut: () => call<{ provider_sign_out_url?: string } | undefined>("POST", "/v1/auth/logout"),
   };
 }
 

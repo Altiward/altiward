@@ -5,12 +5,12 @@ import { App } from "./App";
 import type { Me } from "./api";
 import { overview } from "./test/fixtures";
 
-type Server = { sso?: boolean; session?: Me | null; tokenMe?: Me };
+type Server = { sso?: boolean; session?: Me | null; tokenMe?: Me; providerSignOutURL?: string };
 
 const tokenMe: Me = { actor: "token:3f2a9c1b", name: "", role: "admin", method: "token" };
 
 // App builds its own API, so the tests answer fetch as the server would.
-function serve({ sso = false, session = null, tokenMe: asToken = tokenMe }: Server) {
+function serve({ sso = false, session = null, tokenMe: asToken = tokenMe, providerSignOutURL }: Server) {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     const path = new URL(url, "http://localhost").pathname;
     const bearer = new Headers(init?.headers).get("Authorization");
@@ -21,7 +21,8 @@ function serve({ sso = false, session = null, tokenMe: asToken = tokenMe }: Serv
       case "/v1/auth/me":
         if (bearer) return bearer === "Bearer console-token-000000001" ? json(asToken) : json({ error: "bad token" }, 401);
         return session ? json(session) : json({ error: "sign in" }, 401);
-      case "/v1/auth/logout": return json(null, 204);
+      case "/v1/auth/logout":
+        return providerSignOutURL ? json({ provider_sign_out_url: providerSignOutURL }) : json(null, 204);
       case "/v1/about": return json({ version: "0.1.0", oldest_supported_agent: "0.1" });
       case "/v1/enrollments": return json({ enrollments: [] });
       case "/v1/sessions": return json({ sessions: [] });
@@ -100,5 +101,35 @@ describe("signing in", () => {
     expect(await screen.findByRole("link", { name: "Sign in with single sign-on" })).toBeInTheDocument();
     const logout = fetch.mock.calls.find(([url]) => url === "/v1/auth/logout");
     expect(new Headers(logout?.[1]?.headers).get("X-CSRF-Token")).toBe("c1");
+  });
+
+  it("goes on to the identity provider when the server gives a sign-out address", async () => {
+    const to = "https://login.microsoftonline.com/t/oauth2/v2.0/logout?client_id=app&post_logout_redirect_uri=https%3A%2F%2Faltiward.example.com%2Fsigned-out";
+    serve({ sso: true, providerSignOutURL: to, session: { actor: "jane.doe@example.com", name: "Jane Doe", role: "operator", method: "sso", csrf_token: "c1" } });
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign });
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: "Sign out" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith(to));
+    expect(await screen.findByRole("link", { name: "Sign in with single sign-on" })).toBeInTheDocument();
+  });
+
+  it("stays on the sign-in page after a local sign-out", async () => {
+    serve({ sso: true, session: { actor: "jane.doe@example.com", name: "Jane Doe", role: "operator", method: "sso", csrf_token: "c1" } });
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign });
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: "Sign out" }));
+    expect(await screen.findByRole("link", { name: "Sign in with single sign-on" })).toBeInTheDocument();
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("shows the signed-out view when the identity provider sends the browser back to /signed-out", async () => {
+    window.history.replaceState(null, "", "/signed-out");
+    serve({ sso: true });
+    render(<App />);
+    const link = await screen.findByRole("link", { name: "Sign in with single sign-on" });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(link).toHaveAttribute("href", "/v1/auth/login?next=%2F"); // signing in again opens the overview
   });
 });

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"sync"
 	"time"
@@ -22,6 +23,10 @@ import (
 
 // CallbackPath is where the identity provider sends people back to.
 const CallbackPath = "/v1/auth/callback"
+
+// SignedOutPath is the console page the identity provider sends people back to after it
+// signs them out. It must be registered with the provider as a sign-out redirect URI.
+const SignedOutPath = "/signed-out"
 
 // Identity is who signed in, from a verified ID token.
 type Identity struct {
@@ -45,6 +50,8 @@ type Provider struct {
 	mu       sync.Mutex
 	verifier *oidc.IDTokenVerifier
 	oauth    *oauth2.Config
+	// endSession is the provider's end_session_endpoint; empty if it has none.
+	endSession string
 }
 
 func New(cfg config.OIDC, client *http.Client, now func() time.Time) *Provider {
@@ -74,8 +81,40 @@ func (p *Provider) discover(ctx context.Context) (*oauth2.Config, *oidc.IDTokenV
 		ClientID: p.cfg.ClientID, ClientSecret: p.cfg.ClientSecret, Endpoint: provider.Endpoint(),
 		RedirectURL: p.RedirectURL(), Scopes: p.cfg.Scopes,
 	}
+	var meta struct {
+		EndSession string `json:"end_session_endpoint"`
+	}
+	if err := provider.Claims(&meta); err != nil {
+		return nil, nil, fmt.Errorf("read %s's metadata: %w", p.cfg.Issuer, err)
+	}
+	p.endSession = meta.EndSession
 	p.verifier = provider.Verifier(&oidc.Config{ClientID: p.cfg.ClientID, Now: p.now})
 	return p.oauth, p.verifier, nil
+}
+
+// SignedOutURL is where the identity provider sends people back to after it signs them out.
+func (p *Provider) SignedOutURL() string { return p.cfg.ConsoleURL + SignedOutPath }
+
+// ProviderSignOut is whether signing out of the console also signs the person out of the
+// identity provider (ALTIWARD_OIDC_PROVIDER_SIGN_OUT).
+func (p *Provider) ProviderSignOut() bool { return p.cfg.ProviderSignOut }
+
+// SignOutURL is where to send the browser to sign the person out of the identity
+// provider, which then returns it to postLogout. It is false if the provider has no
+// end_session_endpoint, or can't be reached.
+func (p *Provider) SignOutURL(ctx context.Context, postLogout string) (string, bool) {
+	if _, _, err := p.discover(ctx); err != nil {
+		return "", false
+	}
+	p.mu.Lock()
+	endSession := p.endSession
+	p.mu.Unlock()
+	u, err := url.Parse(endSession)
+	if endSession == "" || err != nil {
+		return "", false
+	}
+	u.RawQuery = url.Values{"client_id": {p.cfg.ClientID}, "post_logout_redirect_uri": {postLogout}}.Encode()
+	return u.String(), true
 }
 
 // AuthCodeURL is where to send the browser to sign in; selectAccount asks the provider to

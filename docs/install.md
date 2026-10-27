@@ -522,6 +522,22 @@ when your identity provider is down or misconfigured. Each use shows in Activity
 SIEM as `break-glass:` and the token's fingerprint, so alert on it. To turn it off, leave
 `ALTIWARD_CONSOLE_TOKENS` empty.
 
+**Signing out of Entra ID too (optional).** By default, **Sign out** ends only Altiward's
+session, and the person stays signed in to Entra ID in their browser. To end both, add
+`https://<console hostname>/signed-out` as a second redirect URI in the app
+registration, then set `ALTIWARD_OIDC_PROVIDER_SIGN_OUT=true`. After **Sign out**, the
+browser goes to Entra ID, which may ask which account to sign out of, and then returns
+to the console's signed-out page. The next sign-in shows the account picker, as it does
+after any **Sign out**. The server refuses this setting unless the issuer is
+Entra ID's, because Okta and other providers are not supported until 1.2.0. If the
+provider doesn't offer a sign-out address, the server logs a warning and signs out of
+Altiward only.
+
+On a Mac that uses Platform SSO or the Microsoft Enterprise SSO plug-in, Entra ID can sign
+the person straight back in from the Mac's own credentials. Signing out ends the Entra ID
+session in the browser, but choosing the account at the next sign-in may not ask for a
+password.
+
 ## 6. Settings worth reviewing
 
 In the console, under **Settings › General**:

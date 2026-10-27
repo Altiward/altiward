@@ -147,6 +147,53 @@ func TestOIDC(t *testing.T) {
 	}
 }
 
+func TestOIDCProviderSignOut(t *testing.T) {
+	base := map[string]string{
+		"ALTIWARD_AGENT_TOKENS": "acme=x", "ALTIWARD_CONSOLE_TOKENS": "acme=y",
+		"ALTIWARD_OIDC_ISSUER": "https://login.microsoftonline.com/tenant-id/v2.0", "ALTIWARD_OIDC_CLIENT_ID": "app",
+		"ALTIWARD_CONSOLE_URL": "https://altiward.example.com", "ALTIWARD_OIDC_ADMIN_GROUPS": "g1",
+	}
+	with := func(k, v string) map[string]string {
+		m := map[string]string{}
+		for kk, vv := range base {
+			m[kk] = vv
+		}
+		m[k] = v
+		return m
+	}
+	// Off unless asked for.
+	if c, err := config.Load(env(base)); err != nil || c.OIDC.ProviderSignOut {
+		t.Fatalf("default: %v", err)
+	}
+	for v, want := range map[string]bool{"true": true, "false": false, "": false} {
+		c, err := config.Load(env(with("ALTIWARD_OIDC_PROVIDER_SIGN_OUT", v)))
+		if err != nil || c.OIDC.ProviderSignOut != want {
+			t.Errorf("%q: %v, %v", v, c.OIDC, err)
+		}
+	}
+	_, err := config.Load(env(with("ALTIWARD_OIDC_PROVIDER_SIGN_OUT", "maybe")))
+	if want := `ALTIWARD_OIDC_PROVIDER_SIGN_OUT: want true or false, got "maybe"`; err == nil || err.Error() != want {
+		t.Errorf("garbage: %v", err)
+	}
+	// Only Entra ID, for now.
+	m := with("ALTIWARD_OIDC_PROVIDER_SIGN_OUT", "true")
+	m["ALTIWARD_OIDC_ISSUER"] = "https://login.example.com/t/v2.0"
+	_, err = config.Load(env(m))
+	if want := "ALTIWARD_OIDC_PROVIDER_SIGN_OUT works with Entra ID only until 1.2.0"; err == nil || err.Error() != want {
+		t.Errorf("other issuer: %v", err)
+	}
+	// An issuer that merely contains the host is not Entra.
+	m["ALTIWARD_OIDC_ISSUER"] = "https://login.microsoftonline.com.evil.example/t/v2.0"
+	if _, err = config.Load(env(m)); err == nil {
+		t.Error("lookalike issuer accepted")
+	}
+	// Off with another issuer is fine.
+	m["ALTIWARD_OIDC_PROVIDER_SIGN_OUT"] = "false"
+	if _, err = config.Load(env(m)); err != nil {
+		t.Errorf("off, other issuer: %v", err)
+	}
+}
+
 func TestSinks(t *testing.T) {
 	c, err := config.Load(env(map[string]string{
 		"ALTIWARD_AGENT_TOKENS":           "acme=x",
