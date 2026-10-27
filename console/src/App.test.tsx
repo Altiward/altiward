@@ -76,6 +76,7 @@ describe("signing in", () => {
     render(<App />);
     const link = await screen.findByRole("link", { name: "Sign in with single sign-on" });
     expect(link).toHaveAttribute("href", "/v1/auth/login?next=%2Ffleet");
+    expect(screen.getByRole("link", { name: "Use a different account" })).toHaveAttribute("href", "/v1/auth/login?select_account=1&next=%2Ffleet");
     expect(screen.queryByLabelText("Break-glass token")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Use a break-glass token instead" }));
     expect(screen.getByLabelText("Break-glass token")).toBeInTheDocument();
