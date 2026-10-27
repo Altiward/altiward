@@ -65,11 +65,12 @@ export function ServerNotice({ running, latest, azureApp, onDismiss }: Deploymen
       ) : (
         <>
           <p className="hint">
-            <a href={latest.url} target="_blank" rel="noreferrer">Release notes for {v}</a>. Put the release files in one
-            directory on the server, read <code>RELEASE_NOTES.md</code>, then run the upgrade script from your deployment
-            directory (<a href={guide} target="_blank" rel="noreferrer">how to upgrade</a>):
+            <a href={latest.url} target="_blank" rel="noreferrer">Release notes for {v}</a>. Read them, then run the upgrade
+            script from your deployment directory: it downloads the release from GitHub. On a server without internet
+            access, put the release files in a directory and give that instead of the version
+            (<a href={guide} target="_blank" rel="noreferrer">how to upgrade</a>):
           </p>
-          <Command text={`./upgrade.sh ~/altiward-${v}`} />
+          <Command text={`./upgrade.sh ${v}`} />
         </>
       )}
     </section>
