@@ -496,6 +496,21 @@ Then set these in `.env` and run `docker compose up -d`:
 If your identity provider's certificate comes from your own CA, set
 `ALTIWARD_TRUSTED_CAS_FILE` as for the SIEM (step 4).
 
+**Signing out of Entra ID too (optional).** By default, **Sign out** ends only Altiward's
+session, and the person stays signed in to Entra ID in their browser. To end both, add
+`https://<console hostname>/signed-out` as a second redirect URI in the app
+registration, then set `ALTIWARD_OIDC_PROVIDER_SIGN_OUT=true`. After **Sign out**, the
+browser goes to Entra ID, which may ask which account to sign out of, and then returns
+to the console's signed-out page. The server refuses this setting unless the issuer is
+Entra ID's, because Okta and other providers are not supported until 1.2.0. If the
+provider doesn't offer a sign-out address, the server logs a warning and signs out of
+Altiward only.
+
+On a Mac that uses Platform SSO or the Microsoft Enterprise SSO plug-in, Entra ID can sign
+the person straight back in from the Mac's own credentials. Signing out ends the Entra ID
+session in the browser, but the next **Sign in with single sign-on** may not ask for a
+password.
+
 The console then shows **Sign in with single sign-on**. Sessions end after 12 hours, or
 after an hour unused. A change to someone's groups applies the next time they sign in.
 

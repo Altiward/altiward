@@ -28,6 +28,8 @@ type Provider struct {
 	// Now stamps ID tokens; tests move it to expire them.
 	Now func() time.Time
 
+	endSession bool
+
 	mu    sync.Mutex
 	codes map[string]grant
 }
@@ -38,21 +40,34 @@ type grant struct {
 	redirect  string
 }
 
+// Option changes what the fake provider offers.
+type Option func(*Provider)
+
+// WithEndSession adds an end_session_endpoint to the discovery document, as Entra ID has.
+func WithEndSession() Option { return func(p *Provider) { p.endSession = true } }
+
 // New starts a provider, stopped when the test ends.
-func New(t *testing.T) *Provider {
+func New(t *testing.T, opts ...Option) *Provider {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
 	p := &Provider{t: t, key: key, Now: time.Now, codes: map[string]grant{}}
+	for _, o := range opts {
+		o(p)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, map[string]any{
+		doc := map[string]any{
 			"issuer": p.URL, "authorization_endpoint": p.URL + "/authorize", "token_endpoint": p.URL + "/token",
 			"jwks_uri": p.URL + "/keys", "id_token_signing_alg_values_supported": []string{"RS256"},
 			"response_types_supported": []string{"code"}, "subject_types_supported": []string{"public"},
-		})
+		}
+		if p.endSession {
+			doc["end_session_endpoint"] = p.URL + "/logout"
+		}
+		writeJSON(w, doc)
 	})
 	mux.HandleFunc("GET /keys", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &key.PublicKey, KeyID: "k1", Algorithm: "RS256", Use: "sig"}}})

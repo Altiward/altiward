@@ -69,6 +69,35 @@ func TestIdentityFallsBackFromEmail(t *testing.T) {
 	}
 }
 
+func TestSignOutURL(t *testing.T) {
+	idp := ssotest.New(t, ssotest.WithEndSession())
+	p := provider(t, idp.URL, idp.Client())
+	to, ok := p.SignOutURL(context.Background(), "https://altiward.example.com/signed-out")
+	if !ok {
+		t.Fatal("no sign-out URL")
+	}
+	u, err := neturl.Parse(to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Scheme+"://"+u.Host+u.Path != idp.URL+"/logout" {
+		t.Errorf("sign-out URL = %s", to)
+	}
+	q := u.Query()
+	if len(q) != 2 || q.Get("client_id") != ssotest.ClientID ||
+		q.Get("post_logout_redirect_uri") != "https://altiward.example.com/signed-out" {
+		t.Errorf("query = %v", q)
+	}
+}
+
+func TestSignOutURLWithoutEndSession(t *testing.T) {
+	idp := ssotest.New(t)
+	p := provider(t, idp.URL, idp.Client())
+	if to, ok := p.SignOutURL(context.Background(), "https://altiward.example.com/signed-out"); ok || to != "" {
+		t.Errorf("got %q, %v", to, ok)
+	}
+}
+
 func TestDiscoveryIsRetriedAfterAFailure(t *testing.T) {
 	down := true
 	var srv *httptest.Server
