@@ -555,7 +555,7 @@ every 30 days, so there is no need to revoke it.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/install/enrollments-dark.png">
-  <img src="images/install/enrollments-light.png" width="720" alt="Enrollments in the console: each key shows its fingerprint and whether it is kept in the Secure Enclave, in a file, or not reported. A Mac waiting for approval is selected, with Approve and Reject buttons, its hardware UUID, a note that it enrolled again with a new key and when it last checked in with its current key.">
+  <img src="images/install/enrollments-light.png" width="720" alt="Enrollments in the console, with filters for All, Waiting, Active, Revoked and Rotated: each key shows its fingerprint and whether it is kept in the Secure Enclave, in a file, or not reported. One Mac's earlier file key shows as Rotated. That Mac's key in use is selected, with a Revoke button, its device ID, the key it was rotated from, and a note that the agent moves a file key into the Secure Enclave or, on a Mac without one, replaces it every 30 days.">
 </picture>
 
 **Activity** keeps every change made in the console forever, and sends each one to your
