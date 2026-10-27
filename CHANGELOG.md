@@ -9,6 +9,27 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Server 1.0.1 - unreleased
+
+### Upgrade order
+
+None.
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+- With the inspector open on a laptop screen, the Sessions, Admins now and Fleet lists fit
+  their pane instead of scrolling sideways. As the pane narrows, the time-used bar shows
+  only its text, then the columns the inspector also shows give way: Started and Time
+  used, or Queued, macOS and Privileges.
+
 ## Agent 1.0.0 - 2026-10-27
 
 ### Upgrade order
