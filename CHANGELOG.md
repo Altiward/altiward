@@ -63,6 +63,9 @@ None.
   their pane instead of scrolling sideways. As the pane narrows, the time-used bar shows
   only its text, then the columns the inspector also shows give way: Started and Time
   used, or Queued, macOS and Privileges.
+- The console's help tags stay inside the window. Near the right edge of a page or in the
+  inspector, they used to run off the screen or be cut off, and the inspector could scroll
+  sideways because of them.
 
 ## Agent 1.0.0 - 2026-10-27
 
