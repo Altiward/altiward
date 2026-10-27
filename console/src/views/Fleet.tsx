@@ -109,7 +109,7 @@ export function FleetView() {
                 ) },
                 { key: "admins", title: "Admins", sort: (d) => d.admin_members.length,
                   render: (d) => d.admin_members.length ? <AdminNames device={d} /> : <span className="secondary">None</span> },
-                { key: "macos", title: "macOS", sort: (d) => d.os_version, render: (d) => d.os_version },
+                { key: "macos", title: "macOS", sort: (d) => d.os_version, render: (d) => d.os_version, drop: 2 },
                 { key: "agent", title: "Agent", sort: (d) => d.agent_version, render: (d) => (
                   <>
                     {d.agent_version}
@@ -121,9 +121,9 @@ export function FleetView() {
                     )}
                   </>
                 ) },
-                { key: "privileges", title: "Privileges", sort: (d) => d.privileges_version ?? "",
+                { key: "privileges", title: "Privileges", sort: (d) => d.privileges_version ?? "", drop: 2,
                   render: (d) => d.privileges_version ?? <span className="secondary">Not installed</span> },
-                { key: "queue", title: "Queued", align: "right", sort: (d) => d.queue_depth ?? 0,
+                { key: "queue", title: "Queued", align: "right", sort: (d) => d.queue_depth ?? 0, drop: 1,
                   render: (d) => d.queue_depth == null
                     ? <Missing>Not reported</Missing>
                     : <span className="data">{String(d.queue_depth)}</span> },

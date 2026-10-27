@@ -171,7 +171,9 @@ h1, h2, h3, p { margin: 0; }
 
 .split { display: grid; grid-template-columns: 1fr; min-height: 0; overflow: hidden; }
 .split.with-inspector { grid-template-columns: minmax(0, 1fr) 360px; }
-.pane { overflow: auto; min-height: 0; }
+/* A container, so a list can give way when the inspector narrows its pane (the drop-N
+   columns, below) rather than scroll sideways. */
+.pane { overflow: auto; min-height: 0; container-type: inline-size; }
 
 /* Controls */
 .button {
@@ -260,6 +262,10 @@ table.list { width: 100%; border-collapse: collapse; }
 .badge.not-granted { background: var(--denied); color: var(--on-denied); }
 .badge.ended { background: var(--surface-200); color: var(--muted); }
 tr[aria-selected="true"] .badge.ended { background: var(--surface-100); color: var(--ink); }
+
+@container (max-width: 1000px) { .list .gauge .track { display: none; } }
+@container (max-width: 900px) { .list .drop-1 { display: none; } }
+@container (max-width: 820px) { .list .drop-2 { display: none; } }
 
 /* Gauge: time used against time allowed, with a mark at the allowance */
 .gauge { display: inline-flex; align-items: center; gap: var(--space-2); }

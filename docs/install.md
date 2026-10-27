@@ -25,7 +25,7 @@ runs the console with example data on your own computer, needing only Docker.
   the internet so laptops can report from home and on the road. Only the agent endpoints
   answer there. Anything between the Macs and the server, such as a firewall, web filter
   or TLS-inspecting proxy, must pass the whole of `/v1/agent/` to the server unaltered,
-  including `/v1/agent/rotate`, which agent 1.0 uses to replace its key. People use the
+  including `/v1/agent/rotate`, which the agent uses to replace its key. People use the
   *console hostname*, which only accepts connections from the networks you list. On Azure
   Container Apps, one address serves both, split by path, with the same rule.
 
@@ -313,12 +313,11 @@ file only root can read.
 The agent replaces its own device key, so a copy of a file key goes stale and no file key
 stays in use for ever:
 
-- A file key on a Mac with a Secure Enclave moves into it once the key has been active for
-  24 hours and has signed a request since the daemon started. The daemon checks after each
-  long poll and at least hourly, so a Mac that enrolled today moves tomorrow. This
-  includes Macs that enrolled before agent 0.2.0 and Macs whose Secure Enclave failed at
-  enrolment. You no longer revoke a file key to move it; **Enrollments** says the agent
-  does it by itself.
+- A file key on a Mac with a Secure Enclave (the agent makes one when the Secure Enclave
+  fails at enrolment) moves into it once the key has been active for 24 hours and has
+  signed a request since the daemon started. The daemon checks after each long poll and at
+  least hourly, so a Mac that enrolled today moves tomorrow. There is no need to revoke a
+  file key to move it: **Enrollments** says the agent does it by itself.
 - A file key on a Mac without a Secure Enclave is replaced every 30 days.
 - A Secure Enclave key is never replaced.
 
@@ -329,13 +328,11 @@ says "Rotated from" the key it replaced). Nothing waits for approval and the enr
 limits don't apply. A key must have been active for 24 hours before it is replaced.
 Revoking a rotated key is refused: revoke the key in use, which the console links to.
 
-Rolling out agent 1.0 therefore adds a `rotated` event and a **Rotated** row for each Mac
-whose key moves. A new agent on an older server finds it doesn't support rotation, keeps
-its key, and asks again a day later. If the server doesn't answer a rotation, the Mac
-keeps both keys and holds its events, which queue on the Mac, until it does. A firewall or
-proxy that answers the rotate request with a server error, or drops it, does the same, and
-the Mac shows as **Not checking in**. On the Mac, `altiward-agent status` then shows the
-rotation in progress and the last answer that kept it waiting:
+If the server doesn't answer a rotation, the Mac keeps both keys and holds its events,
+which queue on the Mac, until it does. A firewall or proxy that answers the rotate request
+with a server error, or drops it, does the same, and the Mac shows as **Not checking in**.
+On the Mac, `altiward-agent status` then shows the rotation in progress and the last answer
+that kept it waiting:
 
 ```
 key rotation: in progress since 2026-11-02T09:14:05.112Z; reports wait until the server answers
@@ -514,11 +511,8 @@ In the console, under **Settings › General**:
   ([Key rotation](#key-rotation)) is not an enrolment and never waits for approval, but
   the new enrolment that follows a [rotated key's use](#a-rotated-key-was-used) does.
 
-  Upgrading to server 0.8.0 enables approval once for every existing tenant, including
-  tenants where it was off. Existing credentials and the other settings stay as they are.
-  An admin can explicitly turn it off after the upgrade if automatic replacement is
-  required. An omitted or null approval flag in a settings API update enables approval;
-  only an explicit `false` disables it.
+  An omitted or null approval flag in a settings API update enables approval; only an
+  explicit `false` disables it.
 
   Whatever you choose, a new key whose hardware UUID differs from the Mac's active key waits
   for approval. The hardware UUID is what the agent says about itself, so this catches a key
@@ -542,13 +536,13 @@ Two more settings go in `.env`; `0` turns one off:
 - **`ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY`** (default 5). How many keys one Mac may enrol in
   24 hours, in any status. It stops the enrolment token piling keys onto one serial.
 
-A Mac over a limit is refused with HTTP 429 and `Retry-After: 3600`. Agent 0.8.0 and later
-wait that hour before asking again (an agent that restarts asks once more straight away);
-earlier agents ask about once a minute. A Mac sending a key that is already enrolled is
-never refused. The server logs `enrolment rate limited` with the tenant, the serial and
-which limit. To keep a flood of refusals out of the log, it logs one per tenant and limit
-in each window (an hour, or a day for the keys per Mac), and `not_logged` in the next one
-counts the refusals in between. Restarting a server starts new windows. Run
+A Mac over a limit is refused with HTTP 429 and `Retry-After: 3600`. The agent waits that
+hour before asking again (an agent that restarts asks once more straight away). A Mac
+sending a key that is already enrolled is never refused. The server logs
+`enrolment rate limited` with the tenant, the serial and which limit. To keep a flood of
+refusals out of the log, it logs one per tenant and limit in each window (an hour, or a
+day for the keys per Mac), and `not_logged` in the next one counts the refusals in
+between. Restarting a server starts new windows. Run
 `docker compose up -d` to apply a change (on Azure, see
 [Changing settings](../deploy/azure/README.md#changing-settings)).
 
@@ -564,9 +558,9 @@ meanwhile raise the limit or set it to `0`.
 To retire a Mac, revoke its enrollment in **Enrollments**. It then stops being able to
 report and never raises a "not checking in" alert. A key that rotation replaced shows as
 **Rotated**, not **Revoked**, and offers no actions: revoke the Mac's key in use, which
-its inspector links to. A key in a file shows a note that, with agent 1.0 or later, the
-agent moves it into the Secure Enclave by itself or, on a Mac without one, replaces it
-every 30 days, so there is no need to revoke it.
+its inspector links to. A key in a file shows a note that the agent moves it into the
+Secure Enclave by itself or, on a Mac without one, replaces it every 30 days, so there is
+no need to revoke it.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/install/enrollments-dark.png">
@@ -811,13 +805,7 @@ changing anything, shows what the release changes, and leaves the new version as
 script again with `--merged`.
 
 Going back to an older server version isn't supported; restore the backup instead. The
-script shows how if the new version doesn't start. In particular, don't run server 0.9 and
-1.0 together on one database: a 0.9 server doesn't know rotation's two new `agent.enrollment`
-states, and can drop an event or export a `rotated_key_used` alert as an Informational
-"enrolled a new key" record that nothing alerts on. A 0.9 server started on a 1.0
-database still refuses the keys that rotation replaced (they are marked revoked), but it
-raises no alert and revokes nothing when one is used again while it runs, and its
-diagnostics list migration 0006 as unknown.
+script shows how if the new version doesn't start.
 
 **Release candidates** (versions such as `<version>-rc.1`) are builds for testing, published on GitHub as
 pre-releases. Install one as above; the release itself upgrades over it. The console
@@ -892,7 +880,7 @@ Edit the token in `.env` and run `docker compose up -d`.
 - **Agent enrolment token:** enrolled Macs keep working, because they sign with their own
   keys. Update the profile in your MDM so new Macs enrol with the new token. If the old
   token leaked, remove it from `ALTIWARD_AGENT_TOKENS` rather than leaving both tokens
-  accepted. **Enrollments** shows the token each key enrolled with (from server 0.9.0), as
+  accepted. **Enrollments** shows the token each key enrolled with, as
   `token:` and the first 8 hex digits of its SHA-256. Get the old token's with
   `printf %s '<old token>' | shasum -a 256 | cut -c1-8`, search for it, and revoke the keys
   you don't recognise: changing the token does not revoke keys it already enrolled or
@@ -1037,8 +1025,7 @@ one, which (`revoked_device_id`).
    ```
 
    Approve only the pending key whose **Key fingerprint** in **Enrollments** matches its
-   `key fingerprint:` line (an agent older than 1.0 shows only `device id:`, which matches
-   the key's **Device ID**), and reject every other pending key for that serial. With
+   `key fingerprint:` line, and reject every other pending key for that serial. With
    approval off, the first key that enrols is active at once, which is a reason to leave
    approval on. The new key starts a lineage of its own: old copies of earlier keys can
    raise this alert, at most once a day, but can't revoke anything again.
@@ -1050,8 +1037,7 @@ one, which (`revoked_device_id`).
 4. **A Mac restored from a backup is a genuine cause.** A Mac restored from a backup made
    before its last rotation signs with the key it had then, which the server replaced
    since. It raises this alert, and the server revokes the key that replaced it, but the key
-   it enrols with afterwards is genuine. The same happens when an agent is downgraded to
-   0.9 while the server had committed a rotation. When the Mac was restored on purpose,
+   it enrols with afterwards is genuine. When the Mac was restored on purpose,
    approve the key whose fingerprint its status shows, as in step 2.
 
 Anyone holding a copy of a key replaced in the last 30 days can cause this once per

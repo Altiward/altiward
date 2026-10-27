@@ -88,8 +88,7 @@ Semantic versions, separately for the server and the agent: a patch for fixes
 whenever needed, a minor for features about once a quarter, and a major only when
 dropping support for something people relied on. Support and agent compatibility count
 the last two minors, so more frequent minors shorten the support window. The first
-releases are Server 0.1.0 and Agent 0.1.0. Server 1.0.0 and Agent 1.0.0 are the first
-stable releases.
+releases are Server 1.0.0 and Agent 1.0.0.
 
 ## Agent release
 
@@ -136,8 +135,7 @@ checks that a Mac can enroll, send a signed event and hold a long poll; that the
 answers only the allowed networks, including against a forged `X-Forwarded-For`; and that
 the server runs the release. Then it deletes everything it made. Run it by hand from the
 Actions tab, on `main` or with a release tag: the `azure-test` environment allows nothing
-else, so branch code never gets the Azure sign-in. It first passed on server 0.2.0, which
-took Deploy to Azure out of Preview.
+else, so branch code never gets the Azure sign-in.
 
 It signs in to Azure with GitHub's OpenID Connect token, so the repository holds no Azure
 credential: the `azure-test` environment holds only the IDs of an Entra app that trusts

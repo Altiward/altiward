@@ -56,6 +56,10 @@ None.
   installs them as before. A failed download stops before anything changes and names the
   file. A directory of release files still works, for servers without internet access.
   The console's upgrade notice shows the one-line command.
+- With the inspector open on a laptop screen, the Sessions, Admins now and Fleet lists fit
+  their pane instead of scrolling sideways. As the pane narrows, the time-used bar shows
+  only its text, then the columns the inspector also shows give way: Started and Time
+  used, or Queued, macOS and Privileges.
 - The console's help tags stay inside the window. Near the right edge of a page or in the
   inspector, they used to run off the screen or be cut off, and the inspector could scroll
   sideways because of them.

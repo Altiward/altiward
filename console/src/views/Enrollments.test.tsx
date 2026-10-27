@@ -460,8 +460,7 @@ describe("Enrollments, rotated keys", () => {
     await userEvent.click(await screen.findByText("ROTATED-MAC"));
     expect(inspector()).toHaveTextContent("This key is in a file, so someone with admin rights on the Mac could copy it");
     expect(inspector()).toHaveTextContent(
-      "With agent 1.0 or later, the agent moves this key into the Secure Enclave by itself, or, on a Mac without one, " +
-      "replaces it every 30 days.");
+      "The agent moves this key into the Secure Enclave by itself, or, on a Mac without one, replaces it every 30 days.");
     expect(inspector()).not.toHaveTextContent(/revoke it/i);
   });
 
