@@ -9,7 +9,7 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
-## Agent 0.9.0 - unreleased
+## Agent 0.9.0 - 2026-10-27
 
 ### Upgrade order
 
@@ -28,7 +28,7 @@ None.
 
 None.
 
-## Server 0.9.0 - unreleased
+## Server 0.9.0 - 2026-10-27
 
 ### Upgrade order
 
