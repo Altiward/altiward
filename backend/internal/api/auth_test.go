@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -31,6 +32,21 @@ type ssoEnv struct {
 	store *store.Memory
 	now   time.Time
 	log   *bytes.Buffer // what the server logged
+	// idpDown makes every request to the identity provider fail, as if it were unreachable.
+	idpDown bool
+}
+
+// downable is a transport that fails while the environment's identity provider is "down".
+type downable struct {
+	env   *ssoEnv
+	inner http.RoundTripper
+}
+
+func (d downable) RoundTrip(r *http.Request) (*http.Response, error) {
+	if d.env.idpDown {
+		return nil, errors.New("identity provider unreachable")
+	}
+	return d.inner.RoundTrip(r)
 }
 
 // newSSOServer starts the server; each of more adds an option made from its store.
@@ -59,7 +75,9 @@ func newSSOServerWith(t *testing.T, idp *ssotest.Provider, settings func(*config
 	if settings != nil {
 		settings(&cfg)
 	}
-	provider := sso.New(cfg, env.idp.Client(), clock)
+	idpClient := env.idp.Client()
+	idpClient.Transport = downable{env: env, inner: idpClient.Transport}
+	provider := sso.New(cfg, idpClient, clock)
 	opts := []api.Option{api.WithSSO(provider, true)}
 	for _, m := range more {
 		opts = append(opts, m(env.store))
@@ -368,6 +386,10 @@ func TestSignOutOfTheProvider(t *testing.T) {
 		to.Query().Get("post_logout_redirect_uri") != "https://altiward.example.com/signed-out" {
 		t.Errorf("provider_sign_out_url = %s", to)
 	}
+	// The next sign-in asks for the account picker, whichever way the person signed out.
+	if _, ok := b.cookies["__Host-altiward_signed_out"]; !ok {
+		t.Error("logout did not set the signed-out cookie")
+	}
 	// Altiward's own session is over before the browser leaves for the provider.
 	if _, ok := b.cookies["__Host-altiward_session"]; ok {
 		t.Fatal("logout left the cookie")
@@ -410,6 +432,129 @@ func TestSignOutStaysLocalWhenTheProviderHasNoEndpoint(t *testing.T) {
 	entries, _ := env.store.ListAudit(context.Background(), "acme", store.AuditFilter{Limit: 1})
 	if entries[0].Action != store.AuditSignOut {
 		t.Fatalf("audit = %+v", entries[0])
+	}
+}
+
+func TestSignInAsksForTheAccountPickerOnRequestAndAfterSignOut(t *testing.T) {
+	env := newSSOServer(t)
+	b := env.browser(t)
+	// prompt is the prompt the login redirect asks the identity provider for, and whether
+	// it asks at all.
+	prompt := func(target string) (string, bool) {
+		t.Helper()
+		rec, _ := b.do("GET", target, nil)
+		if rec.Code != http.StatusFound {
+			t.Fatalf("%s: %d", target, rec.Code)
+		}
+		to, err := url.Parse(rec.Header().Get("Location"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, ok := to.Query()["prompt"]
+		if len(to.Query()["prompt"]) > 1 || to.Query().Has("login_hint") {
+			t.Fatalf("%s: redirected with %v", target, to.Query())
+		}
+		return to.Query().Get("prompt"), ok
+	}
+	wantPrompt := func(target, want string) {
+		t.Helper()
+		if got, ok := prompt(target); got != want || ok != (want != "") {
+			t.Fatalf("%s: prompt = %q (present %v), want %q", target, got, ok, want)
+		}
+	}
+
+	wantPrompt("/v1/auth/login", "")
+	wantPrompt("/v1/auth/login?select_account=1", "select_account")
+	wantPrompt("/v1/auth/login?select_account=true", "")
+	wantPrompt("/v1/auth/login?select_account=", "")
+	// Nothing else in the request reaches the identity provider's prompt or hints.
+	wantPrompt("/v1/auth/login?prompt=none", "")
+	wantPrompt("/v1/auth/login?prompt=none&login_hint=x&select_account=1", "select_account")
+
+	// A failed sign-out leaves nothing behind.
+	if rec, _ := b.do("POST", "/v1/auth/logout", nil); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("logout without a session: %d", rec.Code)
+	}
+	if _, ok := b.cookies["__Host-altiward_signed_out"]; ok {
+		t.Fatal("a failed logout set the signed-out cookie")
+	}
+	wantPrompt("/v1/auth/login", "")
+
+	b.signIn(env.idp, "/", person("g-admin"))
+	if rec, _ := b.do("POST", "/v1/auth/logout", nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("logout without CSRF: %d", rec.Code)
+	}
+	if _, ok := b.cookies["__Host-altiward_signed_out"]; ok {
+		t.Fatal("a refused logout set the signed-out cookie")
+	}
+	rec, _ := b.mutate("POST", "/v1/auth/logout", nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("logout: %d", rec.Code)
+	}
+	var marker *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "__Host-altiward_signed_out" {
+			marker = c
+		}
+	}
+	if marker == nil || marker.Value != "1" || marker.MaxAge != 0 || marker.Path != "/" ||
+		!marker.HttpOnly || !marker.Secure || marker.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("signed-out cookie = %+v", marker)
+	}
+
+	// The next sign-in picks an account and uses the marker up; the one after is one click.
+	wantPrompt("/v1/auth/login", "select_account")
+	if _, ok := b.cookies["__Host-altiward_signed_out"]; ok {
+		t.Fatal("the login left the signed-out cookie")
+	}
+	wantPrompt("/v1/auth/login", "")
+
+	// Asking for the picker by hand works too, and a later sign-out sets the marker again.
+	b.signIn(env.idp, "/", person("g-admin"))
+	if rec, _ := b.mutate("POST", "/v1/auth/logout", nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("second logout: %d", rec.Code)
+	}
+	if _, ok := b.cookies["__Host-altiward_signed_out"]; !ok {
+		t.Fatal("the second logout did not set the signed-out cookie")
+	}
+	wantPrompt("/v1/auth/login?select_account=1", "select_account")
+	if _, ok := b.cookies["__Host-altiward_signed_out"]; ok {
+		t.Fatal("the login left the signed-out cookie")
+	}
+	wantPrompt("/v1/auth/login", "")
+
+	// A token has no session to end, so signing out with one leaves no marker.
+	rec, _ = do(t, env.h, "POST", "/v1/auth/logout", consoleToken, nil)
+	if rec.Code != http.StatusNoContent || len(rec.Result().Cookies()) != 0 {
+		t.Fatalf("token logout: %d %v", rec.Code, rec.Result().Cookies())
+	}
+}
+
+func TestSignedOutMarkerSurvivesAnUnreachableIdentityProvider(t *testing.T) {
+	env := newSSOServer(t)
+	b := env.browser(t)
+	// The server has not met the provider yet, so it has to discover it on this login. The
+	// browser carries the marker a sign-out left.
+	b.cookies["__Host-altiward_signed_out"] = &http.Cookie{Name: "__Host-altiward_signed_out", Value: "1"}
+
+	// The provider is down, so the sign-in fails and the marker is kept for the retry.
+	env.idpDown = true
+	rec, _ := b.do("GET", "/v1/auth/login", nil)
+	if to := rec.Header().Get("Location"); rec.Code != http.StatusFound || to != "/?sso_error=unavailable" {
+		t.Fatalf("login with the provider down: %d %s", rec.Code, to)
+	}
+	if _, ok := b.cookies["__Host-altiward_signed_out"]; !ok {
+		t.Fatal("an unreachable provider used up the signed-out cookie")
+	}
+
+	// Back up: the retry asks for the picker and uses the marker up.
+	env.idpDown = false
+	rec, _ = b.do("GET", "/v1/auth/login", nil)
+	if to := rec.Header().Get("Location"); rec.Code != http.StatusFound || !strings.Contains(to, "prompt=select_account") {
+		t.Fatalf("retry: %d %s", rec.Code, to)
+	}
+	if _, ok := b.cookies["__Host-altiward_signed_out"]; ok {
+		t.Fatal("the retry left the signed-out cookie")
 	}
 }
 

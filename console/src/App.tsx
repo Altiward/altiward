@@ -215,10 +215,13 @@ function SignIn({ sso, problem, onToken }: { sso: boolean; problem: Problem | nu
         {message && <p className="field-error" role="alert"><NotGrantedGlyph /> <span>{message}</span></p>}
         {sso && (
           <>
-            <p>Sign in with your organization’s account.</p>
+            <p>Sign in with your organisation’s account.</p>
             <div className="buttons">
               <a className="button primary" href={`/v1/auth/login?next=${encodeURIComponent(next)}`}>Sign in with single sign-on</a>
             </div>
+            <p className="alternative">
+              <a className="link" href={`/v1/auth/login?select_account=1&next=${encodeURIComponent(next)}`}>Use a different account</a>
+            </p>
             {!showToken && (
               <p className="alternative">
                 <button type="button" className="link" onClick={() => setShowToken(true)}>Use a break-glass token instead</button>
