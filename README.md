@@ -154,17 +154,17 @@ your own Postgres or load balancer, backups and troubleshooting. On Azure,
 [Deploy to Azure](deploy/azure/README.md) creates the server in your
 subscription instead, on Azure Container Apps, with no VM to look after:
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v0.9.0%2Fdeploy%2Fazure%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v0.9.0%2Fdeploy%2Fazure%2FcreateUiDefinition.json)
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v1.0.0%2Fdeploy%2Fazure%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v1.0.0%2Fdeploy%2Fazure%2FcreateUiDefinition.json)
 
 **1. The server.** Download the server release from
-[GitHub Releases](https://github.com/Altiward/altiward/releases) (tagged `server-v0.8.0`),
+[GitHub Releases](https://github.com/Altiward/altiward/releases) (tagged `server-v1.0.0`),
 [check its signature](docs/install.md#checking-a-release), then:
 
 ```sh
-docker load -i altiward-api-0.8.0-linux-amd64.tar.gz   # or pull ghcr.io/altiward/altiward-api:0.8.0
-tar xzf altiward-server-0.8.0.tar.gz
+docker load -i altiward-api-1.0.0-linux-amd64.tar.gz   # or pull ghcr.io/altiward/altiward-api:1.0.0
+tar xzf altiward-server-1.0.0.tar.gz
 sudo mkdir /opt/altiward && sudo chown "$(id -un)" /opt/altiward
-cp -R altiward-server-0.8.0/deploy/compose/. /opt/altiward/ && cd /opt/altiward
+cp -R altiward-server-1.0.0/deploy/compose/. /opt/altiward/ && cd /opt/altiward
 cp env.example .env && chmod 600 .env
 # In .env: your two hostnames, the networks allowed to open the console, a Postgres
 # password, and an agent token and a console token.
@@ -173,10 +173,10 @@ docker compose up -d
 
 Caddy gets certificates for both hostnames, and you sign in to the console with the
 console token until you set up single sign-on. To upgrade later, put the new release's
-files in a directory and run `./upgrade.sh ~/altiward-0.8.1` from `/opt/altiward`: it
+files in a directory and run `./upgrade.sh ~/altiward-1.0.1` from `/opt/altiward`: it
 checks the signature, backs up the database and asks before changing anything.
 
-**2. The agent.** From the agent release (tagged `agent-v0.8.0`), deploy through your MDM,
+**2. The agent.** From the agent release (tagged `agent-v1.0.0`), deploy through your MDM,
 to a pilot group first:
 
 1. A configuration profile for `com.altiward.agent`, from the example in the bundle's
@@ -188,7 +188,7 @@ to a pilot group first:
 2. The login items profile, `altiward-login-items.mobileconfig`.
 3. The keys from `corp.sap.privileges.plist` in the **matching agent release** added
    to your Privileges profile, so Privileges reports each change to the agent.
-4. The signed and notarized package, `Altiward-0.8.0.pkg`. It installs silently and the
+4. The signed and notarized package, `Altiward-1.0.0.pkg`. It installs silently and the
    agent starts at once.
 
 Each Mac enrolls on first contact and shows up in the console's Fleet view.
