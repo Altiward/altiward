@@ -64,6 +64,10 @@ You need:
 - **Ports 80 and 443** reachable on the server from the internet, so Caddy can get
   certificates and Macs can report. To keep the server off the internet, see
   [Your own certificates or load balancer](#your-own-certificates-or-load-balancer).
+- **Macs on macOS 14 or later**, Apple silicon or Intel, with SAP Privileges 2.5 or later
+  and its system extension on. With Privileges 2.6 or later, the agent also confirms each
+  grant against Privileges' own log
+  ([Claims made by running the hook by hand](#claims-made-by-running-the-hook-by-hand)).
 - **Your MDM** (Jamf Pro, Intune, Kandji, Mosyle or similar) to install the package and
   configuration profiles.
 - **From [GitHub Releases](https://github.com/Altiward/altiward/releases):** a server
