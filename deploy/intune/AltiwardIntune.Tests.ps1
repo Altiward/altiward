@@ -237,11 +237,11 @@ Describe 'Publish-AltiwardProfiles' {
     It 'sends the Privileges profile only with -PrivilegesSettings' {
         script:Use-FakeGraph @{ Groups = @(@{ id = 'pilot'; displayName = 'Pilot Macs' }); Configurations = @(); Assignments = @{} }
         $without = Get-AltiwardProfilePlan -AgentSettings $script:f.Agent -LoginItems $script:f.LoginItems
-        $without.DisplayName | Should -Not -Contain 'Altiward: SAP Privileges settings'
+        $without.DisplayName | Should -Not -Contain 'Altiward: hook and elevation settings'
         $with = Get-AltiwardProfilePlan -AgentSettings $script:f.Agent -LoginItems $script:f.LoginItems -PrivilegesSettings $script:f.Privileges
-        $with.DisplayName | Should -Contain 'Altiward: SAP Privileges settings'
+        $with.DisplayName | Should -Contain 'Altiward: hook and elevation settings'
         Publish-AltiwardProfiles -Profiles $with -Group 'Pilot Macs'
-        @((script:Get-Writes) | Where-Object { $_.Body.displayName -eq 'Altiward: SAP Privileges settings' }).Count | Should -Be 1
+        @((script:Get-Writes) | Where-Object { $_.Body.displayName -eq 'Altiward: hook and elevation settings' }).Count | Should -Be 1
     }
 
     It 'refuses an ambiguous group before writing anything' {

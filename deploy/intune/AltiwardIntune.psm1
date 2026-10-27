@@ -8,7 +8,7 @@ $script:GraphRoot = 'https://graph.microsoft.com/beta'
 # it, so changing a name makes the next upload create a second profile.
 $script:AgentProfileName = 'Altiward: agent settings'
 $script:LoginItemsProfileName = 'Altiward: login items'
-$script:PrivilegesProfileName = 'Altiward: SAP Privileges settings'
+$script:PrivilegesProfileName = 'Altiward: hook and elevation settings'
 
 # The example values in com.altiward.agent.mobileconfig that must be replaced.
 $script:ExampleServerURL = 'https://api.altiward.example'
