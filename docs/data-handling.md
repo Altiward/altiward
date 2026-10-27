@@ -146,7 +146,7 @@ Everything is in your Postgres database.
 | Every event from every Mac, in full, and each `agent.enrollment` event the server raises | Forever, for now |
 | Elevation sessions, including the person's UPN and reason | Forever, for now |
 | Each Mac's latest state: versions, admins, health, its open permanent admin sign-ins (up to 20) and its newest 20 other permanent admin uses (the console shows up to 10, open sign-ins first) | Forever, replaced as it changes |
-| Each Mac's enrollment: serial, hardware UUID, **public** key, whether the Mac says its key is in its Secure Enclave, and the fingerprint of the enrolment token it used (never the token) | Forever; revoking stops the Mac reporting |
+| Each Mac's enrollment: serial, hardware UUID, **public** key, whether the Mac says its key is in its Secure Enclave, and the fingerprint of the enrolment token it used (never the token). For each key, also the key it replaced by rotation, when the Mac signed that rotation, and when a use of the key after it was replaced was last reported | Forever; revoking stops the Mac reporting |
 | Commands sent from the console, who sent them, and their results | Forever |
 | Activity: every change made in the console, and every sign-in | Forever by default; or from 365 days, with `ALTIWARD_AUDIT_RETENTION_DAYS` |
 | Console sign-in sessions: the person's email, name, identity-provider ID and role | 12 hours at most, 1 hour idle; removed on sign-out, or when an admin ends it |

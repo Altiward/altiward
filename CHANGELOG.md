@@ -23,10 +23,14 @@ None.
 
 - Revoking a key that an admin approved at the same moment could leave the key active. The
   revoke now always wins.
+- A key replaced by rotation stops working. If it is used again within 30 days of being
+  replaced, two holders share the Mac's identity, so the server also revokes the Mac's
+  current key and the Mac enrols again (waiting for approval when that is on). A copied key
+  can then cause one visible disruption, not take the Mac's place.
 
 ### Changes
 
-None.
+- A Mac can replace its key with one it proves it holds.
 
 ## Agent 0.9.0 - 2026-10-27
 

@@ -62,7 +62,8 @@ func TestPostgresUpgradesFromEveryMigration(t *testing.T) {
 				t.Fatalf("old session: %+v %v, %v", sess, evs, err)
 			}
 			cred, err := s.Credential(ctx, "7e8f90a1-b2c3-4d4e-8f5a-6b7c8d9e0f1a")
-			if err != nil || cred.Status != CredentialActive || cred.KeyStorage != KeyStorageUnknown {
+			if err != nil || cred.Status != CredentialActive || cred.KeyStorage != KeyStorageUnknown ||
+				cred.RotatedFrom != "" || cred.RotatedTo != "" || cred.RotationSignedAt != nil {
 				t.Fatalf("old credential: %+v, %v", cred, err)
 			}
 			queued, err := s.ClaimExports(ctx, "splunk", 10, time.Minute, now)
@@ -82,6 +83,17 @@ func TestPostgresUpgradesFromEveryMigration(t *testing.T) {
 			}, DefaultEnrollLimits()) // the limits count the old rows too
 			if err != nil || enrolled.Credential.KeyStorage != KeyStorageSecureEnclave {
 				t.Fatalf("enroll after upgrade: %+v, %v", enrolled, err)
+			}
+			// The old key, activated an hour before now, rotates a day later.
+			rotated, err := s.Rotate(ctx, RotateRequest{
+				TenantID: "acme", FromDeviceID: cred.DeviceID, DeviceID: newUUID(t), PublicKey: newKey(t),
+				KeyStorage: KeyStorageSecureEnclave, SignedAt: now.Add(24 * time.Hour), Now: now.Add(24 * time.Hour),
+			})
+			if err != nil || rotated.Credential.RotatedFrom != cred.DeviceID || rotated.Credential.Serial != "C02OLD000001" {
+				t.Fatalf("rotate after upgrade: %+v, %v", rotated, err)
+			}
+			if old, err := s.Credential(ctx, cred.DeviceID); err != nil || old.Status != CredentialRevoked || old.RotatedTo != rotated.Credential.DeviceID {
+				t.Fatalf("old credential after rotation: %+v, %v", old, err)
 			}
 			if err := s.PutTenantSettings(ctx, "acme", TenantSettings{SilentAfterHours: 24}, auditFor(t, "acme", AuditChangeSettings)); err != nil {
 				t.Fatalf("settings after upgrade: %v", err)

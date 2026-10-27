@@ -21,6 +21,17 @@ var (
 	ErrRateLimited       = errors.New("enrolment rate limited")
 	ErrNewMacsLimited    = fmt.Errorf("%w: too many new Macs in the last hour", ErrRateLimited)
 	ErrKeysPerMacLimited = fmt.Errorf("%w: too many keys for this Mac in the last 24 hours", ErrRateLimited)
+
+	// Rotate's refusals. A rotation from a pending key is ErrInvalidState, and from an
+	// unknown one ErrNotFound.
+	ErrRotationNotAllowed = errors.New("a Secure Enclave key is not rotated")
+	ErrRotationTooSoon    = errors.New("key rotated too recently")
+	ErrKeyInUse           = errors.New("key already enrolled")
+	ErrRotatedElsewhere   = errors.New("key already rotated to another key")
+	ErrRevoked            = errors.New("key revoked")
+	// ErrRotated refuses to revoke a key that was rotated while its lineage still has an
+	// active key: revoke that one (LineageActive names it).
+	ErrRotated = errors.New("key rotated; its lineage has an active key")
 )
 
 type CredentialStatus string
@@ -67,6 +78,15 @@ type DeviceCredential struct {
 	CreatedAt    time.Time        `json:"created_at"`
 	ActivatedAt  *time.Time       `json:"activated_at"`
 	RevokedAt    *time.Time       `json:"revoked_at"`
+	// RotatedFrom is the key this one replaced by rotation, and "" for an enrolled key.
+	RotatedFrom string `json:"rotated_from,omitempty"`
+	// RotatedTo is the key that replaced this one by rotation (its direct successor). It is
+	// filled only by Credential and ListCredentials, and for the stale key in RotateResult
+	// and ContestResult.
+	RotatedTo string `json:"rotated_to,omitempty"`
+	// RotationSignedAt is when the Mac signed the rotation that made this key, by its own
+	// clock.
+	RotationSignedAt *time.Time `json:"-"`
 }
 
 // KeyFingerprint is the lower-case hex SHA-256 of the public key's DER, which is how a key
@@ -132,6 +152,67 @@ func holdsForApproval(settings TenantSettings, enrolledBefore bool, active *Devi
 		return true
 	}
 	return active != nil && active.HardwareUUID != hardwareUUID
+}
+
+// Rotation replaces a Mac's active key with one it proves it holds. The old key is then
+// stale: revoked, with a successor. A stale key used again shows two holders of one
+// lineage, which is a contest (StaleKeyUsed).
+const (
+	// MinRotationInterval is how long a key must have been active before it rotates.
+	MinRotationInterval = 24 * time.Hour
+	// InFlightGrace is how long after a rotation a request signed before it may still
+	// arrive without being a contest.
+	InFlightGrace = 60 * time.Second
+	// ContestWindow: a contest revokes only if the stale key's successor was activated this
+	// recently. An older stale key only raises the alert.
+	ContestWindow = 30 * 24 * time.Hour
+)
+
+// staleUseReportInterval is how often one stale key's use is reported again.
+const staleUseReportInterval = 24 * time.Hour
+
+// RotateRequest asks to replace FromDeviceID's key with PublicKey.
+type RotateRequest struct {
+	TenantID, FromDeviceID, DeviceID string // DeviceID: the successor's, from NewDeviceID
+	PublicKey                        []byte
+	KeyStorage                       KeyStorage
+	SignedAt                         time.Time // the rotate request's signed timestamp
+	Now                              time.Time
+}
+
+// ContestResult is what a contest over a stale key did.
+type ContestResult struct {
+	Stale   DeviceCredential
+	Revoked *DeviceCredential // the active descendant it revoked, if any
+	Report  bool              // raise rotated_key_used
+}
+
+// RotateResult is what Rotate did or found.
+type RotateResult struct {
+	Credential DeviceCredential // the successor: new, or the existing one on a retry; zero when refused
+	Previous   DeviceCredential // FromDeviceID's key as re-read under the lock, whenever it exists
+	Retry      bool
+	Contest    *ContestResult // set when a stale key asked to rotate to another key
+}
+
+// inFlight reports whether a request signed with next's predecessor at signedAt, and
+// received at now, was on its way when next replaced it: signed no later than the rotation
+// (both by the Mac's clock), and received no later than InFlightGrace after it.
+func inFlight(next DeviceCredential, signedAt, now time.Time) bool {
+	return next.RotationSignedAt != nil && next.ActivatedAt != nil &&
+		!signedAt.After(*next.RotationSignedAt) && !now.After(next.ActivatedAt.Add(InFlightGrace))
+}
+
+// withinContestWindow reports whether next, a stale key's successor, was activated recently
+// enough at now that a contest over the stale key revokes.
+func withinContestWindow(next DeviceCredential, now time.Time) bool {
+	return next.ActivatedAt != nil && now.Sub(*next.ActivatedAt) < ContestWindow
+}
+
+// staleUseReported reports whether a stale use at now changes the stale key's marker, last
+// set at last (nil if never), and so is reported.
+func staleUseReported(last *time.Time, now time.Time) bool {
+	return last == nil || last.Before(now.Add(-staleUseReportInterval))
 }
 
 type CredentialFilter struct {
@@ -200,7 +281,29 @@ type Credentials interface {
 	// one, recording a.
 	ApproveCredential(ctx context.Context, tenantID, deviceID string, now time.Time, a AuditEntry) (DeviceCredential, error)
 	// RevokeCredential revokes a credential, recording a; revoking twice keeps the first time.
+	// A rotated key whose lineage has an active key is ErrRotated, and nothing changes.
 	RevokeCredential(ctx context.Context, tenantID, deviceID string, now time.Time, a AuditEntry) (DeviceCredential, error)
+	// Rotate replaces r.FromDeviceID's active key with r.PublicKey, under the Mac's lock. In
+	// order: the same request again (the old key's successor holds r.PublicKey) returns the
+	// successor as it is now, with Retry; a stale key asking for another key is a contest,
+	// returned with ErrRotatedElsewhere; a revoked key is ErrRevoked, and a pending one
+	// ErrInvalidState. An active key is refused with ErrRotationNotAllowed when it is in the
+	// Secure Enclave, ErrRotationTooSoon when it was activated less than
+	// MinRotationInterval before r.Now, and ErrKeyInUse when any credential holds
+	// r.PublicKey. Otherwise the old key is revoked and its successor is active, with the
+	// old key's serial, hardware UUID and token. Rotation is not an enrolment: no approval
+	// or EnrollLimits apply.
+	Rotate(ctx context.Context, r RotateRequest) (RotateResult, error)
+	// StaleKeyUsed resolves a contest when a stale key (revoked, with a successor) signed a
+	// request at signedAt, received at now. It returns nil when the request was in flight
+	// (see InFlightGrace) and when the key is not stale. Otherwise, under the Mac's lock, it
+	// revokes the Mac's active key if that descends from the stale key and the stale key's
+	// successor was activated less than ContestWindow ago, and reports the use at most once
+	// in 24 hours unless it revoked.
+	StaleKeyUsed(ctx context.Context, deviceID string, signedAt, now time.Time) (*ContestResult, error)
+	// LineageActive returns the active key among deviceID's key and its successors, or
+	// ErrNotFound if none is.
+	LineageActive(ctx context.Context, deviceID string) (DeviceCredential, error)
 	// ListCredentials returns the tenant's credentials, newest first.
 	ListCredentials(ctx context.Context, tenantID string, f CredentialFilter) ([]DeviceCredential, error)
 
