@@ -100,7 +100,7 @@ token in `X-CSRF-Token`; requests with a token don't.
 | `GET /v1/auth/login` | No authentication. Starts single sign-on: sets a short-lived sign-in cookie and redirects to the identity provider. Query: `next`, a path on this site to return to, and `select_account=1`, which asks the identity provider for its account picker (as does the first sign-in after a sign-out). |
 | `GET /v1/auth/callback` | Where the identity provider sends the browser back. Sets the session cookie (`__Host-altiward_session`, HttpOnly, Secure, SameSite=Lax) and redirects to `next`, or to `/?sso_error=` with `no_role`, `groups`, `expired`, `denied`, `unavailable` or `failed`. |
 | `GET /v1/auth/me` | `{"actor", "name", "role", "method"}`, plus `csrf_token` and `ends_at` for a single sign-on session. `method` is `sso` or `token`. |
-| `POST /v1/auth/logout` | Ends the session (CSRF token required) and records `sign_out`. 204. With single sign-on it also sets a browser-session cookie (`__Host-altiward_signed_out`, HttpOnly, Secure, SameSite=Lax) so the next sign-in shows the account picker. A no-op for a token. |
+| `POST /v1/auth/logout` | Ends the session (CSRF token required) and records `sign_out`. 204, or with `ALTIWARD_OIDC_PROVIDER_SIGN_OUT=true` and an identity provider that offers an `end_session_endpoint`, 200 with `Cache-Control: no-store` and `{"provider_sign_out_url"}`, where the console sends the browser next. The session has ended and `sign_out` is recorded either way. With single sign-on it also sets a browser-session cookie (`__Host-altiward_signed_out`, HttpOnly, Secure, SameSite=Lax) so the next sign-in shows the account picker. A no-op for a token. |
 | `GET /v1/agent/commands` | Device signature. This Mac's commands awaiting a result. With `?wait=N` (0 to 50) the server holds the request until one is queued. |
 | `POST /v1/agent/commands/{id}/result` | Device signature. Report a result; the first one wins. |
 | `GET /healthz` | Liveness. |
@@ -135,6 +135,7 @@ out-of-band session).
 | `ALTIWARD_OIDC_ADMIN_GROUPS`, `_OPERATOR_GROUPS`, `_VIEWER_GROUPS` | None | Comma-separated group IDs or names, as the groups claim carries them. At least one. |
 | `ALTIWARD_OIDC_GROUPS_CLAIM` | `groups` | The claim holding groups; `roles` for Entra app roles |
 | `ALTIWARD_OIDC_SCOPES` | `openid email profile` | Okta needs `groups` added |
+| `ALTIWARD_OIDC_PROVIDER_SIGN_OUT` | `false` | `true` makes signing out of the console also sign the person out of Entra ID, through the provider's `end_session_endpoint`. Register `<ALTIWARD_CONSOLE_URL>/signed-out` as a redirect URI in the app registration. Refused unless the issuer is `login.microsoftonline.com`, until 1.2.0. |
 | `ALTIWARD_OIDC_TENANT` | the only tenant | The Altiward tenant people who sign in belong to. Required when the tokens name more than one. |
 | `ALTIWARD_SPLUNK_HEC_URL`, `_HEC_TOKEN`, `_INDEX` | None | Enables the Splunk sink |
 | `ALTIWARD_SENTINEL_ENDPOINT`, `_DCR_ID`, `_STREAM`, `_TENANT_ID`, `_CLIENT_ID`, `_CLIENT_SECRET` | stream `Custom-AltiwardOCSF` | Enables the Sentinel sink |

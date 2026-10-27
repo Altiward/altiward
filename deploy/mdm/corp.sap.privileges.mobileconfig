@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The SAP Privileges keys Altiward asks for (domain corp.sap.privileges) as a ready-made
+  profile: the same keys and values as corp.sap.privileges.plist, which explains each one.
+  Altiward never ships or modifies Privileges itself.
+
+  Use the copy that comes with the agent release you are deploying: the package builder
+  fills in PostChangeExecutableChecksum, the SHA-256 of that release's signed hook, and
+  Privileges refuses to run a hook that doesn't match. In the source tree it is still a
+  placeholder, which Push-AltiwardProfiles.ps1 refuses.
+
+  Privileges reads one profile for its domain. If you already have one, add these keys
+  to it instead of deploying a second. The plist also suggests keys in comments (revoking
+  rights at login and after a clock change, and requiring a reason); add the ones you want
+  here, with your permanent admins, as keys of the payload below.
+  Leave the profile's identifiers and UUIDs alone: a re-upload then replaces this profile
+  on the Mac.
+-->
+<plist version="1.0">
+<dict>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+    <key>PayloadIdentifier</key>
+    <string>com.altiward.profile.privileges</string>
+    <key>PayloadUUID</key>
+    <string>14AFC333-F2D0-46FF-8571-F30263ACCA5E</string>
+    <key>PayloadDisplayName</key>
+    <string>Altiward: hook and elevation settings</string>
+    <key>PayloadScope</key>
+    <string>System</string>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadType</key>
+            <string>corp.sap.privileges</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>PayloadIdentifier</key>
+            <string>com.altiward.profile.privileges.settings</string>
+            <key>PayloadUUID</key>
+            <string>FD46A57A-0BA7-4987-9AE6-953FB98BDB9D</string>
+            <key>PostChangeExecutablePath</key>
+            <string>/Library/Application Support/Altiward/Altiward.app/Contents/MacOS/Altiward</string>
+            <key>PostChangeExecutableChecksum</key>
+            <string>REPLACE_WITH_SHA256_OF_SIGNED_HOOK</string>
+            <key>PassReasonToExecutable</key>
+            <true/>
+            <key>EnableSystemExtension</key>
+            <true/>
+            <key>ExpirationIntervalMax</key>
+            <integer>60</integer>
+            <key>AllowPrivilegeRenewal</key>
+            <false/>
+            <key>PostChangeActionOnGrantOnly</key>
+            <false/>
+        </dict>
+    </array>
+</dict>
+</plist>

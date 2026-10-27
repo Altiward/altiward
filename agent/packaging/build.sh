@@ -78,6 +78,8 @@ echo "== Privileges profile pinned to this hook"
 HOOK_SHA="$(shasum -a 256 "$APP/Contents/MacOS/Altiward" | cut -d' ' -f1)"
 sed "s/REPLACE_WITH_SHA256_OF_SIGNED_HOOK/$HOOK_SHA/" "$REPO/deploy/mdm/corp.sap.privileges.plist" > "$OUT/corp.sap.privileges.plist"
 plutil -lint "$OUT/corp.sap.privileges.plist" >/dev/null
+sed "s/REPLACE_WITH_SHA256_OF_SIGNED_HOOK/$HOOK_SHA/" "$REPO/deploy/mdm/corp.sap.privileges.mobileconfig" > "$OUT/corp.sap.privileges.mobileconfig"
+plutil -lint "$OUT/corp.sap.privileges.mobileconfig" >/dev/null
 codesign -d -r- "$APP/Contents/MacOS/Altiward" 2>/dev/null | sed -n 's/^\(# \)\{0,1\}designated => /hook requirement (HookCodeRequirement): /p'
 
 echo "== packaging"
@@ -122,4 +124,4 @@ fi
 echo "== done"
 echo "  $APP"
 echo "  $PKG"
-echo "  $OUT/corp.sap.privileges.plist (PostChangeExecutableChecksum $HOOK_SHA)"
+echo "  $OUT/corp.sap.privileges.plist and .mobileconfig (PostChangeExecutableChecksum $HOOK_SHA)"

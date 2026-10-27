@@ -98,10 +98,14 @@ export function App() {
   }, [signInWithToken]);
 
   const signOut = useCallback(async () => {
-    if (api && !signedIn?.token) await api.signOut().catch(() => undefined);
+    // The session is over on the server before the answer comes back. With provider sign-out
+    // on, the answer carries where to go next: the provider signs the person out, then sends
+    // the browser back to /signed-out, which shows the signed-out view below.
+    const out = api && !signedIn?.token ? await api.signOut().catch(() => undefined) : undefined;
     forgetToken();
     setSignedIn(null);
     setProblem(null);
+    if (out?.provider_sign_out_url) window.location.assign(out.provider_sign_out_url);
   }, [api, signedIn]);
 
   if (checking) return <div className="signin" aria-busy="true" />;
@@ -201,7 +205,8 @@ function SignIn({ sso, problem, onToken }: { sso: boolean; problem: Problem | nu
   const [value, setValue] = useState("");
   const [showToken, setShowToken] = useState(!sso || problem === "token");
   const message = problem ? (ssoProblems[problem] ?? ssoProblems.failed) : null;
-  const next = window.location.pathname + window.location.search;
+  // /signed-out is where the identity provider returns people after signing them out.
+  const next = window.location.pathname === "/signed-out" ? "/" : window.location.pathname + window.location.search;
   return (
     <div className="signin">
       <form onSubmit={(e) => { e.preventDefault(); if (value.trim()) onToken(value.trim()); }}>

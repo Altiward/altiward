@@ -88,6 +88,7 @@ var notSecret = map[string]bool{
 	"ALTIWARD_OIDC_ISSUER": true, "ALTIWARD_OIDC_CLIENT_ID": true, "ALTIWARD_CONSOLE_URL": true,
 	"ALTIWARD_OIDC_TENANT": true, "ALTIWARD_OIDC_GROUPS_CLAIM": true, "ALTIWARD_OIDC_SCOPES": true,
 	"ALTIWARD_OIDC_ADMIN_GROUPS": true, "ALTIWARD_OIDC_OPERATOR_GROUPS": true, "ALTIWARD_OIDC_VIEWER_GROUPS": true,
+	"ALTIWARD_OIDC_PROVIDER_SIGN_OUT": true,
 }
 
 // Options are the parts of the outside world a diagnosis touches, so tests can stand in.

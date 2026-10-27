@@ -43,18 +43,21 @@ done
 # Sentinel's setup script, to upload to Cloud Shell.
 cp deploy/sentinel/setup.sh "$D/integrations/sentinel/setup.sh"
 chmod 755 "$D/integrations/sentinel/setup.sh"
-# The script that lets the server read Intune, to upload to Cloud Shell.
+# The script that lets the server read Intune, to upload to Cloud Shell, and the one that
+# uploads the profiles to Intune (it finds the login items profile in ../../profiles).
 mkdir -p "$D/integrations/intune"
 cp deploy/intune/setup.sh "$D/integrations/intune/setup.sh"
 chmod 755 "$D/integrations/intune/setup.sh"
+cp deploy/intune/Push-AltiwardProfiles.ps1 deploy/intune/AltiwardIntune.psm1 "$D/integrations/intune/"
 # The Altiward overview dashboard for Splunk.
 cp integrations/splunk/altiward_overview.xml "$D/integrations/splunk/"
 # The Altiward overview workbook, as a template to deploy and as JSON to paste.
 cp integrations/sentinel/workbook.json integrations/sentinel/workbook.arm.json "$D/integrations/sentinel/"
-# The agent's Mac profiles. Not corp.sap.privileges.plist: its checksum is a placeholder
-# until the agent build fills it in, and Privileges won't run a hook whose checksum doesn't
-# match, so admins take that file from the agent release.
-cp deploy/mdm/com.altiward.agent.plist deploy/mdm/altiward-login-items.mobileconfig "$D/profiles/"
+# The agent's Mac profiles. Not the Privileges plist or profile: their checksum is a
+# placeholder until the agent build fills it in, and Privileges won't run a hook whose
+# checksum doesn't match, so admins take those files from the agent release.
+cp deploy/mdm/com.altiward.agent.plist deploy/mdm/com.altiward.agent.mobileconfig \
+  deploy/mdm/altiward-login-items.mobileconfig "$D/profiles/"
 cp LICENSE NOTICE THIRD_PARTY_NOTICES.md "$D/"
 [ -z "$NOTES" ] || cp "$NOTES" "$D/RELEASE_NOTES.md"
 cat > "$D/README.md" <<README

@@ -60,6 +60,9 @@ type OIDC struct {
 	// ALTIWARD_OIDC_ADMIN_GROUPS, _OPERATOR_GROUPS, _VIEWER_GROUPS: comma-separated group
 	// IDs or names, as the groups claim carries them.
 	AdminGroups, OperatorGroups, ViewerGroups []string
+	// ALTIWARD_OIDC_PROVIDER_SIGN_OUT: signing out of the console also signs the person out
+	// of the identity provider, through its end_session_endpoint. Off by default.
+	ProviderSignOut bool
 }
 
 // MinAuditRetentionDays is the shortest audit retention; the database refuses to delete a
@@ -350,6 +353,16 @@ func loadOIDC(getenv func(string) string, issuer, agentTokens, consoleTokens str
 		return nil, errors.New("set at least one of ALTIWARD_OIDC_ADMIN_GROUPS, _OPERATOR_GROUPS and _VIEWER_GROUPS: " +
 			"nobody could sign in")
 	}
+	switch v := getenv("ALTIWARD_OIDC_PROVIDER_SIGN_OUT"); v {
+	case "", "false":
+	case "true":
+		o.ProviderSignOut = true
+	default:
+		return nil, fmt.Errorf("ALTIWARD_OIDC_PROVIDER_SIGN_OUT: want true or false, got %q", v)
+	}
+	if u, err := url.Parse(o.Issuer); o.ProviderSignOut && (err != nil || u.Hostname() != entraHost) {
+		return nil, errors.New("ALTIWARD_OIDC_PROVIDER_SIGN_OUT works with Entra ID only until 1.2.0")
+	}
 	if o.Tenant == "" {
 		tenants := tokenTenants(agentTokens + "," + consoleTokens)
 		if len(tenants) != 1 {
@@ -359,6 +372,9 @@ func loadOIDC(getenv func(string) string, issuer, agentTokens, consoleTokens str
 	}
 	return o, nil
 }
+
+// entraHost is the host of Entra ID's issuer, https://login.microsoftonline.com/<tenant>/v2.0.
+const entraHost = "login.microsoftonline.com"
 
 // secureURL accepts an absolute https URL, or http for localhost (development).
 func secureURL(name, raw string) error {

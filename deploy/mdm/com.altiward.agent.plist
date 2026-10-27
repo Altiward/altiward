@@ -8,6 +8,8 @@
                        every later request is signed with that key. Managed preferences
                        are readable by local users, so treat the token as a fleet-wide
                        secret.
+  MDMDeviceID          The MDM's own ID for the Mac. Intune: {{deviceid}}, in that case.
+                       Jamf Pro and Kandji later.
   HeartbeatInterval    Seconds between admin-group readings (default 300, minimum 30).
   FlushInterval        Seconds between delivery retries (default 60, minimum 10).
   PermanentAdmins      Accounts expected to hold standing admin rights (IT, break-glass);
@@ -57,6 +59,8 @@
     <string>https://api.altiward.example</string>
     <key>EnrollmentToken</key>
     <string>REPLACE_WITH_TENANT_AGENT_TOKEN</string>
+    <key>MDMDeviceID</key>
+    <string>{{deviceid}}</string>
     <key>HeartbeatInterval</key>
     <integer>300</integer>
     <key>PermanentAdmins</key>

@@ -31,6 +31,7 @@ type ssoEnv struct {
 	idp   *ssotest.Provider
 	store *store.Memory
 	now   time.Time
+	log   *bytes.Buffer // what the server logged
 	// idpDown makes every request to the identity provider fail, as if it were unreachable.
 	idpDown bool
 }
@@ -51,7 +52,14 @@ func (d downable) RoundTrip(r *http.Request) (*http.Response, error) {
 // newSSOServer starts the server; each of more adds an option made from its store.
 func newSSOServer(t *testing.T, more ...func(*store.Memory) api.Option) *ssoEnv {
 	t.Helper()
-	env := &ssoEnv{idp: ssotest.New(t), store: store.NewMemory(nil), now: serverNow(t)}
+	return newSSOServerWith(t, ssotest.New(t), nil, more...)
+}
+
+// newSSOServerWith is newSSOServer with a chosen identity provider, and a change to the
+// single sign-on settings.
+func newSSOServerWith(t *testing.T, idp *ssotest.Provider, settings func(*config.OIDC), more ...func(*store.Memory) api.Option) *ssoEnv {
+	t.Helper()
+	env := &ssoEnv{idp: idp, store: store.NewMemory(nil), now: serverNow(t), log: &bytes.Buffer{}}
 	clock := func() time.Time { return env.now }
 	env.idp.Now = clock
 	tokens, err := auth.Parse("acme="+agentToken, "acme="+consoleToken)
@@ -64,6 +72,9 @@ func newSSOServer(t *testing.T, more ...func(*store.Memory) api.Option) *ssoEnv 
 		Tenant: "acme", GroupsClaim: "groups", Scopes: []string{"openid", "email", "profile"},
 		AdminGroups: []string{"g-admin"}, OperatorGroups: []string{"g-ops"}, ViewerGroups: []string{"g-view"},
 	}
+	if settings != nil {
+		settings(&cfg)
+	}
 	idpClient := env.idp.Client()
 	idpClient.Transport = downable{env: env, inner: idpClient.Transport}
 	provider := sso.New(cfg, idpClient, clock)
@@ -71,7 +82,7 @@ func newSSOServer(t *testing.T, more ...func(*store.Memory) api.Option) *ssoEnv 
 	for _, m := range more {
 		opts = append(opts, m(env.store))
 	}
-	env.h = api.New(env.store, tokens, slog.New(slog.NewTextHandler(io.Discard, nil)), clock, opts...)
+	env.h = api.New(env.store, tokens, slog.New(slog.NewTextHandler(env.log, nil)), clock, opts...)
 	health := testfixture.Event(t, "agent-health")
 	if _, err := env.store.Ingest(context.Background(), "acme", []event.Event{health}, env.now); err != nil {
 		t.Fatal(err)
@@ -353,6 +364,73 @@ func TestSessionsExpireAndSignOut(t *testing.T) {
 	}
 	entries, _ := env.store.ListAudit(context.Background(), "acme", store.AuditFilter{Limit: 1})
 	if entries[0].Action != store.AuditSignOut || entries[0].Actor != "jane.doe@example.com" {
+		t.Fatalf("audit = %+v", entries[0])
+	}
+}
+
+func TestSignOutOfTheProvider(t *testing.T) {
+	env := newSSOServerWith(t, ssotest.New(t, ssotest.WithEndSession()), func(c *config.OIDC) { c.ProviderSignOut = true })
+	b := env.browser(t)
+	b.signIn(env.idp, "/", person("g-admin"))
+	stolen := *b.cookies["__Host-altiward_session"]
+	rec, out := b.mutate("POST", "/v1/auth/logout", nil)
+	if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("logout: %d %v", rec.Code, rec.Header())
+	}
+	to, err := url.Parse(out["provider_sign_out_url"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if to.Scheme+"://"+to.Host+to.Path != env.idp.URL+"/logout" || len(to.Query()) != 2 ||
+		to.Query().Get("client_id") != ssotest.ClientID ||
+		to.Query().Get("post_logout_redirect_uri") != "https://altiward.example.com/signed-out" {
+		t.Errorf("provider_sign_out_url = %s", to)
+	}
+	// The next sign-in asks for the account picker, whichever way the person signed out.
+	if _, ok := b.cookies["__Host-altiward_signed_out"]; !ok {
+		t.Error("logout did not set the signed-out cookie")
+	}
+	// Altiward's own session is over before the browser leaves for the provider.
+	if _, ok := b.cookies["__Host-altiward_session"]; ok {
+		t.Fatal("logout left the cookie")
+	}
+	b.cookies[stolen.Name] = &stolen
+	if rec, _ := b.do("GET", "/v1/auth/me", nil); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("after logout: %d", rec.Code)
+	}
+	entries, _ := env.store.ListAudit(context.Background(), "acme", store.AuditFilter{Limit: 1})
+	if entries[0].Action != store.AuditSignOut || entries[0].Actor != "jane.doe@example.com" {
+		t.Fatalf("audit = %+v", entries[0])
+	}
+}
+
+func TestSignOutStaysLocalByDefault(t *testing.T) {
+	// The provider offers an end session endpoint, but the setting is off.
+	env := newSSOServerWith(t, ssotest.New(t, ssotest.WithEndSession()), nil)
+	b := env.browser(t)
+	b.signIn(env.idp, "/", person("g-admin"))
+	rec, _ := b.mutate("POST", "/v1/auth/logout", nil)
+	if rec.Code != http.StatusNoContent || rec.Body.Len() != 0 {
+		t.Fatalf("logout: %d %s", rec.Code, rec.Body)
+	}
+	if rec, _ := b.do("GET", "/v1/auth/me", nil); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("after logout: %d", rec.Code)
+	}
+}
+
+func TestSignOutStaysLocalWhenTheProviderHasNoEndpoint(t *testing.T) {
+	env := newSSOServerWith(t, ssotest.New(t), func(c *config.OIDC) { c.ProviderSignOut = true })
+	b := env.browser(t)
+	b.signIn(env.idp, "/", person("g-admin"))
+	rec, _ := b.mutate("POST", "/v1/auth/logout", nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("logout: %d %s", rec.Code, rec.Body)
+	}
+	if n := strings.Count(env.log.String(), "level=WARN"); n != 1 || !strings.Contains(env.log.String(), "end_session_endpoint") {
+		t.Errorf("want one warning about end_session_endpoint, log:\n%s", env.log)
+	}
+	entries, _ := env.store.ListAudit(context.Background(), "acme", store.AuditFilter{Limit: 1})
+	if entries[0].Action != store.AuditSignOut {
 		t.Fatalf("audit = %+v", entries[0])
 	}
 }
