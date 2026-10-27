@@ -281,6 +281,43 @@ func TestIntuneConnectionChecks(t *testing.T) {
 	}
 }
 
+// TestIntuneSyncStatus: the copy of Intune's Macs is refreshed every 15 minutes, so a sync
+// that is failing, or hasn't succeeded for an hour, is a problem.
+func TestIntuneSyncStatus(t *testing.T) {
+	ago := func(d time.Duration) *time.Time { at := now.Add(-d); return &at }
+	on := []string{"ALTIWARD_INTUNE_AUTH=managed-identity"}
+	for _, c := range []struct {
+		name string
+		env  []string
+		sync store.MDMSync
+		want string
+	}{
+		{"healthy", on, store.MDMSync{LastSuccessAt: ago(10 * time.Minute), Devices: 40}, ""},
+		{"recovered", on, store.MDMSync{LastSuccessAt: ago(10 * time.Minute), LastErrorAt: ago(25 * time.Minute),
+			LastError: "intune: HTTP 503"}, ""},
+		{"failing", on, store.MDMSync{LastSuccessAt: ago(40 * time.Minute), LastErrorAt: ago(10 * time.Minute),
+			LastError: "intune: HTTP 403 Forbidden"}, "The Intune sync is failing: intune: HTTP 403 Forbidden"},
+		{"never succeeded", on, store.MDMSync{LastErrorAt: ago(time.Minute), LastError: "IMDS HTTP 400"},
+			"The Intune sync is failing: IMDS HTTP 400"},
+		{"stale", on, store.MDMSync{LastSuccessAt: ago(61 * time.Minute), LastErrorAt: ago(2 * time.Hour), LastError: "old"},
+			"The Intune sync last succeeded at 2026-10-17T10:59:00Z, more than an hour ago, though it runs every 15 minutes. " +
+				"Is the server running?"},
+		// A copy left from before Intune was turned off goes when the server next starts.
+		{"off", nil, store.MDMSync{LastErrorAt: ago(time.Minute), LastError: "boom"}, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			c.sync.TenantID, c.sync.Source = "acme", store.MDMIntune
+			other := store.MDMSync{TenantID: "other", Source: store.MDMIntune, LastErrorAt: ago(time.Minute), LastError: "not ours"}
+			stats := store.Stats{MDM: []store.MDMSync{c.sync, other}}
+			r := diagnose.Run(context.Background(), options(append(baseEnv(), c.env...), fakeDB{stats: stats}, nil, nil))
+			got := strings.Join(r.Problems, "\n")
+			if got != c.want {
+				t.Fatalf("problems = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 // A regression guard: the setup date reaches the report through the existing stats field.
 func TestReportShowsSetUpDate(t *testing.T) {
 	installed := now.AddDate(0, 0, -40)

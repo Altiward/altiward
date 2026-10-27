@@ -27,6 +27,20 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
+// Tenants are the distinct tenants the tokens name, so the server can clear what each
+// tenant kept from a connection that has been turned off.
+func TestTenants(t *testing.T) {
+	c, err := config.Load(env(map[string]string{
+		"ALTIWARD_AGENT_TOKENS": "acme=x, globex=y", "ALTIWARD_CONSOLE_TOKENS": "acme=z,initech=w",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(c.Tenants(), ","); got != "acme,globex,initech" {
+		t.Fatalf("tenants = %q", got)
+	}
+}
+
 func TestAuditRetention(t *testing.T) {
 	for v, want := range map[string]int{"": 0, "0": 0, "365": 365, "2555": 2555} {
 		c, err := config.Load(env(map[string]string{"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_AUDIT_RETENTION_DAYS": v}))

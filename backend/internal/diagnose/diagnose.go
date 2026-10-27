@@ -1,7 +1,8 @@
 // Package diagnose builds the support report `altiward-api diagnose` prints: the version,
-// the configuration with every secret removed, the database's migrations and counts, and
-// whether each SIEM endpoint answers. It reads; it never migrates the database or sends
-// anything to a SIEM, and it reports problems rather than failing on them.
+// the configuration with every secret removed, the database's migrations and counts, the
+// Intune sync's status, and whether each SIEM endpoint answers. It reads; it never migrates
+// the database or sends anything to a SIEM, and it reports problems rather than failing on
+// them.
 package diagnose
 
 import (
@@ -173,14 +174,15 @@ func Run(ctx context.Context, o Options) Report {
 		}
 	}
 
-	r.Database = database(ctx, o, env["ALTIWARD_DATABASE_URL"], cfg.SinkNames(), now, problem)
+	r.Database = database(ctx, o, env["ALTIWARD_DATABASE_URL"], cfg.SinkNames(), cfg.Intune, now, problem)
 	if err == nil {
 		r.Sinks = sinks(ctx, o, cfg, problem)
 	}
 	return r
 }
 
-func database(ctx context.Context, o Options, dsn string, sinks []string, now time.Time, problem func(string)) Database {
+func database(ctx context.Context, o Options, dsn string, sinks []string, intune *config.Intune, now time.Time,
+	problem func(string)) Database {
 	db := Database{Configured: dsn != ""}
 	if dsn == "" {
 		problem("No ALTIWARD_DATABASE_URL: the server keeps everything in memory and loses it on restart")
@@ -221,7 +223,26 @@ func database(ctx context.Context, o Options, dsn string, sinks []string, now ti
 	if stats.DevicesSilent > 0 {
 		problem("Some Macs have stopped checking in; see Fleet in the console")
 	}
+	// A copy left from before Intune was turned off is deleted at the next start; only a
+	// connection that is on can be failing.
+	for _, m := range stats.MDM {
+		if intune != nil && m.TenantID == intune.Tenant && m.Source == store.MDMIntune {
+			intuneSync(m, now, problem)
+		}
+	}
 	return db
+}
+
+// intuneSync reports an Intune sync that is failing, or that has stopped: it runs every 15
+// minutes.
+func intuneSync(m store.MDMSync, now time.Time, problem func(string)) {
+	switch {
+	case m.LastErrorAt != nil && (m.LastSuccessAt == nil || m.LastErrorAt.After(*m.LastSuccessAt)):
+		problem("The Intune sync is failing: " + m.LastError)
+	case m.LastSuccessAt != nil && now.Sub(*m.LastSuccessAt) > time.Hour:
+		problem("The Intune sync last succeeded at " + m.LastSuccessAt.UTC().Format(time.RFC3339) +
+			", more than an hour ago, though it runs every 15 minutes. Is the server running?")
+	}
 }
 
 func sinks(ctx context.Context, o Options, cfg config.Config, problem func(string)) []SinkCheck {

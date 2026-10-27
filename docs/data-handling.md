@@ -7,11 +7,11 @@ on your infrastructure. The Altiward project receives none of it.
 ## In short
 
 - **Nothing is sent to Altiward.** The agent talks only to your server. The server talks
-  only to your database and to the SIEM and identity provider you configure. It never
-  updates itself: the host contacts GitHub only when an admin runs `upgrade.sh` with a
-  version. There is no telemetry, crash reporting or registration. Altiward is open
-  source (Apache 2.0) and has no licence to check, so nothing in it can stop working over
-  one.
+  only to your database and to the SIEM, identity provider and Microsoft Intune (through
+  Microsoft Graph) you configure. It never updates itself: the host contacts GitHub only
+  when an admin runs `upgrade.sh` with a version. There is no telemetry, crash reporting
+  or registration. Altiward is open source (Apache 2.0) and has no licence to check, so
+  nothing in it can stop working over one.
 - **The update check runs in the admin's browser, not on the server.** For people with
   the admin role, the console's browser asks `api.github.com` for Altiward's release list:
   at most once a day per admin's browser after a successful check, and at most once an
@@ -33,7 +33,7 @@ what people do with them otherwise.
 | What | Detail |
 | --- | --- |
 | The Mac | Serial number, hardware UUID, macOS version, agent version, SAP Privileges version |
-| The person | macOS short name, and their UPN (sign-in name) if you map one in the MDM profile (`UserPrincipalNames`). Altiward doesn't look UPNs up |
+| The person | macOS short name, and their UPN (sign-in name) if you map one in the MDM profile (`UserPrincipalNames`). A person's UPN comes only from the profile, never from the directory. With Intune connected, the server also reads each Mac's primary user from Intune and shows it, but never puts it on a person's events |
 | Each elevation | When it started and ended, how long it was allowed for, and the reason they typed (up to 2,048 characters) |
 | Who is admin | Every human account in the Mac's `admin` group (any member with a UID of 500 or more, and any other direct member apart from `root` and `_` accounts, hidden ones included), checked every 5 minutes, and admin rights that appear without an elevation |
 | Health | Whether the agent, SAP Privileges and their settings are intact (including Privileges' daily admin budget, if set), and how many events are waiting to send. The Privileges settings include whether MDM caps how long a grant lasts and turns renewals off, whether apps are set to renew rights automatically (yes or no, not which), whether Privileges runs the hook on give-backs, and whether it revokes rights at sign-in or after a clock change, with the account names its profile excludes from each. While someone holds rights from SAP Privileges, this includes whether Privileges' timer is still running for them: the agent looks for its process in the Mac's process list and sends only the answer |
@@ -88,6 +88,14 @@ Each connection exists only if you configure it.
 | Microsoft Entra ID (or, with a managed identity, the Azure VM's metadata service at 169.254.169.254, or the container app's identity endpoint) and your Azure Monitor endpoint | Sentinel export | `ALTIWARD_SENTINEL_*` |
 | Your syslog receiver, over TLS 1.2 or later by default | SIEM export | `ALTIWARD_SYSLOG_*` |
 | Your identity provider | Console sign-in | `ALTIWARD_OIDC_*` |
+| Microsoft Entra ID (or, with a managed identity, the Azure VM's metadata service at 169.254.169.254, or the container app's identity endpoint) and Microsoft Graph (`graph.microsoft.com`) | Reading the Macs Intune manages, every 15 minutes | `ALTIWARD_INTUNE_*` |
+
+**What the server reads from Intune:** the macOS devices Intune manages, with each one's
+Intune device ID, serial number, Entra device ID, primary user's UPN, device name and last
+check-in (and its operating system, which isn't kept). It asks Graph for those fields only,
+and never changes anything in Intune. The permission it needs,
+`DeviceManagementManagedDevices.Read.All`, would let it read every device Intune manages,
+on every platform. None of it is sent to your SIEM.
 
 **What your SIEM receives:** each event as an OCSF record, with the Mac's serial and
 macOS version, the person's short name and UPN, the reason they typed, and the event's
@@ -175,10 +183,15 @@ Everything is in your Postgres database.
 | Events waiting for each SIEM | Until the SIEM accepts them |
 | When each SIEM last accepted something | Replaced at each delivery |
 | When the server was set up | Forever |
+| With Intune connected, each Mac Intune manages: its Intune device ID, serial number, Entra device ID, primary user's UPN, device name and last check-in. Also when the copy was last refreshed, and its last error | Replaced at every sync, every 15 minutes; a failed sync keeps the last copy. Deleted when Intune is turned off, at the server's next start |
 
 Activity entries can't be edited, and a database rule allows deleting only entries more
 than 365 days old. Entries your SIEM hasn't received yet are never removed. Your
 identity-provider groups aren't stored, only the role they map to.
+
+Everyone who can sign in to the console, viewers included, sees each Mac's serial number,
+name, primary user and last check-in from the Intune copy, including Macs that don't run
+Altiward. Intune's and Entra ID's device IDs aren't shown.
 
 Back up and protect the database as you would any system holding staff names and
 security records ([Backups](install.md#backups)).
@@ -277,9 +290,10 @@ It logs to the Mac's unified log under `com.altiward.agent`.
 
 `altiward-api diagnose` prints a JSON report to attach to a bug report. It contains the
 version, which settings are set, migration state, record counts, each SIEM's backlog and
-last error, whether each SIEM and the identity provider accept a connection (and the
-Azure VM's metadata service or the container app's identity endpoint, when Sentinel uses a
-managed identity), and when the server was set up.
+last error, whether each SIEM, the identity provider and Microsoft Graph accept a
+connection (and the Azure VM's metadata service or the container app's identity endpoint,
+when Sentinel or Intune uses a managed identity), when the Intune sync last succeeded and
+its last error, and when the server was set up.
 
 It hides every secret: tokens, client secrets, the database password. It holds no event
 contents, names or reasons, only counts. It sends nothing: you read it, then decide

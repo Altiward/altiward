@@ -394,6 +394,9 @@ func list(v string) []string {
 	return out
 }
 
+// Tenants lists the distinct tenants the agent and console tokens name.
+func (c Config) Tenants() []string { return tokenTenants(c.AgentTokens + "," + c.ConsoleTokens) }
+
 // SinkNames are the export sinks events are queued for.
 func (c Config) SinkNames() []string {
 	var names []string
