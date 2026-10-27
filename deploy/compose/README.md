@@ -10,7 +10,7 @@ release on [GitHub Releases](https://github.com/Altiward/altiward/releases). The
 | `compose.yaml` | The three services. Nothing but Caddy publishes a port. Settings come from `.env`, so you needn't edit it. |
 | `Caddyfile` | Two sites: the agent hostname passes only `/v1/agent/*`; the console hostname only answers the networks in `ALTIWARD_CONSOLE_ALLOW`. |
 | `env.example` | Every setting, to copy to `.env` |
-| `upgrade.sh` | Upgrades to a new release from its files: checks, backs up, loads, restarts |
+| `upgrade.sh` | Upgrades to a new release, by version or from its files: downloads, checks, backs up, loads, restarts |
 | `certs/` | Your own TLS certificates for Caddy, or a CA file for the syslog receiver |
 | `.altiward/` | The files as the release shipped them, so `upgrade.sh` can tell which you changed |
 

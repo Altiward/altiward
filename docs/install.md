@@ -724,7 +724,8 @@ other databases: these commands are for the bundled one.
 
 Releases are published on
 [GitHub Releases](https://github.com/Altiward/altiward/releases), with their notes.
-Nothing updates itself, and your server never contacts Altiward or GitHub.
+Nothing updates itself, and the Altiward server never contacts Altiward or GitHub. The
+upgrade script below downloads a release from GitHub only when you run it with a version.
 
 **The console tells admins when a release is out.** On Overview and in **Settings › Updates**, people
 with the admin role see when a newer server or agent is out, whether it fixes a security
@@ -742,15 +743,28 @@ and run `docker compose up -d`. On Azure Container Apps, the notice names the im
 change to instead, and upgrades work differently
 ([Upgrading](../deploy/azure/README.md#upgrading)).
 
-**Upgrading the server:** download the new release into a directory of its own, as in
-[step 1](#1-start-the-server), read its `RELEASE_NOTES.md`, then run the upgrade script
-from your deployment directory, such as `/opt/altiward`:
+**Upgrading the server:** read the new release's notes, then run the upgrade script from
+your deployment directory, such as `/opt/altiward`, with the version:
+
+```sh
+./upgrade.sh <version>
+```
+
+It downloads the release from GitHub into `releases/<version>/` there, using `curl`, which
+goes through `HTTPS_PROXY` if it's set. A proxy needs to allow `github.com` and
+`release-assets.githubusercontent.com`, where GitHub keeps the files. On a server without
+internet access, download the release into a directory of its own as in
+[step 1](#1-start-the-server), copy it to the server, and give the directory instead:
 
 ```sh
 ./upgrade.sh ~/altiward-<version>
 ```
 
-It checks the files and their signature ([Checking a release](#checking-a-release)),
+The script from release 1.0.0 or earlier can't download, so upgrade from one of those with
+a directory. The script updates itself as it upgrades, so the next upgrade can use the
+version.
+
+Either way, it checks the files and their signature ([Checking a release](#checking-a-release)),
 shows the notes' upgrade order, breaking changes and security fixes, and asks before it
 changes anything. Then it:
 
@@ -937,6 +951,7 @@ Logs aren't included. If a maintainer asks for them:
 | A Mac waits in **Enrollments** | It enrolled again with a new key while approval is on: approve it. |
 | A `rotated_key_used` alert, or a Mac that enrolled again by itself | A key that was replaced was used again: two holders of one Mac's identity ([A rotated key was used](#a-rotated-key-was-used)) |
 | `upgrade.sh` stopped and left `compose.yaml.new` | You changed `compose.yaml` and so did the release: merge, then run it again with `--merged` ([Releases and updates](#releases-and-updates)) |
+| `upgrade.sh` couldn't download a file | The version doesn't exist, or the server can't reach GitHub: check the version and `HTTPS_PROXY`, or give a directory of release files ([Releases and updates](#releases-and-updates)) |
 | `upgrade.sh` says a file doesn't match `SHA256SUMS` | The download is incomplete or was changed: download the release again |
 | A Mac shows **Not checking in** | It has been off, offline or unable to reach the agent hostname for longer than the limit. Its events wait on the Mac and arrive when it reconnects. If laptops show this when they're away from the office, the agent hostname isn't reachable from the internet ([Two hostnames](#what-youre-installing)). |
 | **Needs attention** on a Mac | An integrity check failed, for example the agent's files changed, or `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`, `OutOfBandEnforcement`, `OutOfBandGraceMinutes` or `HookCodeRequirement` was set outside MDM. The Mac's details say which. |
