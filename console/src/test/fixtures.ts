@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import type { Api, Me, Overview, Role, Session } from "../api";
+import type { Api, Enrollment, Me, Overview, Role, Session } from "../api";
 import type { GitHubRelease } from "../updates";
 
 export function session(over: Partial<Session> = {}): Session {
@@ -9,6 +9,15 @@ export function session(over: Partial<Session> = {}): Session {
     started_at: "2026-10-16T09:14:03Z", expires_at: "2026-10-16T09:34:03Z", ended_at: null, end_reason: null,
     renewals: 0, verified: true, flags: [], event_count: 1, last_event_at: "2026-10-16T09:14:03Z",
     open: true, allowed_seconds: 1200, actual_seconds: 600, overran: false, permanent_admin: false, ...over,
+  };
+}
+
+/** An active enrollment whose key is in the Secure Enclave. */
+export function enrollment(over: Partial<Enrollment> = {}): Enrollment {
+  return {
+    device_id: "d-active", serial: "C02XK0AAJGH5", hardware_uuid: "HW-1", public_key: btoa("abc"),
+    key_storage: "secure_enclave", token: "token:1a2b3c4d", status: "active", created_at: "2026-10-01T00:00:00Z",
+    activated_at: "2026-10-01T00:00:00Z", revoked_at: null, ...over,
   };
 }
 

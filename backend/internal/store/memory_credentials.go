@@ -49,7 +49,7 @@ func (m *Memory) Credential(_ context.Context, deviceID string) (DeviceCredentia
 	if !ok {
 		return DeviceCredential{}, ErrNotFound
 	}
-	return c, nil
+	return m.withSuccessor(c), nil
 }
 
 func (m *Memory) ApproveCredential(_ context.Context, tenantID, deviceID string, now time.Time, a AuditEntry) (DeviceCredential, error) {
@@ -78,6 +78,10 @@ func (m *Memory) RevokeCredential(_ context.Context, tenantID, deviceID string, 
 	if !ok || c.TenantID != tenantID {
 		return DeviceCredential{}, ErrNotFound
 	}
+	// A rotated key is already revoked; the key to revoke is its lineage's active one.
+	if active, ok := m.lineageActive(deviceID); ok && active.DeviceID != deviceID {
+		return DeviceCredential{}, ErrRotated
+	}
 	if c.Status != CredentialRevoked {
 		m.revoke(c, now)
 	}
@@ -91,7 +95,7 @@ func (m *Memory) ListCredentials(_ context.Context, tenantID string, f Credentia
 	out := []DeviceCredential{}
 	for _, c := range m.creds {
 		if c.TenantID == tenantID && (f.Status == "" || c.Status == f.Status) && (f.Serial == "" || c.Serial == f.Serial) {
-			out = append(out, c)
+			out = append(out, m.withSuccessor(c))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -143,7 +147,8 @@ func (m *Memory) enforceEnrollLimits(c DeviceCredential, limits EnrollLimits) er
 		if first, ok := firstKey[o.Serial]; !ok || o.CreatedAt.Before(first) {
 			firstKey[o.Serial] = o.CreatedAt
 		}
-		if o.Serial == c.Serial && o.CreatedAt.After(keysSince) {
+		// Keys made by rotation aren't enrolments, so they don't count.
+		if o.Serial == c.Serial && o.RotatedFrom == "" && o.CreatedAt.After(keysSince) {
 			keys++
 		}
 	}
@@ -173,6 +178,37 @@ func (m *Memory) enrolledBefore(tenantID, serial string) bool {
 	return false
 }
 
+// successor, withSuccessor and lineageActive expect m.mu held. successor is id's direct
+// successor.
+func (m *Memory) successor(id string) (DeviceCredential, bool) {
+	for _, c := range m.creds {
+		if c.RotatedFrom == id {
+			return c, true
+		}
+	}
+	return DeviceCredential{}, false
+}
+
+func (m *Memory) withSuccessor(c DeviceCredential) DeviceCredential {
+	c.RotatedTo = ""
+	if next, ok := m.successor(c.DeviceID); ok {
+		c.RotatedTo = next.DeviceID
+	}
+	return c
+}
+
+// lineageActive returns the active key among id's key and its successors.
+func (m *Memory) lineageActive(id string) (DeviceCredential, bool) {
+	seen := map[string]bool{}
+	for c, ok := m.creds[id]; ok && !seen[c.DeviceID]; c, ok = m.successor(c.DeviceID) {
+		seen[c.DeviceID] = true
+		if c.Status == CredentialActive {
+			return c, true
+		}
+	}
+	return DeviceCredential{}, false
+}
+
 func (m *Memory) revoke(c DeviceCredential, now time.Time) {
 	c.Status, c.RevokedAt = CredentialRevoked, ptr(now)
 	m.creds[c.DeviceID] = c
@@ -186,4 +222,95 @@ func (m *Memory) tenantSettings(tenantID string) TenantSettings {
 		return settings
 	}
 	return DefaultTenantSettings()
+}
+
+func (m *Memory) Rotate(_ context.Context, r RotateRequest) (RotateResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cur, ok := m.creds[r.FromDeviceID]
+	if !ok || cur.TenantID != r.TenantID {
+		return RotateResult{}, ErrNotFound
+	}
+	cur = m.withSuccessor(cur)
+	res := RotateResult{Previous: cur}
+	if cur.Status == CredentialRevoked && cur.RotatedTo != "" {
+		next := m.withSuccessor(m.creds[cur.RotatedTo])
+		if bytes.Equal(next.PublicKey, r.PublicKey) {
+			res.Credential, res.Retry = next, true
+			return res, nil
+		}
+		c := m.contest(cur, next, r.Now)
+		res.Contest = &c
+		return res, ErrRotatedElsewhere
+	}
+	switch {
+	case cur.Status == CredentialRevoked:
+		return res, ErrRevoked
+	case cur.Status != CredentialActive:
+		return res, ErrInvalidState
+	case cur.KeyStorage == KeyStorageSecureEnclave:
+		return res, ErrRotationNotAllowed
+	case cur.ActivatedAt != nil && r.Now.Before(cur.ActivatedAt.Add(MinRotationInterval)):
+		return res, ErrRotationTooSoon
+	}
+	for _, o := range m.creds {
+		if bytes.Equal(o.PublicKey, r.PublicKey) {
+			return res, ErrKeyInUse
+		}
+	}
+	m.revoke(cur, r.Now)
+	next := DeviceCredential{
+		DeviceID: r.DeviceID, TenantID: cur.TenantID, Serial: cur.Serial, HardwareUUID: cur.HardwareUUID,
+		PublicKey: r.PublicKey, KeyStorage: r.KeyStorage, Token: cur.Token, Status: CredentialActive,
+		CreatedAt: r.Now, ActivatedAt: ptr(r.Now), RotatedFrom: cur.DeviceID, RotationSignedAt: ptr(r.SignedAt),
+	}
+	m.creds[next.DeviceID] = next
+	res.Credential = next
+	return res, nil
+}
+
+// contest expects m.mu held. It mirrors the Postgres store's contest.
+func (m *Memory) contest(stale, next DeviceCredential, now time.Time) ContestResult {
+	res := ContestResult{Stale: stale}
+	if withinContestWindow(next, now) {
+		if active, ok := m.lineageActive(stale.DeviceID); ok {
+			m.revoke(active, now)
+			res.Revoked = ptr(m.creds[active.DeviceID])
+		}
+	}
+	marked := false
+	if last, ok := m.staleUseReported[stale.DeviceID]; !ok || staleUseReported(&last, now) {
+		m.staleUseReported[stale.DeviceID] = now
+		marked = true
+	}
+	res.Report = res.Revoked != nil || marked
+	return res
+}
+
+func (m *Memory) StaleKeyUsed(_ context.Context, deviceID string, signedAt, now time.Time) (*ContestResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	stale, ok := m.creds[deviceID]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	stale = m.withSuccessor(stale)
+	if stale.Status != CredentialRevoked || stale.RotatedTo == "" {
+		return nil, nil
+	}
+	next := m.creds[stale.RotatedTo]
+	if inFlight(next, signedAt, now) {
+		return nil, nil
+	}
+	c := m.contest(stale, next, now)
+	return &c, nil
+}
+
+func (m *Memory) LineageActive(_ context.Context, deviceID string) (DeviceCredential, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if c, ok := m.lineageActive(deviceID); ok {
+		return c, nil
+	}
+	return DeviceCredential{}, ErrNotFound
 }

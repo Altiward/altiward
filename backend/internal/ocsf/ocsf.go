@@ -30,7 +30,10 @@
 //	agent.enrollment            → API Activity (6003), Create (1), like the console's approval and
 //	                              revoke of an enrolment: Informational when a Mac enrols,
 //	                              Medium (an alert) when it enrols again and waits for approval,
-//	                              High (an alert) when a new key replaced the old one unapproved
+//	                              High (an alert) when a new key replaced the old one unapproved.
+//	                              A rotation is Update (3), Informational; a key used after it was
+//	                              replaced by rotation is Other (99, "Stale key used"), Failure,
+//	                              High (an alert). Both have api.operation "rotate"
 //	agent.health, activity      → not exported (inventory and v2 telemetry)
 //	console actions             → API Activity (6003); see audit.go
 //
@@ -348,7 +351,8 @@ func silent(e store.StoredEvent, tenantID string) Record {
 // key. It is an API Activity record like the console's approval and revoke of an
 // enrolment, so a SIEM sees the whole lifecycle in one class: the resource is the
 // enrolment (the device credential) and the actor is the enrolment token's fingerprint,
-// in the same field as a console token's.
+// in the same field as a console token's. A rotation has no token: the Mac proved it held
+// the old key, so the actor is the Mac, by its serial.
 func enrollment(e store.StoredEvent, tenantID string) Record {
 	state, _ := e.Detail["state"].(string)
 	severity, alert := SeverityInformational, false
@@ -361,14 +365,28 @@ func enrollment(e store.StoredEvent, tenantID string) Record {
 		severity, alert = SeverityHigh, true
 		msg = fmt.Sprintf("%s enrolled again; the new key replaced the previous one without approval", e.Device.Serial)
 	}
-	r := base(e, tenantID, 6003, "API Activity", 6, "Application Activity", 1, "Create", severity)
+	activityID, activity, operation := 1, "Create", "enroll"
+	statusID, status := 1, "Success"
+	switch state {
+	case event.EnrollmentStateRotated:
+		activityID, activity, operation = 3, "Update", "rotate"
+		msg = fmt.Sprintf("%s replaced its key by rotation", e.Device.Serial)
+	case event.EnrollmentStateRotatedKeyUsed:
+		activityID, activity, operation = 99, "Stale key used", "rotate"
+		statusID, status = 2, "Failure"
+		severity, alert = SeverityHigh, true
+		msg = fmt.Sprintf("%s used a key it had already replaced", e.Device.Serial)
+	}
+	r := base(e, tenantID, 6003, "API Activity", 6, "Application Activity", activityID, activity, severity)
 	if hostOS, ok := r["device"].(map[string]any)["os"].(map[string]any); ok && hostOS["version"] == "" {
 		delete(hostOS, "version") // the server doesn't know it
 	}
 	if token := detailString(e.Detail, "token"); token != "" {
 		r["actor"] = map[string]any{"user": map[string]any{"name": token}}
+	} else if operation == "rotate" {
+		r["actor"] = map[string]any{"user": map[string]any{"name": e.Device.Serial}}
 	}
-	r["api"] = map[string]any{"operation": "enroll", "service": map[string]any{"name": "Altiward server"}}
+	r["api"] = map[string]any{"operation": operation, "service": map[string]any{"name": "Altiward server"}}
 	r["src_endpoint"] = map[string]any{"uid": e.Device.HardwareUUID, "hw_info": map[string]any{"serial_number": e.Device.Serial}}
 	r["resources"] = []map[string]any{{
 		"type": "Enrollment", "uid": detailString(e.Detail, "device_id"), "name": e.Device.Serial,
@@ -376,7 +394,7 @@ func enrollment(e store.StoredEvent, tenantID string) Record {
 	if alert {
 		r["is_alert"] = true
 	}
-	r["status_id"], r["status"] = 1, "Success"
+	r["status_id"], r["status"] = statusID, status
 	r["message"] = msg
 	return r
 }

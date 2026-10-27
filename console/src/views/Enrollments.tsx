@@ -1,8 +1,8 @@
 import { type JSX, useMemo, useState } from "react";
-import type { CredentialStatus, Enrollment, KeyStorage } from "../api";
+import { ApiError, type CredentialStatus, type Enrollment, type KeyStorage } from "../api";
 import { Banner, Details, Empty, Explain, Missing, RoleNote, SearchField, Segmented, Toolbar } from "../components/Chrome";
 import { Fingerprint } from "../components/Fingerprint";
-import { AttentionGlyph, ChipGlyph, CloseIcon, EndedGlyph, FileGlyph } from "../components/Icons";
+import { AttentionGlyph, ChipGlyph, CloseIcon, EndedGlyph, FileGlyph, RotatedGlyph } from "../components/Icons";
 import { ConfirmSheet } from "../components/Sheet";
 import { StateBadge } from "../components/StateBadge";
 import { Table } from "../components/Table";
@@ -14,7 +14,23 @@ import { useLoad } from "../useLoad";
 type Filter = CredentialStatus | "all";
 const statusTitle: Record<CredentialStatus, string> = { active: "Active", pending: "Waiting for approval", revoked: "Revoked" };
 const statusLook = { active: "verified", pending: "claimed", revoked: "ended" } as const;
-const Status = ({ status }: { status: CredentialStatus }) => <StateBadge state={statusLook[status]} label={statusTitle[status]} />;
+/** A key replaced by rotation is revoked too, but says "Rotated": nobody revoked it, and there is
+ *  nothing to do about it. */
+const isRotated = (e: Enrollment) => e.status === "revoked" && !!e.rotated_to;
+const Status = ({ enrollment: e, explain }: { enrollment: Enrollment; explain?: boolean }) => isRotated(e)
+  ? explain
+    ? <Explain tip={explanations.rotated} bare><StateBadge state="ended" label="Rotated" glyph={RotatedGlyph} /></Explain>
+    : <StateBadge state="ended" label="Rotated" glyph={RotatedGlyph} />
+  : <StateBadge state={statusLook[e.status]} label={statusTitle[e.status]} />;
+
+/** Another key of the same Mac, named by its fingerprint: following it shows that key. */
+function KeyLink({ enrollment, onFollow }: { enrollment: Enrollment; onFollow: (deviceID: string) => void }) {
+  return (
+    <button type="button" className="link data" onClick={() => onFollow(enrollment.device_id)}>
+      <Fingerprint publicKey={enrollment.public_key} />
+    </button>
+  );
+}
 
 /** Where the Mac says its key is kept. Plain, not a coloured badge: it's the Mac's claim. */
 const keyStorageLook: Record<KeyStorage, [string, () => JSX.Element]> = {
@@ -35,6 +51,8 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
   const [selected, setSelected] = useState<string | null>(null);
   // Lives here, not in the inspector: an approved row can leave the filtered list.
   const [done, setDone] = useState<string | null>(null);
+  // The key in use, when a revoke named a key that has since been rotated.
+  const [rotatedTo, setRotatedTo] = useState<string | null>(null);
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -42,6 +60,10 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
   }, [data, filter, query]);
   const current = rows.find((e) => e.device_id === selected) ?? null;
   const pending = (data ?? []).filter((e) => e.status === "pending").length;
+  const byID = (id: string | undefined) => (data ?? []).find((e) => e.device_id === id);
+  const keyInUse = byID(rotatedTo ?? undefined);
+  // A key may be hidden by the filter or the search: show them all, then select it.
+  const follow = (id: string) => { setFilter("all"); setQuery(""); setRotatedTo(null); setSelected(id); };
 
   return (
     <>
@@ -56,6 +78,11 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
         <div className="pane">
           {error && <Banner>{error}</Banner>}
           {done && <Banner kind="info">{done}</Banner>}
+          {keyInUse && (
+            <Banner>
+              That key was rotated, so it can’t be revoked. The key in use is <KeyLink enrollment={keyInUse} onFollow={follow} />.
+            </Banner>
+          )}
           {data && rows.length === 0 ? (
             <Empty title={data.length ? "No matching enrollments" : "No Macs enrolled yet"}>
               {data.length ? "Try another filter." : "A Mac enrolls the first time its agent reaches the server with your enrollment token."}
@@ -65,7 +92,7 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
               initialSort={{ key: "enrolled", descending: true }}
               columns={[
                 { key: "mac", title: "Mac", sort: (e) => e.serial, render: (e) => <span className="data">{e.serial}</span> },
-                { key: "status", title: "Status", sort: (e) => e.status, render: (e) => <Status status={e.status} /> },
+                { key: "status", title: "Status", sort: (e) => e.status, render: (e) => <Status enrollment={e} /> },
                 // Where the key is kept goes under the fingerprint: a column of its own leaves the
                 // dates no room beside the inspector.
                 { key: "key", title: "Key", render: (e) => (
@@ -82,7 +109,9 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
         {current && (
           <EnrollmentInspector enrollment={current} onClose={() => setSelected(null)} evidenceVersion={evidenceVersion}
             active={(data ?? []).find((e) => e.serial === current.serial && e.device_id !== current.device_id && e.status === "active")}
-            onDone={(text) => { setDone(text); void reload(); onChanged?.(); }} />
+            predecessor={byID(current.rotated_from)} successor={byID(current.rotated_to)} onFollow={follow}
+            onRotated={async (id) => { await reload(); setDone(null); setRotatedTo(id); }}
+            onDone={(text) => { setDone(text); setRotatedTo(null); void reload(); onChanged?.(); }} />
         )}
       </div>
     </>
@@ -90,9 +119,11 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
 }
 
 /** A pending key replaces the Mac's active key when approved, if it has one. */
-function EnrollmentInspector({ enrollment: e, active, evidenceVersion, onClose, onDone }: {
-  enrollment: Enrollment; active: Enrollment | undefined; evidenceVersion: number; onClose: () => void;
-  onDone: (message: string) => void;
+function EnrollmentInspector({ enrollment: e, active, predecessor, successor, evidenceVersion, onClose, onDone, onRotated, onFollow }: {
+  enrollment: Enrollment; active: Enrollment | undefined; predecessor: Enrollment | undefined; successor: Enrollment | undefined;
+  evidenceVersion: number; onClose: () => void; onDone: (message: string) => void;
+  /** The server refused a revoke because the key was rotated: its answer names the key in use. */
+  onRotated: (keyInUse: string) => Promise<void>; onFollow: (deviceID: string) => void;
 }) {
   const api = useApi();
   const newMac = !active;
@@ -113,7 +144,11 @@ function EnrollmentInspector({ enrollment: e, active, evidenceVersion, onClose, 
         ? `Approved the new key for ${e.serial}. Its previous key no longer works.`
         : `Revoked the key for ${e.serial}. The Mac can’t report with it any more.`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (err instanceof ApiError && err.body.code === "credential_rotated" && err.body.current_device_id) {
+        await onRotated(err.body.current_device_id);
+      } else {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       setBusy(false);
       setConfirming(false);
@@ -125,7 +160,7 @@ function EnrollmentInspector({ enrollment: e, active, evidenceVersion, onClose, 
       <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
         <div style={{ flex: 1 }}>
           <h2 className="data" style={{ fontSize: 18, lineHeight: "24px" }}>{e.serial}</h2>
-          <div className="badges"><Status status={e.status} /></div>
+          <div className="badges"><Status enrollment={e} explain /></div>
         </div>
         <button type="button" className="button icon-button" aria-label="Close details" onClick={onClose}><CloseIcon /></button>
       </div>
@@ -150,6 +185,9 @@ function EnrollmentInspector({ enrollment: e, active, evidenceVersion, onClose, 
       <div className="group">
         <Details rows={[
           ["Key fingerprint", <span key="fp" className="data"><Fingerprint publicKey={e.public_key} /></span>],
+          ...(e.rotated_from ? [["Rotated from", predecessor
+            ? <KeyLink key="from" enrollment={predecessor} onFollow={onFollow} />
+            : <Missing key="from">Not in this list</Missing>] as [string, JSX.Element]] : []),
           ["Key kept in", <Explain key="kept" tip={explanations.keyStorage} bare><KeyKeptIn storage={e.key_storage} /></Explain>],
           ["Hardware UUID", <span key="hw" className="data">{e.hardware_uuid}</span>],
           ["Enrolled with", <Explain key="token" tip={explanations.enrolledWith} bare>
@@ -160,6 +198,12 @@ function EnrollmentInspector({ enrollment: e, active, evidenceVersion, onClose, 
           ["Revoked", e.revoked_at ? dateTime(e.revoked_at) : <Missing key="revoked">Not revoked</Missing>],
         ]} />
       </div>
+      {isRotated(e) && (
+        <p className="secondary" style={{ marginTop: 12 }}>
+          Replaced by rotation on {e.revoked_at ? dateTime(e.revoked_at) : "an unknown date"}.
+          {successor && <> The key that replaced it is <KeyLink enrollment={successor} onFollow={onFollow} />.</>}
+        </p>
+      )}
       {e.status === "pending" && !newMac && (
         <p className="secondary" style={{ marginTop: 12 }}>
           This Mac enrolled again with a new key.
@@ -176,8 +220,7 @@ function EnrollmentInspector({ enrollment: e, active, evidenceVersion, onClose, 
       {e.status === "active" && e.key_storage !== "secure_enclave" && (
         <p className="secondary" style={{ marginTop: 12 }}>
           This key is in a file, so someone with admin rights on the Mac could copy it and report as this Mac from
-          elsewhere. Revoke it to make the Mac enroll again: with agent 0.2.0 or later on a Mac with a Secure
-          Enclave, the new key is kept there.
+          elsewhere. The agent moves this key into the Secure Enclave by itself.
         </p>
       )}
       {e.status === "pending" && newMac && (

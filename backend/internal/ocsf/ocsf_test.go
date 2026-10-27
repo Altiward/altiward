@@ -750,6 +750,57 @@ func TestEnrollmentMapsToAPIActivity(t *testing.T) {
 	}
 }
 
+func TestRotatedEnrollmentMapsToAnUpdate(t *testing.T) {
+	r := mapJSON(t, stored(t, "agent-enrollment-rotated"))
+	want := map[string]any{
+		"class_uid": 6003.0, "activity_id": 3.0, "activity_name": "Update", "type_uid": 600303.0,
+		"type_name": "API Activity: Update", "severity": "Informational", "status": "Success",
+		"message":                        "C02XK0AAJGH5 replaced its key by rotation",
+		"actor.user.name":                "C02XK0AAJGH5",
+		"api.operation":                  "rotate",
+		"unmapped.altiward.event_type":   "agent.enrollment",
+		"unmapped.altiward.detail.state": "rotated",
+	}
+	for path, w := range want {
+		if got := get(r, path); got != w {
+			t.Errorf("%s = %v, want %v", path, got, w)
+		}
+	}
+	if _, ok := r["is_alert"]; ok {
+		t.Errorf("is_alert = %v, want none", r["is_alert"])
+	}
+	resources, _ := r["resources"].([]any)
+	if len(resources) != 1 || get(map[string]any{"r": resources[0]}, "r.uid") != "9b4e7d2c-1a63-4f85-b0d9-6c3a5e8f1d27" {
+		t.Errorf("resources = %v", r["resources"])
+	}
+}
+
+func TestStaleKeyUseMapsToAnAlert(t *testing.T) {
+	r := mapJSON(t, stored(t, "agent-enrollment-rotated-key-used"))
+	want := map[string]any{
+		"class_uid": 6003.0, "activity_id": 99.0, "activity_name": "Stale key used", "type_uid": 600399.0,
+		"type_name": "API Activity: Stale key used", "severity": "High", "status": "Failure", "status_id": 2.0,
+		"message":                        "C02XK0AAJGH5 used a key it had already replaced",
+		"actor.user.name":                "C02XK0AAJGH5",
+		"api.operation":                  "rotate",
+		"unmapped.altiward.event_type":   "agent.enrollment",
+		"unmapped.altiward.detail.state": "rotated_key_used",
+		"metadata.product.version":       "1.0.0",
+	}
+	for path, w := range want {
+		if got := get(r, path); got != w {
+			t.Errorf("%s = %v, want %v", path, got, w)
+		}
+	}
+	if r["is_alert"] != true {
+		t.Errorf("is_alert = %v", r["is_alert"])
+	}
+	resources, _ := r["resources"].([]any)
+	if len(resources) != 1 || get(map[string]any{"r": resources[0]}, "r.uid") != "5d2c8e1a-7b4f-4a93-8c6d-0f1e2a3b4c5d" {
+		t.Errorf("resources = %v", r["resources"])
+	}
+}
+
 func TestEnrollmentWithoutATokenHasNoActor(t *testing.T) {
 	e := stored(t, "agent-enrollment-enrolled")
 	e.Detail = maps.Clone(e.Detail)

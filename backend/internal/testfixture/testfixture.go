@@ -20,6 +20,7 @@ var Names = []string{
 	"elevation-revoked-permanent-admin", "agent-tamper-retired", "elevation-revoked-privileges-grant",
 	"agent-tamper-privileges-blocked", "admin-permanent-use-started", "admin-permanent-use-ended", "admin-permanent-use-prompt",
 	"agent-tamper-grant-claim", "agent-enrollment-pending", "agent-enrollment-enrolled",
+	"agent-enrollment-rotated", "agent-enrollment-rotated-key-used",
 }
 
 func read(t testing.TB, dir, name string) []byte {
@@ -91,6 +92,29 @@ func Signature(t testing.TB) SignatureVector {
 		t.Fatal(err)
 	}
 	var v SignatureVector
+	if err := json.Unmarshal(b, &v); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+// RotationVector is docs/schema/rotation-vector.json, the key-rotation proof contract.
+type RotationVector struct {
+	DeviceID     string `json:"device_id"`
+	NewPublicKey []byte `json:"new_public_key"`
+	Statement    string `json:"statement"`
+	Proof        []byte `json:"proof"`
+}
+
+// Rotation loads the shared key-rotation proof vector.
+func Rotation(t testing.TB) RotationVector {
+	t.Helper()
+	_, file, _, _ := runtime.Caller(0)
+	b, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "..", "docs", "schema", "rotation-vector.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v RotationVector
 	if err := json.Unmarshal(b, &v); err != nil {
 		t.Fatal(err)
 	}

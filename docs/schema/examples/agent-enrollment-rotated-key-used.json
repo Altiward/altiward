@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "event_id": "e6b2d9a4-3c18-4f70-9d5e-1a8c4b7e2f93",
+  "type": "agent.enrollment",
+  "session_id": null,
+  "timestamp": "2026-10-16T09:45:00Z",
+  "device": {
+    "serial": "C02XK0AAJGH5",
+    "hardware_uuid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+    "os_version": "",
+    "agent_version": "1.0.0",
+    "privileges_version": null
+  },
+  "user": null,
+  "elevation": null,
+  "delayed": false,
+  "detail": {
+    "state": "rotated_key_used",
+    "device_id": "5d2c8e1a-7b4f-4a93-8c6d-0f1e2a3b4c5d",
+    "key_fingerprint": "3c9a1f5e7b2d4086a1b3c5d7e9f024681d3f5a7c9e0b2d4f6a8c0e2b4d6f8a1c",
+    "rotated_to": "9b4e7d2c-1a63-4f85-b0d9-6c3a5e8f1d27",
+    "revoked_device_id": "9b4e7d2c-1a63-4f85-b0d9-6c3a5e8f1d27"
+  }
+}

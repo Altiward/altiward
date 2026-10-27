@@ -3,9 +3,10 @@ import userEvent from "@testing-library/user-event";
 import type { JSX } from "react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
-import type { Device, Enrollment } from "../api";
+import { ApiError, type Device, type Enrollment } from "../api";
 import { ApiContext } from "../context";
-import { fakeApi, session } from "../test/fixtures";
+import { shortFingerprint } from "../format";
+import { enrollment, fakeApi, session } from "../test/fixtures";
 import { AdminsNowView } from "./AdminsNow";
 import { EnrollmentsView } from "./Enrollments";
 
@@ -291,6 +292,109 @@ describe("Enrollments, the evidence for a pending key", () => {
     const other: Enrollment = { ...active, device_id: "d-other", serial: "SERIAL-OTHER", hardware_uuid: "HW-OTHER" };
     renderView(fakeApi({ enrollments: vi.fn(async () => [pending, active, other]) }), <EnrollmentsView />);
     expect(await openPending()).not.toHaveTextContent("different hardware UUID");
+  });
+});
+
+describe("Enrollments, rotated keys", () => {
+  // A Mac that rotated once: its first key is stale, and its second is the key in use.
+  const stale = enrollment({
+    device_id: "d-stale", serial: "ROTATED-MAC", public_key: btoa("first key"), status: "revoked",
+    revoked_at: "2026-10-20T08:00:00Z", rotated_to: "d-current",
+  });
+  const current = enrollment({
+    device_id: "d-current", serial: "ROTATED-MAC", public_key: btoa("second key"), key_storage: "software",
+    created_at: "2026-10-20T08:00:00Z", activated_at: "2026-10-20T08:00:00Z", rotated_from: "d-stale",
+  });
+  const plainRevoked = enrollment({
+    device_id: "d-lost", serial: "LOST-MAC", public_key: btoa("lost key"), status: "revoked", revoked_at: "2026-10-18T08:00:00Z",
+  });
+  const row = (serial: string, text: string) =>
+    screen.getAllByText(serial).map((r) => r.closest("tr")!).find((r) => r.textContent?.includes(text))!;
+  const inspector = () => screen.getByRole("complementary", { name: "Enrollment details" });
+  const listed = (serial: string) => within(screen.getByRole("grid")).queryAllByText(serial).length;
+
+  it("shows a stale key as Rotated, not Revoked", async () => {
+    renderView(fakeApi({ enrollments: vi.fn(async () => [stale, current, plainRevoked]) }), <EnrollmentsView />);
+    await screen.findAllByText("ROTATED-MAC");
+    const rotated = row("ROTATED-MAC", "Rotated");
+    expect(rotated).toHaveTextContent("Rotated");
+    expect(rotated).not.toHaveTextContent("Revoked");
+    expect(rotated.querySelector(".badge svg")).not.toBeNull();
+    const revoked = screen.getByText("LOST-MAC").closest("tr")!;
+    expect(revoked).toHaveTextContent("Revoked");
+    expect(revoked).not.toHaveTextContent("Rotated");
+    // The two words have different glyphs.
+    expect(rotated.querySelector(".badge svg")!.innerHTML).not.toEqual(revoked.querySelector(".badge svg")!.innerHTML);
+  });
+
+  it("the inspector links the key in use", async () => {
+    renderView(fakeApi({ enrollments: vi.fn(async () => [stale, current]) }), <EnrollmentsView />);
+    await screen.findAllByText("ROTATED-MAC");
+    await userEvent.click(screen.getByRole("button", { name: "Revoked" }));
+    expect(listed("ROTATED-MAC")).toBe(1);
+    await userEvent.click(within(screen.getByRole("grid")).getByText("ROTATED-MAC"));
+    expect(inspector()).toHaveTextContent("Replaced by rotation on");
+    const link = within(inspector()).getByRole("button", { name: await shortFingerprint(current.public_key) });
+    await userEvent.click(link);
+    expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+    expect(listed("ROTATED-MAC")).toBe(2);
+    expect(inspector()).toHaveTextContent("Rotated from");
+    expect(inspector()).toHaveTextContent("Active");
+  });
+
+  it("a key made by rotation says where it came from", async () => {
+    renderView(fakeApi({ enrollments: vi.fn(async () => [stale, current]) }), <EnrollmentsView />);
+    await screen.findAllByText("ROTATED-MAC");
+    await userEvent.click(row("ROTATED-MAC", "Active"));
+    expect(inspector()).toHaveTextContent("Rotated from");
+    const fingerprint = await shortFingerprint(stale.public_key);
+    await userEvent.click(within(inspector()).getByRole("button", { name: fingerprint }));
+    expect(inspector()).toHaveTextContent("Replaced by rotation on");
+  });
+
+  it("a revoke from a stale page shows the key in use", async () => {
+    // The page still lists the first key as active: the Mac rotated after it loaded.
+    const before = enrollment({ device_id: "d-stale", serial: "ROTATED-MAC", public_key: stale.public_key });
+    const api = fakeApi({
+      enrollments: vi.fn().mockResolvedValueOnce([before]).mockResolvedValue([stale, current]),
+      revokeEnrollment: vi.fn(async () => {
+        throw new ApiError(409, "this key was rotated; revoke the key in use instead",
+          { code: "credential_rotated", current_device_id: "d-current" });
+      }),
+    });
+    renderView(api, <EnrollmentsView />);
+    await userEvent.click(await screen.findByText("ROTATED-MAC"));
+    await userEvent.click(within(inspector()).getByRole("button", { name: "Revoke…" }));
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Revoke" }));
+    expect(api.revokeEnrollment).toHaveBeenCalledTimes(1);
+    expect(api.revokeEnrollment).toHaveBeenCalledWith("d-stale");
+    const banner = await screen.findByRole("alert");
+    const fingerprint = await shortFingerprint(current.public_key);
+    await waitFor(() => expect(banner).toHaveTextContent(fingerprint));
+    expect(banner).toHaveTextContent("rotated");
+    expect(screen.queryByText(/^Revoked the key/)).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    // The list now shows what the server has, and the key in use is still active.
+    await waitFor(() => expect(row("ROTATED-MAC", "Rotated")).toBeDefined());
+    expect(row("ROTATED-MAC", "Active")).toBeDefined();
+    // The banner's link goes to the key in use.
+    await userEvent.click(within(banner).getByRole("button", { name: fingerprint }));
+    expect(inspector()).toHaveTextContent("Rotated from");
+  });
+
+  it("the file key note says the agent moves it", async () => {
+    renderView(fakeApi({ enrollments: vi.fn(async () => [current]) }), <EnrollmentsView />);
+    await userEvent.click(await screen.findByText("ROTATED-MAC"));
+    expect(inspector()).toHaveTextContent("This key is in a file, so someone with admin rights on the Mac could copy it");
+    expect(inspector()).toHaveTextContent("The agent moves this key into the Secure Enclave by itself.");
+    expect(inspector()).not.toHaveTextContent(/revoke it/i);
+  });
+
+  it("rotated rows offer no actions", async () => {
+    renderView(fakeApi({ enrollments: vi.fn(async () => [stale, current]) }), <EnrollmentsView />);
+    await screen.findAllByText("ROTATED-MAC");
+    await userEvent.click(row("ROTATED-MAC", "Rotated"));
+    expect(within(inspector()).queryByRole("button", { name: /Revoke|Reject|Approve/ })).toBeNull();
   });
 });
 

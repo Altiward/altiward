@@ -250,3 +250,91 @@ func race(in group: DispatchGroup, timeout: TimeInterval = 0.3, _ body: @escapin
     }.start()
     _ = group.wait(timeout: .now() + timeout)
 }
+
+/// Forwards to a ``FakeServer``, holding each request until the test releases it, so a
+/// test can keep requests in flight. It records what was sent apart from what arrived:
+/// ``FakeServer/requests`` lists a request only once it is released and reaches the server.
+final class HoldingTransport: HTTPTransport, Sendable {
+    struct Sent: Sendable {
+        let path: String
+        let deviceID: String?
+        let timestamp: String?
+    }
+
+    private struct State {
+        var holding: Bool
+        var sent: [Sent] = []
+        var waiting: [CheckedContinuation<Void, Never>] = []
+        var inFlight = 0
+        /// Each arrival's path and how many other requests were in flight as it arrived.
+        var arrivals: [(path: String, othersInFlight: Int)] = []
+    }
+
+    let server: FakeServer
+    private let state: OSAllocatedUnfairLock<State>
+
+    init(server: FakeServer, holding: Bool = true) {
+        self.server = server
+        state = OSAllocatedUnfairLock(initialState: State(holding: holding))
+    }
+
+    var sent: [Sent] { state.withLock { $0.sent } }
+    var arrivals: [(path: String, othersInFlight: Int)] { state.withLock { $0.arrivals } }
+
+    /// Holds requests from now on, or stops holding them and releases every held one.
+    func setHolding(_ holding: Bool) {
+        let released = state.withLock { s -> [CheckedContinuation<Void, Never>] in
+            s.holding = holding
+            guard !holding else { return [] }
+            defer { s.waiting = [] }
+            return s.waiting
+        }
+        for c in released { c.resume() }
+    }
+
+    /// Lets every request held now go on to the server. Later requests are still held.
+    func releaseAll() {
+        let released = state.withLock { s -> [CheckedContinuation<Void, Never>] in
+            defer { s.waiting = [] }
+            return s.waiting
+        }
+        for c in released { c.resume() }
+    }
+
+    /// Waits until at least `count` requests have been sent, or the test's time is up.
+    func waitUntilSent(_ count: Int) async throws {
+        while state.withLock({ $0.sent.count }) < count {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let auth = request.value(forHTTPHeaderField: "Authorization")
+        let sent = Sent(
+            path: request.url?.path ?? "",
+            deviceID: auth.flatMap { $0.hasPrefix("AltiwardDevice ") ? String($0.dropFirst("AltiwardDevice ".count)) : nil },
+            timestamp: request.value(forHTTPHeaderField: "X-Altiward-Timestamp"))
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            let go = state.withLock { s -> Bool in
+                s.sent.append(sent)
+                s.inFlight += 1
+                if s.holding { s.waiting.append(c) }
+                return !s.holding
+            }
+            if go { c.resume() }
+        }
+        state.withLock { s in s.arrivals.append((sent.path, s.inFlight - 1)) }
+        defer { state.withLock { $0.inFlight -= 1 } }
+        return try await server.send(request)
+    }
+}
+
+/// Opens two stores on one file, as the daemon and a command each do.
+func makeSharedStores() throws -> (AgentStore, AgentStore) {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("altiward-tests-\(UUID().uuidString)")
+    return (try AgentStore.open(directory: dir), try AgentStore.open(directory: dir))
+}
+
+/// Set on CI, whose Macs have a Secure Enclave: a test that needs one fails there rather
+/// than skipping.
+let requireSecureEnclave = ProcessInfo.processInfo.environment["ALTIWARD_REQUIRE_SECURE_ENCLAVE"] == "1"

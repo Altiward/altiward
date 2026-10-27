@@ -4,6 +4,7 @@
 //
 //	POST /v1/agent/enroll               enrollment token  register a device key
 //	POST /v1/agent/events               device signature  ingest a batch; per-event verdicts
+//	POST /v1/agent/rotate               device signature  replace the device key with one it proves it holds
 //	GET  /v1/sessions                   viewer            list elevation sessions
 //	GET  /v1/sessions/{id}              viewer            one session and its event timeline
 //	GET  /v1/devices                    viewer            fleet inventory and current admins
@@ -105,6 +106,7 @@ func New(s store.Store, tokens *auth.Tokens, log *slog.Logger, now func() time.T
 	})
 	mux.Handle("POST /v1/agent/enroll", srv.require(auth.RoleAgent, srv.enroll))
 	mux.Handle("POST /v1/agent/events", srv.requireDevice(srv.ingest))
+	mux.HandleFunc("POST /v1/agent/rotate", srv.rotate)
 	mux.Handle("GET /v1/sessions", srv.console(auth.Viewer, srv.listSessions))
 	mux.Handle("GET /v1/sessions/{id}", srv.console(auth.Viewer, srv.getSession))
 	mux.Handle("GET /v1/devices", srv.console(auth.Viewer, srv.listDevices))

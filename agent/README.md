@@ -138,15 +138,35 @@ Every setting is read when the daemon starts. It checks for changes every 15 sec
 when one has changed, logs which and exits for launchd to start it again with them, so a
 profile that arrives after the package, or a later change, applies within seconds.
 
-The agent enrolls with the `EnrollmentToken` on first delivery, then signs every request
+The agent enrols with the `EnrollmentToken` on first delivery, then signs every request
 with its own P-256 key. On a Mac with a Secure Enclave the daemon makes the key there; on
-other Macs, and on Macs that enrolled before agent 0.2.0, the key is in the agent store
+other Macs, and on Macs that enrolled before agent 0.2.0, the key starts in the agent store
 under the root-only data directory. `altiward-agent status` shows the device ID and where
 the key is kept. Only the daemon can use a Secure Enclave key, so on such a Mac
 `altiward-agent heartbeat`, `flush`, `commands` and `simulate-hook` do their local part
 and leave the sending to the daemon. When the server's enrolment limits refuse the Mac
 (HTTP 429), the agent doesn't try to enrol again until `Retry-After` says, an hour if it
 doesn't say, and at most a day; it remembers that until it restarts.
+
+The daemon also replaces the key itself (key rotation), with no admin involved. A file key
+on a Mac with a Secure Enclave moves into it. On a Mac without one, a file key is replaced
+every 30 days, counted from when it was made; a key with no recorded date starts counting
+when the agent first sees it, so an upgrade doesn't rotate every Mac at once. A Secure
+Enclave key is never replaced. The daemon checks after each long poll and at least hourly,
+starting 5 to 65 minutes after it starts, and only once the current key has signed a
+request successfully since then. The server also wants the key to have been active for 24
+hours. The Mac makes the new key, signs a proof with it, and asks the server to swap, in
+a request signed by the old key. Nothing waits for approval, because the old key vouched
+for the new one. Until the server's answer is known the agent keeps both keys, asks again
+at most every 15 seconds, and sends nothing else signed by the old key, so events stay
+queued. A command run beside the daemon (`altiward-agent heartbeat` and the others)
+never rotates, and while a rotation is unresolved it sends nothing and says the daemon is
+rotating the key. `altiward-agent status` shows "key rotation: in progress since
+<date>" while one is. A server that doesn't know rotation (HTTP 404 or 405), or refuses
+it, leaves the Mac's key in place and the agent tries again a day later (after
+`Retry-After` for HTTP 429). If the server says the old key is dead, or this Mac's Secure
+Enclave can't use the replacement it saved, the agent drops both keys and enrols again
+(and waits for approval when approval is on).
 
 Remote commands are fetched by a long poll the server holds for up to 50 seconds, so a
 revoke lands within about a second; also after each heartbeat and when the network
@@ -318,6 +338,36 @@ signing as the first Mac; a key stored by an earlier agent is given this Mac's i
 and stays enrolled. A file key and a Secure Enclave key have separate records, so agent
 0.1 installed over this one finds no key it can't read and enrols again with a file key.
 Where the Mac says its key is kept is its own claim: the server can't check it.
+
+**Rotation makes a copied file key go stale.** A copied file key used to work for as long
+as the original did, with both holders unseen. Now the original is replaced, by the move
+into the Secure Enclave or by the 30-day rotation, and the server revokes a replaced key.
+A copy that is then used is refused. If the Mac and the copy both go on using one lineage
+of keys, the second use shows the server two holders: it can't tell which is the Mac, so
+it revokes the lineage's current key, raises a High `rotated_key_used` alert, and the Mac
+enrols again, waiting for an admin's approval when approval is on. The copy's holder gets
+one visible disruption, and no quiet takeover. That disruption can also be caused on
+purpose, once per lineage, by anyone holding a copy of a key replaced in the last 30 days;
+a copy of an older key only raises the alert. The agent never signs with a key it has
+replaced, and, while the outcome of a rotation is unknown, nothing else signed by the old
+key leaves the Mac, because the server would take that for a second holder. What to do
+about the alert is in the [install guide](../docs/install.md#a-rotated-key-was-used).
+
+**First-enrolment identity has limits.** Rotation proves continuity, not origin: each
+key is authorised by the one before it, which says nothing about who made the first. If
+someone enrolled a serial before the real Mac did, rotation carries their identity
+forward, and so does a copy of a key that rotates first (the copy needn't be on the same
+Mac). Where a Mac says its key is kept is its claim: a file key enrolled with a false
+claim of the Secure Enclave is never rotated, and the console shows it as held in the Secure Enclave.
+A genuine agent never claims that falsely, so this affects only identities someone else
+enrolled. While the genuine Mac is offline, a copy that rotated holds the only working
+key, and the server learns of two holders only when the Mac next connects; if the copy
+is the only user, because the Mac was wiped or never comes back, there is no second
+holder to notice. A server rolled back to before rotation raises no alert for any of
+this while it runs. Closing these gaps takes MDM device-ID binding
+([#134](https://github.com/Altiward/altiward/issues/134)) or Apple attestation. Until then,
+check new enrolments against your device inventory, as the
+[install guide](../docs/install.md#2-deploy-the-agent) says.
 
 **Privileges stays at the edge.** Altiward depends on a project it doesn't control, and
 must keep working when Privileges' timer is stopped or Privileges is removed. So expiry,

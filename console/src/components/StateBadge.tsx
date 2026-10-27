@@ -14,9 +14,12 @@ const glyphs: Record<State, () => JSX.Element> = {
 /** The brand's StateBadge: a word and a glyph, never colour alone. `label` replaces the
  *  word when the badge describes something other than an admin session (an enrollment,
  *  a command) but borrows the same look. A session state explains itself: a hover hint
- *  by default, or with `explain` a help tag that keyboards reach too, for the inspector. */
-export function StateBadge({ state, label, explain }: { state: State; label?: string; explain?: boolean }) {
-  const Glyph = glyphs[state];
+ *  by default, or with `explain` a help tag that keyboards reach too, for the inspector.
+ *  `glyph` replaces the state's glyph, for a word of its own such as "Rotated". */
+export function StateBadge({ state, label, glyph, explain }: {
+  state: State; label?: string; glyph?: () => JSX.Element; explain?: boolean;
+}) {
+  const Glyph = glyph ?? glyphs[state];
   const tip = label ? undefined : stateTips[state];
   const badge = <span className={`badge ${state}`} title={explain ? undefined : tip}><Glyph />{label ?? words[state]}</span>;
   return explain && tip ? <Explain tip={tip} bare>{badge}</Explain> : badge;

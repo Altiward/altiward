@@ -251,8 +251,9 @@ General › Device Management**. The Mac then appears in the console ([step 3](#
 
 Each Mac enrols on first contact: it registers its own key with your server and signs
 subsequent requests with it. The enrolment token is used for enrolment, including when a
-Mac needs a new key. The token is
-readable on every Mac, so anyone with it can enrol a key for a serial number. By default,
+Mac needs a new key because its old one was revoked. (The agent also replaces its own key
+from time to time without the token or an approval: see [Key rotation](#key-rotation).)
+The token is readable on every Mac, so anyone with it can enrol a key for a serial number. By default,
 a new key for a serial that enrolled before waits for approval, including after its earlier
 key was revoked. The current key keeps reporting until you approve the replacement.
 **Approve Macs that enrol again** should stay on ([step 6](#6-settings-worth-reviewing)).
@@ -280,19 +281,50 @@ the Mac enrolled with, and its `state` says what happened:
   ([step 6](#6-settings-worth-reviewing)).
 - `replaced`: a new key took the place of the active one without approval. It happens
   only with approval off and the same hardware UUID.
+- `rotated`: the Mac replaced its own key by rotation, which needs no approval. Expect
+  one per Mac when the agent moves a file key into the Secure Enclave, and one every 30
+  days from a Mac without one. It is Informational.
+- `rotated_key_used`: a key the Mac had already replaced was used again, so two holders
+  share one Mac's identity. It is High, and the server has usually revoked the Mac's
+  current key. See [A rotated key was used](#a-rotated-key-was-used).
 
-Alert on `pending` and `replaced`: they are Medium and High in the SIEM, and each means a
-Mac's key changed. When you didn't expect one, it may be someone using the enrolment token.
-For an unexpected `pending` key, ask the Mac's owner before you approve it. A `replaced`
-key is already active: turn **Approve Macs that enrol again** on and revoke the new key in
-**Enrollments**, and the genuine Mac then enrols again and waits for your approval. When a
-key was active before, the event says whether the new key reported the same hardware UUID
+Alert on `pending`, `replaced` and `rotated_key_used`: they are Medium, High and High in
+the SIEM, and each means a Mac's key changed or may have been copied. When you didn't
+expect one, it may be someone using the enrolment token. For an unexpected `pending` key,
+ask the Mac's owner before you approve it. A `replaced` key is already active: turn
+**Approve Macs that enrol again** on and revoke the new key in **Enrollments**, and the
+genuine Mac then enrols again and waits for your approval. When a key was active before,
+the event says whether the new key reported the same hardware UUID
 (`hardware_uuid_matches`). The [event schema](schema/README.md) lists its fields, and the
 [syslog guide](../integrations/syslog/README.md#starter-rules) has a starter rule.
 
 On a Mac with a Secure Enclave (Apple silicon, or an Intel Mac with a T2 chip) the key is
 made in the Secure Enclave, so it can't be copied to another Mac. Other Macs keep it in a
 file only root can read.
+
+### Key rotation
+
+The agent replaces its own device key, so a copy of a file key goes stale and no file key
+stays in use for ever:
+
+- A file key on a Mac with a Secure Enclave moves into it, within an hour or so of the
+  daemon starting. This includes Macs that enrolled before agent 0.2.0 and Macs whose
+  Secure Enclave failed at enrolment. You no longer revoke a file key to move it; **Enrollments** says the
+  agent does it by itself.
+- A file key on a Mac without a Secure Enclave is replaced every 30 days.
+- A Secure Enclave key is never replaced.
+
+The Mac makes the new key and asks the server to swap it for the old one, proving it holds
+both. The server activates the new key and marks the old one **Rotated** in **Enrollments**
+(the inspector says "Replaced by rotation on" the date, and the new key says "Rotated
+from" the key it replaced). Nothing waits for approval and the enrolment limits don't
+apply. A key must have been active for 24 hours before it is replaced. Revoking a rotated key is refused: revoke
+the key in use, which the console links to.
+
+Rolling out agent 1.0 therefore adds a `rotated` event and a **Rotated** row for each Mac
+whose key moves. A new agent on an older server finds it doesn't support rotation, keeps
+its key, and asks again a day later. If the server doesn't answer a rotation, the Mac
+keeps both keys and holds its events, which queue on the Mac, until it does.
 
 ## 3. Check it works
 
@@ -459,7 +491,9 @@ In the console, under **Settings › General**:
   back with a new key, for example after a reinstall or after its key was revoked, waits
   in **Enrollments** for your approval. Its earlier active key keeps working until you
   approve the new one. Turning this off allows anyone with the enrolment token to
-  replace an enrolled Mac's identity by naming its serial and hardware UUID.
+  replace an enrolled Mac's identity by naming its serial and hardware UUID. A rotation
+  ([Key rotation](#key-rotation)) is not an enrolment and never waits for approval, but
+  the new enrolment that follows a [rotated key's use](#a-rotated-key-was-used) does.
 
   Upgrading to server 0.8.0 enables approval once for every existing tenant, including
   tenants where it was off. Existing credentials and the other settings stay as they are.
@@ -509,7 +543,10 @@ token ([Changing tokens](#changing-tokens)), revoke the keys you don't recognise
 meanwhile raise the limit or set it to `0`.
 
 To retire a Mac, revoke its enrollment in **Enrollments**. It then stops being able to
-report and never raises a "not checking in" alert.
+report and never raises a "not checking in" alert. A key that rotation replaced shows as
+**Rotated**, not **Revoked**, and offers no actions: revoke the Mac's key in use, which
+its inspector links to. A key in a file shows a note that the agent moves it into the
+Secure Enclave by itself; there is nothing to revoke.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/install/enrollments-dark.png">
@@ -667,6 +704,12 @@ docker compose exec -T postgres pg_restore -U altiward -d altiward --clean --if-
 docker compose up -d
 ```
 
+A restored database can be older than some Macs' last rotation: it knows the key such a
+Mac replaced, not the one it holds now. The Mac is refused, enrols again and, with
+approval on, waits in **Enrollments** for you to approve it. After a restore, expect that
+for every Mac whose key rotated since the backup, and check each one's serial and hardware
+UUID against your MDM before approving.
+
 With [an existing Postgres](#an-existing-postgres), back it up the way you back up your
 other databases: these commands are for the bundled one.
 
@@ -733,7 +776,13 @@ changing anything, shows what the release changes, and leaves the new version as
 script again with `--merged`.
 
 Going back to an older server version isn't supported; restore the backup instead. The
-script shows how if the new version doesn't start.
+script shows how if the new version doesn't start. In particular, don't run server 0.9 and
+1.0 together on one database: a 0.9 server doesn't know rotation's two new `agent.enrollment`
+states, and can drop an event or export a `rotated_key_used` alert as an Informational
+"enrolled a new key" record that nothing alerts on. A 0.9 server started on a 1.0
+database still refuses the keys that rotation replaced (they are marked revoked), but it
+raises no alert and revokes nothing when one is used again while it runs, and its
+diagnostics list migration 0006 as unknown.
 
 **Release candidates** (versions such as `<version>-rc.1`) are builds for testing, published on GitHub as
 pre-releases. Install one as above; the release itself upgrades over it. The console
@@ -746,7 +795,9 @@ set `ALTIWARD_VERSION` in `.env`, copy in any changed files from the new bundle'
 
 **Rolling out a new agent:** upgrade the server first, then upload the new package to
 your MDM and deploy it to a pilot group before everyone. The server accepts agents from
-the last two agent minor releases, so Macs can catch up at your pace. Fleet tags Macs
+the last two agent minor releases, so Macs can catch up at your pace. An agent that can
+rotate keys, on a server that can't, keeps its key and tries again a day later, so
+nothing breaks if the order slips, but nothing rotates either. Fleet tags Macs
 whose agent is older than that **Agent outdated**.
 Each agent build's hook has its own checksum: update `PostChangeExecutableChecksum` in your
 Privileges profile to the value in the release's `corp.sap.privileges.plist` before or
@@ -877,6 +928,7 @@ Logs aren't included. If a maintainer asks for them:
 | **Privileges tamper protection** fails on a Mac | `EnableSystemExtension` is off, or SAP's system extension isn't running: the Mac hasn't got SAP's system extension policy and Full Disk Access ([step 2](#2-deploy-the-agent)), or someone stopped it. The check names which |
 | **Settings › SIEM export** shows **Failing** | The SIEM is rejecting events or can't be reached. The row shows the last error; after a fix, **Retry now** ([step 4](#4-connect-your-siem)) |
 | A Mac waits in **Enrollments** | It enrolled again with a new key while approval is on: approve it. |
+| A `rotated_key_used` alert, or a Mac that enrolled again by itself | A key that was replaced was used again: two holders of one Mac's identity ([A rotated key was used](#a-rotated-key-was-used)) |
 | `upgrade.sh` stopped and left `compose.yaml.new` | You changed `compose.yaml` and so did the release: merge, then run it again with `--merged` ([Releases and updates](#releases-and-updates)) |
 | `upgrade.sh` says a file doesn't match `SHA256SUMS` | The download is incomplete or was changed: download the release again |
 | A Mac shows **Not checking in** | It has been off, offline or unable to reach the agent hostname for longer than the limit. Its events wait on the Mac and arrive when it reconnects. If laptops show this when they're away from the office, the agent hostname isn't reachable from the internet ([Two hostnames](#what-youre-installing)). |
@@ -917,6 +969,47 @@ persistence snapshot: (none yet)
 - `device key: Secure Enclave` after the device ID: only the agent's daemon can use that
   key, so `altiward-agent flush`, `heartbeat` and `commands` run by hand say the daemon
   sends instead. It does, within a minute.
+
+### A rotated key was used
+
+An `agent.enrollment` event with state `rotated_key_used` (High) means a key the agent had
+already replaced by [rotation](#key-rotation) was used again, so two copies of one Mac's
+key are in use: the Mac, and a copy. It names the replaced key (`device_id` and
+`key_fingerprint`), the key that replaced it (`rotated_to`) and, when the server revoked
+one, which (`revoked_device_id`).
+
+1. **What it means.** The server can't tell which holder is the genuine Mac, so when a
+   replaced key signs a request and the Mac's current key came from it, the server revokes
+   that current key. Neither holder keeps a working key. It does this only when the
+   replaced key was replaced in the last 30 days. For an older key, or a Mac that has
+   enrolled afresh since, it only raises the alert, at most once a day per key, and the
+   Mac keeps reporting. In **Enrollments** the replaced key shows as **Rotated** and the
+   revoked one as **Revoked**.
+2. **The Mac enrols again by itself.** Its next request is refused, so it makes a new key
+   and enrols, and with **Approve Macs that enrol again** on (the default) it waits in
+   **Enrollments**. Before you approve it, confirm in your MDM that the pending key is from
+   that Mac: **Enrollments** shows its serial and hardware UUID to compare. Reject a key
+   that isn't, and the genuine Mac enrols again. With approval off, the first key that
+   enrols is active at once, which is a reason to leave approval on. The new key starts a
+   lineage of its own: old copies of earlier keys can raise this alert, at most once a day,
+   but can't revoke anything again.
+3. **Find where the copy came from.** A file key is readable by root, so look for it in
+   backups of the Mac (Time Machine, a backup agent), disk images and clones, a Mac set
+   up with Migration Assistant, and anyone with admin rights on it. It is the Mac's earlier
+   file key that leaks: once the key is in the Secure Enclave, there is nothing new to
+   copy. Ask the Mac's owner and whoever runs the backups, and remove or protect the copy.
+4. **A Mac restored from a backup is a genuine cause.** A Mac restored from a backup made
+   before its last rotation signs with the key it had then, which the server replaced
+   since. It raises this alert, and the server revokes the key that replaced it, but the key
+   it enrols with afterwards is genuine. The same happens when an agent is downgraded to
+   0.9 while the server had committed a rotation. When the Mac was restored on purpose
+   and the serial and hardware UUID match, approve it.
+
+Anyone holding a copy of a key replaced in the last 30 days can cause this once per
+lineage, and revoke the Mac's working key, whether or not they have the enrolment token:
+changing the token doesn't stop it. That is the price of not letting a copy take the Mac
+over. Someone with many Macs' backups can do it to each Mac once, at the cost of an alert
+for each, so keep the backups of `/Library/Application Support/Altiward` protected.
 
 ### Rights show as "Without a grant"
 

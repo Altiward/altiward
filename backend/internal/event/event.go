@@ -53,11 +53,15 @@ const (
 )
 
 // States of a Mac's enrolment (agent.enrollment): its first key, a new key waiting for an
-// admin's approval, and a new key that took the place of the previous one without it.
+// admin's approval, a new key that took the place of the previous one without it, a new
+// key made by rotation (the Mac proved it held the old one), and the use of a key that
+// rotation had already replaced.
 const (
-	EnrollmentStateEnrolled = "enrolled"
-	EnrollmentStatePending  = "pending"
-	EnrollmentStateReplaced = "replaced"
+	EnrollmentStateEnrolled       = "enrolled"
+	EnrollmentStatePending        = "pending"
+	EnrollmentStateReplaced       = "replaced"
+	EnrollmentStateRotated        = "rotated"
+	EnrollmentStateRotatedKeyUsed = "rotated_key_used"
 )
 
 // Event is one record from the agent. Field names and nullability follow the JSON schema.
@@ -259,8 +263,14 @@ func (e *Event) Validate(now time.Time) error {
 	case AgentEnrollment:
 		st, _ := e.Detail["state"].(string)
 		id, _ := e.Detail["device_id"].(string)
-		if (st != EnrollmentStateEnrolled && st != EnrollmentStatePending && st != EnrollmentStateReplaced) || id == "" {
-			return fmt.Errorf("%s requires detail.state (enrolled, pending or replaced) and detail.device_id", e.Type)
+		switch st {
+		case EnrollmentStateEnrolled, EnrollmentStatePending, EnrollmentStateReplaced,
+			EnrollmentStateRotated, EnrollmentStateRotatedKeyUsed:
+		default:
+			id = ""
+		}
+		if id == "" {
+			return fmt.Errorf("%s requires detail.state (enrolled, pending, replaced, rotated or rotated_key_used) and detail.device_id", e.Type)
 		}
 	}
 	if e.Detail == nil {

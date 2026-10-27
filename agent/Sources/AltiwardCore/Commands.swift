@@ -115,7 +115,7 @@ public actor CommandLoop {
     public func poll(wait: Int = 0) async -> CommandPollSummary {
         var summary = CommandPollSummary()
         do {
-            let (data, response) = try await authenticator.send(
+            let (data, response, _) = try await authenticator.send(
                 method: "GET", path: wait > 0 ? "v1/agent/commands?wait=\(wait)" : "v1/agent/commands", body: Data(),
                 timeout: wait > 0 ? TimeInterval(wait) + 20 : 30)
             guard response.statusCode == 200 else {
@@ -133,7 +133,7 @@ public actor CommandLoop {
         do {
             for (id, result) in try store.unreportedCommandResults() {
                 let body = try AltiwardJSON.encoder().encode(result)
-                let (data, response) = try await authenticator.send(
+                let (data, response, _) = try await authenticator.send(
                     method: "POST", path: "v1/agent/commands/\(id)/result", body: body)
                 switch response.statusCode {
                 case 200:

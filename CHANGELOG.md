@@ -9,11 +9,51 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Agent 1.0.0 - unreleased
+
+### Upgrade order
+
+Upgrade the server first. An agent that can rotate its key, on a server that can't, keeps
+its key and asks again a day later.
+
+### Breaking changes
+
+None.
+
+### Security
+
+- The agent can replace its device key with a new one (key rotation), which moves a key
+  kept in a file into the Secure Enclave. It sends the new public key with a proof signed
+  by the new key, in a request signed by the old one. Until the server's answer is known,
+  it keeps both keys in `agent.sqlite` and sends nothing else signed by the old key, in
+  the daemon or in a command run beside it, so a lost answer, a restart, sleep or a busy
+  store never makes a Mac look like a second holder of its own key. A command run while
+  the daemon is rotating says so and changes nothing.
+
+### Changes
+
+- The daemon and commands share the server clock offset they learn, so a command run on a
+  Mac whose clock is wrong no longer needs a round trip to correct it.
+- The daemon now rotates the device key. A Mac with a Secure Enclave moves a file key into
+  it, once the key has signed a request successfully since the daemon started. A Mac
+  without one replaces its file key every 30 days, counted from when the key was made (a
+  key with no recorded date starts counting when the agent first sees it). A Secure Enclave
+  key never rotates. The daemon checks between long polls and at least hourly, starting
+  5 to 65 minutes after it starts, and `altiward-agent status` shows a rotation still in
+  progress. A process counts as the daemon only when launchd started it or it has its own
+  data directory, so a `run` typed in a Terminal on a managed Mac is a command.
+
 ## Server 1.0.0 - unreleased
 
 ### Upgrade order
 
-Upgrade the server before the agents.
+Upgrade the server before the agents: an agent 1.0 on an older server keeps its key and
+asks to rotate it again a day later. The server adds three columns and an index to the
+device credentials table on first start. Don't run 0.9 and 1.0 servers on one database: a
+0.9 server doesn't know the two new `agent.enrollment` states. One rolled back to 0.9 still
+refuses the keys rotation replaced, but raises no alert when one is used again, and
+its diagnostics list migration 0006 as unknown. After restoring a backup, Macs whose key
+rotated since it was taken enrol again and wait for approval.
 
 ### Breaking changes
 
@@ -23,10 +63,31 @@ None.
 
 - Revoking a key that an admin approved at the same moment could leave the key active. The
   revoke now always wins.
+- A key replaced by rotation stops working. If it is used again within 30 days of being
+  replaced, two holders share the Mac's identity, so the server also revokes the Mac's
+  current key and the Mac enrols again (waiting for approval when that is on). A copied key
+  can then cause one visible disruption, not take the Mac's place. Someone holding a copy
+  of a key replaced in the last 30 days can cause that disruption once, with or without the
+  enrolment token.
 
 ### Changes
 
-None.
+- A Mac can replace its key with one it proves it holds: `POST /v1/agent/rotate` replaces
+  the key that signs the request with the one in its body, after checking a proof signed
+  by the new key. The new key is active at once, with the Mac's serial and hardware UUID,
+  and the old key is revoked in the same step. A key must have been active for 24 hours
+  first, and a key kept in the Secure Enclave is never replaced. Sending the same request
+  again answers with the key it made.
+- A rotation raises an `agent.enrollment` event with state `rotated`. A key that rotation
+  replaced and that signs a request again raises one with state `rotated_key_used`: a
+  High alert that names the key the server revoked as a result, if any. It is raised at
+  most once a day for each key, unless that use revoked a key. A request signed just before the
+  rotation and arriving within a minute of it raises nothing.
+- Enrollments shows a key that rotation replaced as Rotated, not Revoked, with the date and a
+  link to the key that replaced it, and a key made by rotation says which key it came from.
+  Revoking a rotated key answers 409 `credential_rotated` and names the key in use
+  (`current_device_id`), which is the one to revoke. For a key kept in a file, the console now
+  says the agent moves it into the Secure Enclave by itself, instead of suggesting a revoke.
 
 ## Agent 0.9.0 - 2026-10-27
 

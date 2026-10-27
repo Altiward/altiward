@@ -127,3 +127,32 @@ func FuzzRequestSignature(f *testing.F) {
 		}
 	})
 }
+
+func FuzzRotationProof(f *testing.F) {
+	v := testfixture.Rotation(f)
+	if auth.VerifyRotationProof(v.DeviceID, v.NewPublicKey, v.Proof) != nil {
+		f.Fatal("invalid key-rotation contract vector")
+	}
+	f.Add(v.DeviceID, v.NewPublicKey, v.Proof)
+	f.Add("", []byte{}, []byte{})
+	f.Add(v.DeviceID, []byte("not a key"), []byte("bad DER"))
+	f.Add(v.DeviceID, v.NewPublicKey, testfixture.Signature(f).Signature)
+	f.Fuzz(func(t *testing.T, deviceID string, newPublicKey, proof []byte) {
+		if len(deviceID)+len(newPublicKey)+len(proof) > 16<<10 {
+			t.Skip()
+		}
+		statement := auth.RotationStatement(deviceID, newPublicKey)
+		if statement != auth.RotationStatement(deviceID, newPublicKey) {
+			t.Fatal("statement is not deterministic")
+		}
+		err := auth.VerifyRotationProof(deviceID, newPublicKey, proof)
+		// Only the seed's device and key verify. ECDSA signatures are malleable, so another
+		// proof for the same statement may too; the statement is what the proof binds.
+		if err == nil && (deviceID != v.DeviceID || !bytes.Equal(newPublicKey, v.NewPublicKey)) {
+			t.Fatalf("accepted a proof for another device %q or key", deviceID)
+		}
+		if deviceID == v.DeviceID && bytes.Equal(newPublicKey, v.NewPublicKey) && bytes.Equal(proof, v.Proof) && err != nil {
+			t.Fatal("contract proof rejected")
+		}
+	})
+}

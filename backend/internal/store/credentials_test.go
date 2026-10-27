@@ -691,6 +691,460 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("after a revoke = %+v previous = %+v, %v", res.Credential, res.Previous, err)
 		}
 	})
+
+	// Rotation. Each case enrols at t0 and rotates a day later unless it says otherwise.
+	rotation := t0.Add(24 * time.Hour)
+	// rotateAt asks to rotate from's key to key at now, signed two seconds earlier. The new
+	// key is a file key, so it can rotate again.
+	rotateAt := func(s Store, tenant, from string, key []byte, now time.Time) (RotateResult, error) {
+		id, err := NewDeviceID()
+		if err != nil {
+			return RotateResult{}, err
+		}
+		return s.Rotate(ctx, RotateRequest{
+			TenantID: tenant, FromDeviceID: from, DeviceID: id, PublicKey: key, KeyStorage: KeyStorageSoftware,
+			SignedAt: now.Add(-2 * time.Second), Now: now,
+		})
+	}
+	rotate := func(t *testing.T, s Store, tenant, from string, now time.Time) DeviceCredential {
+		t.Helper()
+		res, err := rotateAt(s, tenant, from, newKey(t), now)
+		if err != nil || res.Retry || res.Contest != nil {
+			t.Fatalf("rotate %s: %+v, %v", from, res, err)
+		}
+		return res.Credential
+	}
+	status := func(t *testing.T, s Store, id string) CredentialStatus {
+		t.Helper()
+		return lookup(t, s, id).Status
+	}
+	count := func(t *testing.T, s Store, tenant, serial string) int {
+		t.Helper()
+		creds, err := s.ListCredentials(ctx, tenant, CredentialFilter{Serial: serial})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(creds)
+	}
+	staleKeyUsed := func(t *testing.T, s Store, id string, signedAt, now time.Time) *ContestResult {
+		t.Helper()
+		c, err := s.StaleKeyUsed(ctx, id, signedAt, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+
+	t.Run("rotate activates the new key and revokes the old", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		enrolled, err := s.Enroll(ctx, DeviceCredential{
+			DeviceID: newUUID(t), TenantID: tenant, Serial: serial, HardwareUUID: "HW-1", PublicKey: newKey(t),
+			KeyStorage: KeyStorageSoftware, Token: "token:1a2b3c4d", CreatedAt: t0,
+		}, EnrollLimits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		old := enrolled.Credential
+		key, id := newKey(t), newUUID(t)
+		signedAt := rotation.Add(-3 * time.Second)
+		res, err := s.Rotate(ctx, RotateRequest{
+			TenantID: tenant, FromDeviceID: old.DeviceID, DeviceID: id, PublicKey: key,
+			KeyStorage: KeyStorageSecureEnclave, SignedAt: signedAt, Now: rotation,
+		})
+		if err != nil || res.Retry || res.Contest != nil {
+			t.Fatalf("rotate = %+v, %v", res, err)
+		}
+		if res.Previous.DeviceID != old.DeviceID || res.Previous.KeyStorage != KeyStorageSoftware {
+			t.Fatalf("previous = %+v", res.Previous)
+		}
+		for name, c := range map[string]DeviceCredential{"result": res.Credential, "stored": lookup(t, s, id)} {
+			if c.DeviceID != id || c.Status != CredentialActive || c.RotatedFrom != old.DeviceID || c.TenantID != tenant ||
+				c.Serial != serial || c.HardwareUUID != "HW-1" || c.Token != "token:1a2b3c4d" || c.KeyStorage != KeyStorageSecureEnclave ||
+				c.KeyFingerprint() != (DeviceCredential{PublicKey: key}).KeyFingerprint() {
+				t.Fatalf("%s successor = %+v", name, c)
+			}
+			if !c.CreatedAt.Equal(rotation) || c.ActivatedAt == nil || !c.ActivatedAt.Equal(rotation) || c.RevokedAt != nil {
+				t.Fatalf("%s successor times = %v %v %v", name, c.CreatedAt, c.ActivatedAt, c.RevokedAt)
+			}
+			if c.RotationSignedAt == nil || !c.RotationSignedAt.Equal(signedAt) {
+				t.Fatalf("%s rotation signed at = %v", name, c.RotationSignedAt)
+			}
+		}
+		prev := lookup(t, s, old.DeviceID)
+		if prev.Status != CredentialRevoked || prev.RevokedAt == nil || !prev.RevokedAt.Equal(rotation) || prev.RotatedTo != id || prev.RotatedFrom != "" {
+			t.Fatalf("old = %+v", prev)
+		}
+		list, err := s.ListCredentials(ctx, tenant, CredentialFilter{Serial: serial})
+		if err != nil || len(list) != 2 || list[0].DeviceID != id || list[0].RotatedFrom != old.DeviceID || list[0].RotatedTo != "" ||
+			list[1].DeviceID != old.DeviceID || list[1].RotatedTo != id {
+			t.Fatalf("list = %+v, %v", list, err)
+		}
+	})
+
+	t.Run("rotate retry returns the successor", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		old := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+		key := newKey(t)
+		first, err := rotateAt(s, tenant, old.DeviceID, key, rotation)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// A retry comes before the rate limit, however soon or late it is.
+		for _, at := range []time.Time{rotation.Add(time.Minute), rotation.Add(30 * 24 * time.Hour)} {
+			again, err := rotateAt(s, tenant, old.DeviceID, key, at)
+			if err != nil || !again.Retry || again.Contest != nil || again.Credential.DeviceID != first.Credential.DeviceID ||
+				again.Credential.Status != CredentialActive || again.Previous.DeviceID != old.DeviceID {
+				t.Fatalf("retry at %v = %+v, %v", at, again, err)
+			}
+		}
+		if n := count(t, s, tenant, serial); n != 2 {
+			t.Fatalf("%d credentials after retries, want 2", n)
+		}
+		// An admin revokes the successor; a retry still answers with it, as it now is.
+		if _, err := s.RevokeCredential(ctx, tenant, first.Credential.DeviceID, rotation.Add(time.Hour), auditFor(t, tenant, AuditRevokeEnrollment)); err != nil {
+			t.Fatal(err)
+		}
+		again, err := rotateAt(s, tenant, old.DeviceID, key, rotation.Add(2*time.Hour))
+		if err != nil || !again.Retry || again.Credential.DeviceID != first.Credential.DeviceID || again.Credential.Status != CredentialRevoked {
+			t.Fatalf("retry after the successor was revoked = %+v, %v", again, err)
+		}
+	})
+
+	t.Run("rotating a stale key to another key is a contest", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		old := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+		next := rotate(t, s, tenant, old.DeviceID, rotation)
+		res, err := rotateAt(s, tenant, old.DeviceID, newKey(t), rotation.Add(time.Minute))
+		if !errors.Is(err, ErrRotatedElsewhere) {
+			t.Fatalf("err = %v, want %v", err, ErrRotatedElsewhere)
+		}
+		if res.Retry || res.Credential.DeviceID != "" || res.Previous.DeviceID != old.DeviceID || res.Contest == nil {
+			t.Fatalf("result = %+v", res)
+		}
+		c := res.Contest
+		if c.Stale.DeviceID != old.DeviceID || c.Stale.RotatedTo != next.DeviceID || c.Revoked == nil ||
+			c.Revoked.DeviceID != next.DeviceID || c.Revoked.Status != CredentialRevoked || !c.Report {
+			t.Fatalf("contest = %+v revoked = %+v", c, c.Revoked)
+		}
+		if got := lookup(t, s, next.DeviceID); got.Status != CredentialRevoked || !got.RevokedAt.Equal(rotation.Add(time.Minute)) {
+			t.Fatalf("successor after the contest = %+v", got)
+		}
+		if n := count(t, s, tenant, serial); n != 2 {
+			t.Fatalf("%d credentials, want 2: the contest stores no key", n)
+		}
+	})
+
+	t.Run("rotating a pending key is refused", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		active := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+		pending := enroll(t, s, tenant, serial, newKey(t), t0.Add(time.Hour)).Credential
+		if pending.Status != CredentialPending {
+			t.Fatalf("second key = %s, want pending", pending.Status)
+		}
+		res, err := rotateAt(s, tenant, pending.DeviceID, newKey(t), rotation.Add(time.Hour))
+		if !errors.Is(err, ErrInvalidState) || res.Previous.DeviceID != pending.DeviceID || res.Previous.Status != CredentialPending {
+			t.Fatalf("rotate a pending key = %+v, %v", res, err)
+		}
+		if n := count(t, s, tenant, serial); n != 2 || status(t, s, active.DeviceID) != CredentialActive || status(t, s, pending.DeviceID) != CredentialPending {
+			t.Fatalf("something changed: %d credentials", n)
+		}
+	})
+
+	t.Run("rotating a revoked key is refused", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		old := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+		if _, err := s.RevokeCredential(ctx, tenant, old.DeviceID, t0.Add(time.Hour), auditFor(t, tenant, AuditRevokeEnrollment)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := rotateAt(s, tenant, old.DeviceID, newKey(t), rotation); !errors.Is(err, ErrRevoked) {
+			t.Fatalf("rotate a revoked key: err = %v, want %v", err, ErrRevoked)
+		}
+		if n := count(t, s, tenant, serial); n != 1 {
+			t.Fatalf("%d credentials, want 1", n)
+		}
+		// An unknown key, or one in another tenant, is not found.
+		if _, err := rotateAt(s, tenant, newUUID(t), newKey(t), rotation); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("rotate an unknown key: err = %v", err)
+		}
+		if _, err := rotateAt(s, tenant, "not-a-uuid", newKey(t), rotation); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("rotate a malformed ID: err = %v", err)
+		}
+		other := enroll(t, s, tenant, serial+"X", newKey(t), t0).Credential
+		if _, err := rotateAt(s, tenant+"-other", other.DeviceID, newKey(t), rotation); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("rotate from another tenant: err = %v", err)
+		}
+	})
+
+	t.Run("rotating to a key in use is refused", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		old := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+		here, elsewhere := newKey(t), newKey(t)
+		enroll(t, s, tenant, serial+"X", here, t0)
+		enroll(t, s, tenant+"-other", serial, elsewhere, t0)
+		for name, key := range map[string][]byte{"this tenant": here, "another tenant": elsewhere} {
+			if _, err := rotateAt(s, tenant, old.DeviceID, key, rotation); !errors.Is(err, ErrKeyInUse) {
+				t.Fatalf("%s: err = %v, want %v", name, err, ErrKeyInUse)
+			}
+		}
+		if status(t, s, old.DeviceID) != CredentialActive || count(t, s, tenant, serial) != 1 {
+			t.Fatal("a refused rotation changed the key")
+		}
+	})
+
+	t.Run("a Secure Enclave key is not rotated", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		res, err := s.Enroll(ctx, DeviceCredential{
+			DeviceID: newUUID(t), TenantID: tenant, Serial: serial, HardwareUUID: "HW", PublicKey: newKey(t),
+			KeyStorage: KeyStorageSecureEnclave, CreatedAt: t0,
+		}, EnrollLimits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := rotateAt(s, tenant, res.Credential.DeviceID, newKey(t), rotation); !errors.Is(err, ErrRotationNotAllowed) {
+			t.Fatalf("err = %v, want %v", err, ErrRotationNotAllowed)
+		}
+		if status(t, s, res.Credential.DeviceID) != CredentialActive || count(t, s, tenant, serial) != 1 {
+			t.Fatal("a refused rotation changed the key")
+		}
+	})
+
+	t.Run("rotating within a day is refused", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		old := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+		res, err := rotateAt(s, tenant, old.DeviceID, newKey(t), t0.Add(23*time.Hour+59*time.Minute))
+		if !errors.Is(err, ErrRotationTooSoon) || res.Previous.ActivatedAt == nil || !res.Previous.ActivatedAt.Equal(t0) {
+			t.Fatalf("at 23h59m = %+v, %v", res, err)
+		}
+		if status(t, s, old.DeviceID) != CredentialActive || count(t, s, tenant, serial) != 1 {
+			t.Fatal("a refused rotation changed the key")
+		}
+		rotate(t, s, tenant, old.DeviceID, t0.Add(24*time.Hour))
+
+		// A key with no activation time counts as activated long ago.
+		other := enroll(t, s, tenant, serial+"X", newKey(t), t0).Credential
+		clearActivatedAt(t, s, other.DeviceID)
+		rotate(t, s, tenant, other.DeviceID, t0.Add(time.Minute))
+	})
+
+	t.Run("revoking a rotated key names the key in use", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		a := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+		b := rotate(t, s, tenant, a.DeviceID, rotation)
+		c := rotate(t, s, tenant, b.DeviceID, rotation.Add(24*time.Hour))
+		auditBefore, err := s.ListAudit(ctx, tenant, AuditFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		before, err := s.ListCredentials(ctx, tenant, CredentialFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range []string{a.DeviceID, b.DeviceID} {
+			if _, err := s.RevokeCredential(ctx, tenant, id, rotation.Add(48*time.Hour), auditFor(t, tenant, AuditRevokeEnrollment)); !errors.Is(err, ErrRotated) {
+				t.Fatalf("revoke a rotated key: err = %v, want %v", err, ErrRotated)
+			}
+			if in, err := s.LineageActive(ctx, id); err != nil || in.DeviceID != c.DeviceID {
+				t.Fatalf("lineage of %s: %+v, %v; want %s", id, in, err, c.DeviceID)
+			}
+		}
+		if in, err := s.LineageActive(ctx, c.DeviceID); err != nil || in.DeviceID != c.DeviceID {
+			t.Fatalf("an active key's lineage: %+v, %v", in, err)
+		}
+		after, err := s.ListCredentials(ctx, tenant, CredentialFilter{})
+		if err != nil || keyStates(after) != keyStates(before) {
+			t.Fatalf("refused revokes changed keys:\n%s\n%s, %v", keyStates(before), keyStates(after), err)
+		}
+		if audit, err := s.ListAudit(ctx, tenant, AuditFilter{}); err != nil || len(audit) != len(auditBefore) {
+			t.Fatalf("refused revokes wrote %d audit entries, %v", len(audit)-len(auditBefore), err)
+		}
+
+		// Once the key in use is revoked, the old ones are just revoked keys.
+		if _, err := s.RevokeCredential(ctx, tenant, c.DeviceID, rotation.Add(49*time.Hour), auditFor(t, tenant, AuditRevokeEnrollment)); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.RevokeCredential(ctx, tenant, a.DeviceID, rotation.Add(50*time.Hour), auditFor(t, tenant, AuditRevokeEnrollment))
+		if err != nil || got.Status != CredentialRevoked || !got.RevokedAt.Equal(rotation) {
+			t.Fatalf("revoke the first key after = %+v, %v", got, err)
+		}
+		if _, err := s.LineageActive(ctx, a.DeviceID); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("a lineage with nothing active: err = %v", err)
+		}
+		if _, err := s.LineageActive(ctx, newUUID(t)); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("an unknown key's lineage: err = %v", err)
+		}
+	})
+
+	t.Run("approving a rotated key is refused", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		a := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+		b := rotate(t, s, tenant, a.DeviceID, rotation)
+		if _, err := s.ApproveCredential(ctx, tenant, a.DeviceID, rotation.Add(time.Hour), auditFor(t, tenant, AuditApproveEnrollment)); !errors.Is(err, ErrInvalidState) {
+			t.Fatalf("err = %v, want %v", err, ErrInvalidState)
+		}
+		if status(t, s, a.DeviceID) != CredentialRevoked || status(t, s, b.DeviceID) != CredentialActive {
+			t.Fatal("a refused approval changed the keys")
+		}
+	})
+
+	t.Run("a stale key's use is a contest once", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		a := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+		b := rotate(t, s, tenant, a.DeviceID, rotation)
+		c := staleKeyUsed(t, s, a.DeviceID, rotation.Add(time.Minute), rotation.Add(2*time.Minute))
+		if c == nil || c.Stale.DeviceID != a.DeviceID || c.Stale.RotatedTo != b.DeviceID || c.Revoked == nil ||
+			c.Revoked.DeviceID != b.DeviceID || !c.Report {
+			t.Fatalf("first use = %+v", c)
+		}
+		if got := lookup(t, s, b.DeviceID); got.Status != CredentialRevoked || !got.RevokedAt.Equal(rotation.Add(2*time.Minute)) {
+			t.Fatalf("successor after the contest = %+v", got)
+		}
+		// The same day, nothing more is revoked or reported.
+		c = staleKeyUsed(t, s, a.DeviceID, rotation.Add(3*time.Hour), rotation.Add(3*time.Hour))
+		if c == nil || c.Revoked != nil || c.Report {
+			t.Fatalf("second use the same day = %+v", c)
+		}
+		// A day on, it is reported again.
+		c = staleKeyUsed(t, s, a.DeviceID, rotation.Add(25*time.Hour), rotation.Add(25*time.Hour))
+		if c == nil || c.Revoked != nil || !c.Report {
+			t.Fatalf("use a day later = %+v", c)
+		}
+		// A revoked key with no successor is not stale, and an unknown one is not found.
+		if c := staleKeyUsed(t, s, b.DeviceID, rotation.Add(26*time.Hour), rotation.Add(26*time.Hour)); c != nil {
+			t.Fatalf("a key with no successor = %+v", c)
+		}
+		if _, err := s.StaleKeyUsed(ctx, newUUID(t), rotation, rotation); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("an unknown key: err = %v", err)
+		}
+	})
+
+	t.Run("an in-flight request is exempt", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		a := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+		b := rotate(t, s, tenant, a.DeviceID, rotation)
+		signed := *lookup(t, s, b.DeviceID).RotationSignedAt
+		for _, at := range []struct{ signed, now time.Time }{
+			{signed, rotation.Add(InFlightGrace)},
+			{signed.Add(-time.Minute), rotation.Add(30 * time.Second)},
+		} {
+			if c := staleKeyUsed(t, s, a.DeviceID, at.signed, at.now); c != nil {
+				t.Fatalf("signed %v, received %v: contest %+v", at.signed, at.now, c)
+			}
+		}
+		if status(t, s, b.DeviceID) != CredentialActive {
+			t.Fatal("an in-flight request revoked the successor")
+		}
+		c := staleKeyUsed(t, s, a.DeviceID, signed, rotation.Add(InFlightGrace+time.Second))
+		if c == nil || c.Revoked == nil || c.Revoked.DeviceID != b.DeviceID || !c.Report {
+			t.Fatalf("received after the grace = %+v", c)
+		}
+		// Signed after the rotation, within the grace, is a contest too.
+		s2, tenant2, serial2 := setup(t)
+		a2 := enroll(t, s2, tenant2, serial2, newKey(t), t0).Credential
+		b2 := rotate(t, s2, tenant2, a2.DeviceID, rotation)
+		signed2 := *lookup(t, s2, b2.DeviceID).RotationSignedAt
+		if c := staleKeyUsed(t, s2, a2.DeviceID, signed2.Add(time.Second), rotation.Add(time.Second)); c == nil || c.Revoked == nil {
+			t.Fatalf("signed after the rotation = %+v", c)
+		}
+	})
+
+	t.Run("a stale key past the contest window only alerts", func(t *testing.T) {
+		for _, tc := range []struct {
+			after   time.Duration
+			revokes bool
+		}{{31 * 24 * time.Hour, false}, {29 * 24 * time.Hour, true}} {
+			s, tenant, serial := setup(t)
+			a := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+			b := rotate(t, s, tenant, a.DeviceID, rotation)
+			at := rotation.Add(tc.after)
+			c := staleKeyUsed(t, s, a.DeviceID, at, at)
+			if c == nil || !c.Report || (c.Revoked != nil) != tc.revokes {
+				t.Fatalf("after %v: contest = %+v", tc.after, c)
+			}
+			if want := map[bool]CredentialStatus{true: CredentialRevoked, false: CredentialActive}[tc.revokes]; status(t, s, b.DeviceID) != want {
+				t.Fatalf("after %v: successor = %s, want %s", tc.after, status(t, s, b.DeviceID), want)
+			}
+		}
+	})
+
+	t.Run("an old backup revokes once per lineage", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		a := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+		rotate(t, s, tenant, a.DeviceID, rotation)
+		if c := staleKeyUsed(t, s, a.DeviceID, rotation.Add(time.Minute), rotation.Add(2*time.Minute)); c == nil || c.Revoked == nil || !c.Report {
+			t.Fatalf("first contest = %+v", c)
+		}
+		// The Mac enrols afresh and an admin approves it: a new lineage.
+		d := enroll(t, s, tenant, serial, newKey(t), rotation.Add(time.Hour)).Credential
+		if _, err := s.ApproveCredential(ctx, tenant, d.DeviceID, rotation.Add(2*time.Hour), auditFor(t, tenant, AuditApproveEnrollment)); err != nil {
+			t.Fatal(err)
+		}
+		c := staleKeyUsed(t, s, a.DeviceID, rotation.Add(3*time.Hour), rotation.Add(3*time.Hour))
+		if c == nil || c.Revoked != nil || c.Report {
+			t.Fatalf("the same day = %+v", c)
+		}
+		c = staleKeyUsed(t, s, a.DeviceID, rotation.Add(27*time.Hour), rotation.Add(27*time.Hour))
+		if c == nil || c.Revoked != nil || !c.Report {
+			t.Fatalf("a new day = %+v", c)
+		}
+		if status(t, s, d.DeviceID) != CredentialActive {
+			t.Fatal("an old backup revoked a new lineage")
+		}
+	})
+
+	t.Run("rotated keys do not count towards keys per Mac", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		limits := EnrollLimits{KeysPerMacPerDay: 2}
+		a, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0, limits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := rotate(t, s, tenant, a.Credential.DeviceID, t0.Add(25*time.Hour))
+		rotate(t, s, tenant, b.DeviceID, t0.Add(49*time.Hour))
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0.Add(49*time.Hour+time.Minute), limits); err != nil {
+			t.Fatalf("a key after two rotations: %v", err)
+		}
+		// Counting the rotated key, this would be the third in the day.
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0.Add(49*time.Hour+2*time.Minute), limits); err != nil {
+			t.Fatalf("a second enrolled key in the day: %v", err)
+		}
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0.Add(49*time.Hour+3*time.Minute), limits); !errors.Is(err, ErrKeysPerMacLimited) {
+			t.Fatalf("a third enrolled key in the day: err = %v, want %v", err, ErrKeysPerMacLimited)
+		}
+	})
+}
+
+// keyStates describes each credential's status and times, to compare before and after.
+func keyStates(cs []DeviceCredential) string {
+	at := func(t *time.Time) string {
+		if t == nil {
+			return "-"
+		}
+		return t.UTC().Format(time.RFC3339Nano)
+	}
+	out := ""
+	for _, c := range cs {
+		out += fmt.Sprintf("%s %s %s %s %s; ", c.DeviceID, c.Status, at(c.ActivatedAt), at(c.RevokedAt), c.RotatedTo)
+	}
+	return out
+}
+
+// clearActivatedAt makes an active key look as if its activation time was never recorded.
+func clearActivatedAt(t *testing.T, s Store, deviceID string) {
+	t.Helper()
+	switch s := s.(type) {
+	case *Memory:
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		c := s.creds[deviceID]
+		c.ActivatedAt = nil
+		s.creds[deviceID] = c
+	case *Postgres:
+		if _, err := s.pool.Exec(context.Background(), `UPDATE device_credentials SET activated_at = NULL WHERE device_id = $1`, deviceID); err != nil {
+			t.Fatal(err)
+		}
+	default:
+		t.Fatalf("clearActivatedAt: unknown store %T", s)
+	}
 }
 
 // TestPostgresRefusesNewMacsWithoutTheTenantLock checks that a new Mac over the limit is
@@ -818,6 +1272,236 @@ func TestPostgresRevokeWinsOverConcurrentApproval(t *testing.T) {
 		if err != nil || len(active) > 1 {
 			t.Fatalf("run %d: %d active keys, %v", i, len(active), err)
 		}
+	}
+}
+
+// openTestPostgres opens the test database, or skips without one.
+func openTestPostgres(t *testing.T) *Postgres {
+	t.Helper()
+	url := os.Getenv("ALTIWARD_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("ALTIWARD_TEST_DATABASE_URL not set")
+	}
+	p, err := OpenPostgres(context.Background(), url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+	return p
+}
+
+// rotateRequest asks to rotate from's key to a new key at now.
+func rotateRequest(t *testing.T, tenant, from string, key []byte, now time.Time) RotateRequest {
+	t.Helper()
+	return RotateRequest{
+		TenantID: tenant, FromDeviceID: from, DeviceID: newUUID(t), PublicKey: key,
+		KeyStorage: KeyStorageSecureEnclave, SignedAt: now.Add(-time.Second), Now: now,
+	}
+}
+
+// enrolFirst enrols a serial's first key, which is active.
+func enrolFirst(t *testing.T, s Store, tenant, serial, hardware string, at time.Time) DeviceCredential {
+	t.Helper()
+	res, err := s.Enroll(context.Background(), DeviceCredential{
+		DeviceID: newUUID(t), TenantID: tenant, Serial: serial, HardwareUUID: hardware, PublicKey: newKey(t), CreatedAt: at,
+	}, EnrollLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res.Credential
+}
+
+// TestPostgresConcurrentRotationsFromOneKey checks that one key rotated to many keys at once
+// rotates once, and that each other attempt is a contest, of which exactly one revokes.
+func TestPostgresConcurrentRotationsFromOneKey(t *testing.T) {
+	p := openTestPostgres(t)
+	ctx := context.Background()
+	t0 := testfixture.Time(t, "2026-10-16T12:00:00Z")
+	tenant, serial := "tenant-"+randomHex(t), "C02ROT"+randomHex(t)
+	old := enrolFirst(t, p, tenant, serial, "HW", t0)
+
+	const attempts = 20
+	reqs := make([]RotateRequest, attempts)
+	for i := range reqs {
+		reqs[i] = rotateRequest(t, tenant, old.DeviceID, newKey(t), t0.Add(24*time.Hour))
+	}
+	results, errs := make([]RotateResult, attempts), make([]error, attempts)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range reqs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			results[i], errs[i] = p.Rotate(ctx, reqs[i])
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	rotated, elsewhere, revoking := 0, 0, 0
+	for i, err := range errs {
+		switch {
+		case err == nil:
+			rotated++
+		case errors.Is(err, ErrRotatedElsewhere):
+			elsewhere++
+			if c := results[i].Contest; c == nil {
+				t.Fatalf("attempt %d: no contest", i)
+			} else if c.Revoked != nil {
+				revoking++
+				if !c.Report {
+					t.Fatalf("attempt %d revoked without a report", i)
+				}
+			} else if c.Report {
+				t.Fatalf("attempt %d reported again the same day", i)
+			}
+		default:
+			t.Fatalf("attempt %d: %v", i, err)
+		}
+	}
+	if rotated != 1 || elsewhere != attempts-1 || revoking != 1 {
+		t.Fatalf("%d rotated, %d rotated elsewhere, %d revoked; want 1, %d, 1", rotated, elsewhere, revoking, attempts-1)
+	}
+	if active, err := p.ListCredentials(ctx, tenant, CredentialFilter{Serial: serial, Status: CredentialActive}); err != nil || len(active) != 0 {
+		t.Fatalf("%d active keys afterwards, %v", len(active), err)
+	}
+}
+
+// TestPostgresRotationRacesRevoke checks that a revoke answered with success leaves nothing
+// active in the key's lineage, however it races a rotation, and that otherwise it names the
+// rotation.
+func TestPostgresRotationRacesRevoke(t *testing.T) {
+	p := openTestPostgres(t)
+	ctx := context.Background()
+	t0 := testfixture.Time(t, "2026-10-16T12:00:00Z")
+	tenant := "tenant-" + randomHex(t)
+	for i := 0; i < 30; i++ {
+		old := enrolFirst(t, p, tenant, "C02RACE"+randomHex(t), "HW", t0)
+		req := rotateRequest(t, tenant, old.DeviceID, newKey(t), t0.Add(24*time.Hour))
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		var rotateErr, revokeErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, rotateErr = p.Rotate(ctx, req)
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			_, revokeErr = p.RevokeCredential(ctx, tenant, old.DeviceID, t0.Add(24*time.Hour), auditFor(t, tenant, AuditRevokeEnrollment))
+		}()
+		close(start)
+		wg.Wait()
+
+		active, lineageErr := p.LineageActive(ctx, old.DeviceID)
+		switch {
+		case revokeErr == nil:
+			if !errors.Is(rotateErr, ErrRevoked) || !errors.Is(lineageErr, ErrNotFound) {
+				t.Fatalf("run %d: revoked, then rotate = %v and the lineage's active key = %+v, %v", i, rotateErr, active, lineageErr)
+			}
+		case errors.Is(revokeErr, ErrRotated):
+			if rotateErr != nil || lineageErr != nil || active.DeviceID != req.DeviceID {
+				t.Fatalf("run %d: rotated, then rotate = %v and the lineage's active key = %+v, %v", i, rotateErr, active, lineageErr)
+			}
+		default:
+			t.Fatalf("run %d: revoke = %v", i, revokeErr)
+		}
+	}
+}
+
+// TestPostgresRotationRacesApproval checks that approving a pending key while the active key
+// rotates leaves the approved key active and nothing else.
+func TestPostgresRotationRacesApproval(t *testing.T) {
+	p := openTestPostgres(t)
+	ctx := context.Background()
+	t0 := testfixture.Time(t, "2026-10-16T12:00:00Z")
+	tenant := "tenant-" + randomHex(t)
+	for i := 0; i < 30; i++ {
+		serial := "C02RACE" + randomHex(t)
+		old := enrolFirst(t, p, tenant, serial, "HW-A", t0)
+		pending, err := p.Enroll(ctx, DeviceCredential{
+			DeviceID: newUUID(t), TenantID: tenant, Serial: serial, HardwareUUID: "HW-B", PublicKey: newKey(t), CreatedAt: t0.Add(time.Hour),
+		}, EnrollLimits{})
+		if err != nil || pending.Credential.Status != CredentialPending {
+			t.Fatalf("run %d: pending = %+v, %v", i, pending.Credential, err)
+		}
+		req := rotateRequest(t, tenant, old.DeviceID, newKey(t), t0.Add(24*time.Hour))
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		var rotateErr, approveErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, rotateErr = p.Rotate(ctx, req)
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			_, approveErr = p.ApproveCredential(ctx, tenant, pending.Credential.DeviceID, t0.Add(24*time.Hour), auditFor(t, tenant, AuditApproveEnrollment))
+		}()
+		close(start)
+		wg.Wait()
+
+		if approveErr != nil {
+			t.Fatalf("run %d: approve = %v", i, approveErr)
+		}
+		if rotateErr != nil && !errors.Is(rotateErr, ErrRevoked) {
+			t.Fatalf("run %d: rotate = %v", i, rotateErr)
+		}
+		active, err := p.ListCredentials(ctx, tenant, CredentialFilter{Serial: serial, Status: CredentialActive})
+		if err != nil || len(active) != 1 || active[0].DeviceID != pending.Credential.DeviceID {
+			t.Fatalf("run %d: active keys = %+v, %v; want only the approved one", i, active, err)
+		}
+	}
+}
+
+// TestPostgresRotationLosesToAConcurrentEnrolmentOfTheSameKey checks that a rotation to a key
+// that an enrolment is adding at the same moment is refused as a key in use, not with the
+// database's unique violation.
+func TestPostgresRotationLosesToAConcurrentEnrolmentOfTheSameKey(t *testing.T) {
+	p := openTestPostgres(t)
+	ctx := context.Background()
+	t0 := testfixture.Time(t, "2026-10-16T12:00:00Z")
+	tenant, serial := "tenant-"+randomHex(t), "C02ROT"+randomHex(t)
+	old := enrolFirst(t, p, tenant, serial, "HW", t0)
+	key := newKey(t)
+
+	// An enrolment of the key, on another Mac, has inserted it and not yet committed.
+	enrolment, err := p.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = enrolment.Rollback(ctx) }()
+	if _, err := enrolment.Exec(ctx, `
+		INSERT INTO device_credentials (device_id, tenant_id, serial, hardware_uuid, public_key, key_digest, status, created_at, activated_at)
+		VALUES ($1, $2, $3, 'HW-OTHER', $4, $5, 'active', $6, $6)`,
+		newUUID(t), tenant, "C02OTHER"+randomHex(t), key, keyDigest(key), t0); err != nil {
+		t.Fatal(err)
+	}
+
+	req := rotateRequest(t, tenant, old.DeviceID, key, t0.Add(24*time.Hour))
+	done := make(chan error, 1)
+	go func() {
+		_, err := p.Rotate(ctx, req)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("the rotation finished before the enrolment committed: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err := enrolment.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, ErrKeyInUse) {
+		t.Fatalf("rotate = %v, want %v", err, ErrKeyInUse)
+	}
+	if c, err := p.Credential(ctx, old.DeviceID); err != nil || c.Status != CredentialActive || c.RotatedTo != "" {
+		t.Fatalf("the old key after a refused rotation = %+v, %v", c, err)
 	}
 }
 

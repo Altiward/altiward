@@ -23,9 +23,10 @@ when a Mac enrols a key. Agents can't send either: the API refuses both types.
 ## Fuzzing
 
 `scripts/test-fuzz.sh` runs native Go fuzz campaigns for event decoding and validation,
-signed-request headers, P-256 public keys and signatures, command results and the actual
-enrolment HTTP handler. Seeds include the shared signing vector, command result, current
-event examples and frozen supported-agent events. Ordinary `go test` also runs these seeds.
+signed-request headers, P-256 public keys, request signatures, rotation proofs, command
+results and the actual enrolment HTTP handler. Seeds include the shared signing and
+rotation vectors, command result, current event examples and frozen supported-agent events.
+Ordinary `go test` also runs these seeds.
 
 Each campaign runs for five seconds with two workers in CI, one target at a time. For a
 longer local run, use `FUZZ_TIME=60s FUZZ_PARALLEL=2 scripts/test-fuzz.sh`. Individual inputs
@@ -56,6 +57,11 @@ sign every request with their device key: `Authorization: AltiwardDevice <device
 `X-Altiward-Signature`, an ECDSA P-256 signature over `ALTIWARD-SIG-V1`, the method, the
 path and query, the timestamp and the body's SHA-256, one per line
 ([signature-vector.json](../docs/schema/signature-vector.json) is a worked example).
+A rotation (`POST /v1/agent/rotate`) also carries a proof that the new key is held: an
+ECDSA P-256 signature by the new key over `ALTIWARD-ROTATE-V1`, the current `device_id` and
+the lowercase hex SHA-256 of the new key's SubjectPublicKeyInfo DER, one per line, with no
+trailing newline
+([rotation-vector.json](../docs/schema/rotation-vector.json) is a worked example).
 Console endpoints take a console token, or the session cookie single sign-on sets.
 Every query is scoped to the caller's tenant.
 
@@ -68,15 +74,16 @@ token in `X-CSRF-Token`; requests with a token don't.
 
 | Method and path | Purpose |
 | --- | --- |
-| `POST /v1/agent/enroll` | Enrollment token. `{"serial", "hardware_uuid", "public_key"}` (base64 P-256 SubjectPublicKeyInfo). Responds `{"device_id", "status"}`: 201 for a new credential, 200 for the same key again. A new key is `pending` when the Mac enrolled before and approval is on, or when its `hardware_uuid` differs from the Mac's active key's, whatever the setting. Over a limit (`ALTIWARD_ENROLL_NEW_MACS_PER_HOUR` or `ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY`) it answers 429 with `Retry-After: 3600` and `code`: `enrollment_rate_limited`; the same key again is never limited. |
+| `POST /v1/agent/enroll` | Enrollment token. `{"serial", "hardware_uuid", "public_key", "key_storage"}` (`public_key` is a base64 P-256 SubjectPublicKeyInfo; `key_storage` is `secure_enclave` or `software`, and an agent before 0.2.0 leaves it out). Responds `{"device_id", "status"}`: 201 for a new credential, 200 for the same key again. A new key is `pending` when the Mac enrolled before and approval is on, or when its `hardware_uuid` differs from the Mac's active key's, whatever the setting. Over a limit (`ALTIWARD_ENROLL_NEW_MACS_PER_HOUR` or `ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY`) it answers 429 with `Retry-After: 3600` and `code`: `enrollment_rate_limited`; the same key again is never limited. |
 | `POST /v1/agent/events` | Device signature. `{"events": [...]}`, up to 500. Responds `{"accepted": [], "duplicate": [], "rejected": [{"event_id", "error", "code"}]}`. Events whose serial is not the signing Mac's are rejected with `code`: `device_mismatch` (no other rejection has a `code`). Auth failures carry `code`: `credential_invalid`, `enrollment_pending` or `clock_skew`. |
+| `POST /v1/agent/rotate` | Device signature, by the key being replaced. `{"public_key", "key_storage", "proof"}`: the new key as in enrolment, and its proof (above). Responds `{"device_id", "status"}`: 201 and `active` for the new key, which takes the old key's tenant, serial and hardware UUID, with no approval; the old key is revoked in the same step. The same body again answers 200 with the same `device_id` and the new key's current `status` (`revoked` if an admin has revoked it since), at any time, and is never rate limited. Refused with 400 and `code` `rotation_invalid` (the body doesn't decode, `public_key` isn't P-256 or is the signing key, or the proof is wrong); 409 `key_in_use` (any credential holds the key, in any tenant); 409 `rotation_not_allowed` (the signing key claims the Secure Enclave); 429 `rotation_rate_limited` with `Retry-After` (the signing key has been active less than 24 hours); 403 `enrollment_pending`; 401 `credential_invalid` (the signing key is revoked, or was rotated to a different key). |
 | `GET /v1/sessions` | Newest first. Query: `user`, `device`, `open=true`, `since`, `until` (RFC 3339, on start time), `limit` (≤ 500). Each session adds `open`, `allowed_seconds`, `actual_seconds` and `overran`. |
 | `GET /v1/sessions/{id}` | `{"session": ..., "events": [...]}`: the timeline, oldest first, with `received_at`. |
 | `GET /v1/devices` | Fleet inventory: versions, last check-in, current `admin_members` and `permanent_admins`, Privileges config. |
 | `GET /v1/overview?days=7\|30\|90` | The console's overview, worked out by `internal/report` from session and device state and each SIEM's queue: admins now by source, alerts, the period's elevations per day (per week over 90 days), median time held against allowed, the top five people and Macs, agent versions and SIEM state. 30 days by default. |
-| `GET /v1/enrollments` | Device credentials, newest first. Query: `status` (`active`, `pending`, `revoked`), `serial`. |
+| `GET /v1/enrollments` | Device credentials, newest first. Query: `status` (`active`, `pending`, `revoked`), `serial`. A key made by rotation has `rotated_from`, the key it replaced; a key that rotation replaced is `revoked` and has `rotated_to`, the key that replaced it. Both are left out when empty. |
 | `POST /v1/enrollments/{device_id}/approve` | Activate a pending re-enrollment; revokes the Mac's previous credential. |
-| `POST /v1/enrollments/{device_id}/revoke` | Revoke a credential. |
+| `POST /v1/enrollments/{device_id}/revoke` | Revoke a credential. A key that rotation replaced, whose lineage still has an active key, is refused with 409 `credential_rotated` and `current_device_id`, the key in use, and nothing changes: revoke that key instead. |
 | `GET /v1/settings`, `PUT /v1/settings` | Tenant settings: `{"reenrollment_requires_approval": true, "new_mac_requires_approval": false, "silent_after_hours": 0, "silent_alerts_off": false}`. Approval defaults to on; an omitted or null flag also means on. Only explicit `false` permits automatic identity replacement. `new_mac_requires_approval` holds every serial's first key for approval too; it is off by default and when omitted. `silent_after_hours` is 1 to 720, or 0 for the default of 72. `silent_alerts_off` stops new `agent.silent` alerts; a Mac already reported still resumes. `PUT` replaces them all. |
 | `GET /v1/exports` | Each configured SIEM: `{"sink", "pending", "failing", "oldest_queued_at", "max_attempts", "last_error", "last_delivered_at"}`. `last_delivered_at` is when it last accepted something for this tenant, or null. |
 | `POST /v1/exports/test`, `POST /v1/exports/{sink}/retry` | Admin. Queue a test event for every SIEM, or make a failing SIEM's waiting items due now. Both are audited. |

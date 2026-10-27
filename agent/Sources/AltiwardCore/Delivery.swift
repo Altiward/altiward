@@ -77,9 +77,7 @@ public struct HTTPEventSink: EventSink {
 
     public func send(_ events: [AltiwardEvent]) async throws -> IngestResponse {
         let body = try AltiwardJSON.encoder().encode(["events": events])
-        // Nil when the send enrols first; the ID is read again afterwards.
-        let signedWith = await authenticator.deviceID
-        let (data, response) = try await authenticator.send(method: "POST", path: "v1/agent/events", body: body)
+        let (data, response, signedWith) = try await authenticator.send(method: "POST", path: "v1/agent/events", body: body)
         let status = response.statusCode
         guard status == 200 else {
             throw DeliveryError.http(status: status, body: String(decoding: data, as: UTF8.self))
@@ -97,9 +95,7 @@ public struct HTTPEventSink: EventSink {
         let rejected = verdicts.rejected.count
         verdicts.rejected.removeAll { $0.code == IngestResponse.Rejection.deviceMismatch && own.contains($0.eventID) }
         guard verdicts.rejected.count < rejected else { return verdicts }
-        var id = signedWith
-        if id == nil { id = await authenticator.deviceID }
-        if let id { try await authenticator.discardCredential(ifDeviceID: id) }
+        try await authenticator.discardCredential(ifDeviceID: signedWith)
         return verdicts
     }
 }

@@ -86,7 +86,10 @@ already enrolled waits for your approval by default, while its current key keeps
 releases. Turning it off lets anyone with the enrolment token replace an enrolled Mac's
 identity by naming its serial and hardware UUID, neither of which is a secret. The shared
 token cannot establish that a serial enrolling for the first time belongs to the caller:
-check new enrolments against your device inventory.
+check new enrolments against your device inventory. The agent replaces its own key from
+time to time, so a key copied from a Mac's backup goes stale: if both the Mac and the copy
+use one, the server revokes the key and raises an alert, and the Mac enrols again
+([a rotated key was used](docs/install.md#a-rotated-key-was-used)).
 See [settings](docs/install.md#6-settings-worth-reviewing) and the agent's
 [design notes](agent/README.md#design-notes).
 
@@ -110,9 +113,11 @@ Known limits:
 - Expiry comes from Privileges. A grant Privileges gives no expiry never counts as past
   its expiry, and `ExpiryEnforcement` defaults to `alert`: rights are removed only if you
   set it to `enforce`.
-- The device key is in the Secure Enclave on Macs that have one. On Intel Macs without a
-  T2 chip, and on Macs that enrolled before agent 0.2.0 until they enroll again, it's a
-  root-only file, which someone with admin rights could copy.
+- The device key is in the Secure Enclave on Macs that have one: the agent moves a file
+  key there by itself. On Intel Macs without a T2 chip it's a root-only file, replaced
+  every 30 days, which someone with admin rights could copy. Rotation proves a key's
+  continuity, not who enrolled first: a serial enrolled before its real Mac keeps that
+  identity ([the agent's design notes](agent/README.md#design-notes)).
 - Identity mapping uses the `UserPrincipalNames` preference; Platform SSO isn't read yet.
 - No settings editor in the console, and no Jamf Pro, Intune, Entra ID or Okta
   integrations beyond single sign-on. Settings come from the `com.altiward.agent` profile.

@@ -111,13 +111,15 @@ ownership checks over concurrent ingestion writes within one tenant.
 | | `last_seen_at` | The Mac's last check-in, by the server's clock (when it received the event, not the event's `timestamp`): before the silence for `silent`, the one that ended it for `resumed` |
 | | `silent_after_seconds` | The tenant's limit when it was raised (`silent` only) |
 | | `silent_since`, `alert_event_id` | The `last_seen_at` and event ID of the `silent` event this ends (`resumed` only) |
-| `agent.enrollment` | `state` | `enrolled` (the Mac's first key, or its first after earlier ones were revoked with approval off), `pending` (a new key for a Mac that already had one, waiting for an admin to approve it) or `replaced` (a new key took the place of the previous one without approval) |
-| | `device_id` | The new key's device ID (a lower-case UUID), which names the credential |
-| | `key_fingerprint` | Lower-case hex SHA-256 of the new key's public key (SPKI DER), 64 characters. The console's **Enrollments** shows its first 16 digits in capitals, in groups of four |
+| `agent.enrollment` | `state` | `enrolled` (the Mac's first key, or its first after earlier ones were revoked with approval off), `pending` (a new key for a Mac that already had one, waiting for an admin to approve it), `replaced` (a new key took the place of the previous one without approval), `rotated` (the Mac replaced its own key by proving it held the old one, so nothing waits for approval) or `rotated_key_used` (a key that rotation had already replaced signed a request: a copy of the old key may exist) |
+| | `device_id` | The new key's device ID (a lower-case UUID), which names the credential; the stale key's for `rotated_key_used` |
+| | `key_fingerprint` | Lower-case hex SHA-256 of the new key's public key (SPKI DER), 64 characters; the stale key's for `rotated_key_used`. The console's **Enrollments** shows its first 16 digits in capitals, in groups of four |
 | | `key_storage` | Where the Mac said the private key is kept: `secure_enclave` or `software`; left out when the Mac didn't say |
-| | `token` | The agent token the Mac enrolled with: `token:` and a short fingerprint of it, never the token |
-| | `previous_device_id`, `previous_key_storage` | The device ID and key storage of the credential that was active before the new key (`pending` and `replaced` only, and left out when none was, such as after it was revoked) |
-| | `hardware_uuid_matches` | Whether the new key's hardware UUID is the previous credential's (sent with `previous_device_id`) |
+| | `token` | The agent token the Mac enrolled with: `token:` and a short fingerprint of it, never the token (`enrolled`, `pending` and `replaced` only: a rotation doesn't use the token) |
+| | `previous_device_id`, `previous_key_storage` | The device ID and key storage of the credential that was active before the new key (`pending`, `replaced` and `rotated` only; always sent for `rotated`, and left out for the others when no credential was active, such as after it was revoked) |
+| | `hardware_uuid_matches` | Whether the new key's hardware UUID is the previous credential's (sent with `previous_device_id`; always `true` for `rotated`) |
+| | `rotated_to` | The device ID of the key that replaced the stale one (`rotated_key_used` only) |
+| | `revoked_device_id` | The device ID of the key this event revoked, when it revoked one (`rotated_key_used` only) |
 
 `elevation.overdue` is sent at most once per session expiry (a renewal re-arms it) and
 leaves the session open. `elevation.expired_enforced` ends it.
@@ -160,6 +162,7 @@ Its `timestamp` is when the backend raised it, and `device` is what the Mac said
 enrolled, with an empty `os_version`. It doesn't count as a check-in, and it doesn't add a
 Mac to the fleet: a Mac the server hasn't heard from yet has no entry until it reports.
 Each key is reported once: the event ID is a name-based UUID of the tenant and `device_id`.
+A `rotated_key_used` event has a random ID, and its `device_id` is the stale key's. For it, `device.agent_version` is the version that sent the stale request.
 
 `activity` is defined but not yet emitted.
 

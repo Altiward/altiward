@@ -32,6 +32,9 @@ type Memory struct {
 	watchers  commandWatchers
 	audit     []AuditEntry // in the order recorded
 
+	// staleUseReported is when a use of each stale key was last reported, by device ID.
+	staleUseReported map[string]time.Time
+
 	consoleSessions map[string]ConsoleSession // by token hash
 	// installation starts when the store does: a memory store is a new server each run.
 	installation Installation
@@ -59,6 +62,8 @@ func NewMemory(exportSinks []string) *Memory {
 		settings:  map[string]TenantSettings{},
 		delivered: map[[2]string]time.Time{},
 		commands:  map[string]command.Command{},
+
+		staleUseReported: map[string]time.Time{},
 
 		consoleSessions: map[string]ConsoleSession{},
 		installation:    Installation{CreatedAt: time.Now().UTC()},
