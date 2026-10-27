@@ -143,9 +143,14 @@ func (p *Postgres) Enroll(ctx context.Context, c DeviceCredential, limits Enroll
 		} else {
 			c.Status, c.ActivatedAt = CredentialActive, ptr(c.CreatedAt)
 			if hasActive {
-				if _, err := tx.Exec(ctx, `UPDATE device_credentials SET status = 'revoked', revoked_at = $2 WHERE device_id = $1`,
-					active.DeviceID, c.CreatedAt); err != nil {
+				// The serial lock is held, so the key read above is still active.
+				tag, err := tx.Exec(ctx, `UPDATE device_credentials SET status = 'revoked', revoked_at = $2 WHERE device_id = $1 AND status = 'active'`,
+					active.DeviceID, c.CreatedAt)
+				if err != nil {
 					return err
+				}
+				if tag.RowsAffected() != 1 {
+					return fmt.Errorf("replace credential %s: no longer active", active.DeviceID)
 				}
 				res.Replaced = active.DeviceID
 			}
@@ -197,9 +202,15 @@ func (p *Postgres) ApproveCredential(ctx context.Context, tenantID, deviceID str
 			WHERE tenant_id = $1 AND serial = $2 AND status = 'active'`, tenantID, c.Serial, now); err != nil {
 			return err
 		}
+		// Only a pending key activates. A row that is no longer pending (revoked in the
+		// meantime) answers as a refused approval, never as an active key.
 		if out, err = scanCredential(tx.QueryRow(ctx, `
-			UPDATE device_credentials SET status = 'active', activated_at = $2 WHERE device_id = $1
+			UPDATE device_credentials SET status = 'active', activated_at = $2
+			WHERE device_id = $1 AND status = 'pending'
 			RETURNING `+credentialColumns, deviceID, now)); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return ErrInvalidState
+			}
 			return err
 		}
 		return p.insertAudit(ctx, tx, a)
@@ -213,7 +224,16 @@ func (p *Postgres) RevokeCredential(ctx context.Context, tenantID, deviceID stri
 	}
 	var out DeviceCredential
 	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
-		var err error
+		c, err := scanCredential(tx.QueryRow(ctx,
+			`SELECT `+credentialColumns+` FROM device_credentials WHERE device_id = $1 AND tenant_id = $2`, deviceID, tenantID))
+		if err != nil {
+			return err
+		}
+		// Take the Mac's lock, as approval and enrolment do, so a revoke can't run between an
+		// approval's check and its update. The statement below then reads the key afresh.
+		if err := lockSerial(ctx, tx, tenantID, c.Serial); err != nil {
+			return err
+		}
 		if out, err = scanCredential(tx.QueryRow(ctx, `
 			UPDATE device_credentials
 			SET status = 'revoked', revoked_at = COALESCE(revoked_at, $3)
