@@ -1861,7 +1861,7 @@ extension DeviceAuthenticatorTests {
             Thread {
                 try? other.transaction {
                     holding.withLock { $0 = 1 }
-                    Thread.sleep(forTimeInterval: 6)
+                    Thread.sleep(forTimeInterval: 9)
                 }
                 holding.withLock { $0 = 2 }
             }.start()
@@ -1917,6 +1917,212 @@ extension DeviceAuthenticatorTests {
         #expect(Set(delivered) == Set(events.map(\.eventID)))
         #expect(server.staleKeyUses == 0)
         #expect(oldKeyRequests(server, oldID, after: start).isEmpty)
+    }
+
+    // MARK: When to rotate
+
+    /// The file record's `madeAt`, as the store holds it: nil when it has none.
+    func storedMadeAt(_ store: AgentStore) throws -> Date? {
+        let json = try #require(try store.value(forKey: "device_credential"))
+        let object = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        return (object["madeAt"] as? Double).map { Date(timeIntervalSinceReferenceDate: $0) }
+    }
+
+    /// Rewrites the file record's `madeAt`: removes it for nil.
+    func setStoredMadeAt(_ store: AgentStore, _ date: Date?) throws {
+        let json = try #require(try store.value(forKey: "device_credential"))
+        var object = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        object["madeAt"] = date?.timeIntervalSinceReferenceDate
+        let data = try JSONSerialization.data(withJSONObject: object)
+        try store.setValue(String(decoding: data, as: UTF8.self), forKey: "device_credential")
+    }
+
+    var thirtyDays: TimeInterval { DeviceAuthenticator.fileKeyLifetime }
+
+    @Test(.timeLimit(.minutes(1))) func theFileKeyLifetimeIsThirtyDays() {
+        #expect(DeviceAuthenticator.fileKeyLifetime == 30 * 86400)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aFileKeyWithTheSecureEnclaveIsDue() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (auth, _) = try await readyToRotate(store, server)
+        #expect(try await auth.rotationDue(now: clock.now) == "move into the Secure Enclave")
+        #expect(await auth.rotate(reason: "move into the Secure Enclave") == .rotated(.secureEnclave))
+        #expect(try await auth.rotationDue(now: clock.now) == nil)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aFileKeyWithoutTheSecureEnclaveIsDueAfterThirtyDays() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (auth, _) = try await readyToRotate(store, server, keys: FakeKeys(secureEnclave: false), age: 86400)
+        let madeAt = try #require(try storedMadeAt(store))
+        #expect(try await auth.rotationDue(now: clock.now) == nil)
+
+        // 29 days 23 hours after the key was made, then 30 days.
+        clock.advance(madeAt.addingTimeInterval(thirtyDays - 3600).timeIntervalSince(clock.now))
+        #expect(try await auth.rotationDue(now: clock.now) == nil)
+        clock.advance(3600)
+        #expect(try await auth.rotationDue(now: clock.now) != nil)
+        #expect(await auth.rotate(reason: "test") == .rotated(.software))
+        let rotated = try #require(try storedMadeAt(store))
+        #expect(rotated == clock.now)
+        #expect(try await auth.rotationDue(now: clock.now) == nil)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aRecordWithoutMadeAtStartsItsClockNow() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (auth, _) = try await readyToRotate(store, server, keys: FakeKeys(secureEnclave: false), age: 90 * 86400)
+        try setStoredMadeAt(store, nil)
+        #expect(try storedMadeAt(store) == nil)
+
+        // Not due, however old the key is: the clock starts now.
+        #expect(try await auth.rotationDue(now: clock.now) == nil)
+        #expect(try storedMadeAt(store) == clock.now)
+        let started = clock.now
+        clock.advance(thirtyDays - 1)
+        #expect(try await auth.rotationDue(now: clock.now) == nil)
+        #expect(try storedMadeAt(store) == started)
+        clock.advance(1)
+        #expect(try await auth.rotationDue(now: clock.now) != nil)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aFutureMadeAtCountsAsNow() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (auth, _) = try await readyToRotate(store, server, keys: FakeKeys(secureEnclave: false))
+        try setStoredMadeAt(store, clock.now.addingTimeInterval(400 * 86400))
+
+        #expect(try await auth.rotationDue(now: clock.now) == nil)
+        #expect(try storedMadeAt(store) == clock.now)
+        clock.advance(thirtyDays - 1)
+        #expect(try await auth.rotationDue(now: clock.now) == nil)
+        clock.advance(1)
+        #expect(try await auth.rotationDue(now: clock.now) != nil)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aSecureEnclaveKeyIsNeverDue() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let auth = authenticator(store, server)
+        #expect(try await postEvents(auth) == 200)
+        #expect(await auth.keyStorage == .secureEnclave)
+        #expect(try await auth.rotationDue(now: clock.now) == nil)
+        #expect(try await auth.rotationDue(now: clock.now.addingTimeInterval(400 * 86400)) == nil)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func threeSecureEnclaveFailuresUseTheThirtyDaySchedule() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (auth, _) = try await readyToRotate(store, server)
+        let madeAt = try #require(try storedMadeAt(store))
+
+        keys.failCreate(true)
+        for _ in 1...2 {
+            #expect(await auth.rotate(reason: "test") != .notDue)
+            #expect(try await auth.rotationDue(now: clock.now) == "move into the Secure Enclave")
+        }
+        #expect(await auth.rotate(reason: "test") != .notDue)
+        #expect(await auth.secureEnclaveFailures == 3)
+
+        // As if the Mac had no Secure Enclave: due thirty days after the key was made.
+        #expect(try await auth.rotationDue(now: clock.now) == nil)
+        clock.advance(madeAt.addingTimeInterval(thirtyDays - 1).timeIntervalSince(clock.now))
+        #expect(try await auth.rotationDue(now: clock.now) == nil)
+        clock.advance(1)
+        #expect(try await auth.rotationDue(now: clock.now) != nil)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aCommandIsNeverDue() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (_, _) = try await readyToRotate(store, server, keys: FakeKeys(secureEnclave: false))
+        let command = authenticator(store, server, keys: FakeKeys(secureEnclave: false), role: .command)
+        #expect(try await postEvents(command) == 200)
+        #expect(await command.lastSignedSuccess != nil)
+        let madeAt = try #require(try storedMadeAt(store))
+        #expect(try await command.rotationDue(now: madeAt.addingTimeInterval(400 * 86400)) == nil)
+        #expect(try storedMadeAt(store) == madeAt)
+
+        // Even where the daemon would move the key into the Secure Enclave.
+        let withEnclave = authenticator(store, server, role: .command)
+        #expect(try await postEvents(withEnclave) == 200)
+        #expect(try await withEnclave.rotationDue(now: clock.now) == nil)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aPendingRotationOrAnotherKeysSuccessIsNotDue() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (auth, _) = try await readyToRotate(store, server)
+        server.dropNextRotateResponse()
+        #expect(await auth.rotate(reason: "test") == .unknown)
+        clock.advance(400 * 86400)
+        #expect(try await auth.rotationDue(now: clock.now) == nil)
+
+        // Before it has signed a request successfully in this run.
+        let fresh = authenticator(store, server, keys: FakeKeys(secureEnclave: false))
+        #expect(await fresh.lastSignedSuccess == nil)
+        #expect(try await fresh.rotationDue(now: clock.now) == nil)
+
+        // Success recorded for a key another process has since replaced.
+        let replaced = try makeStore()
+        let (stale, firstID) = try await readyToRotate(replaced, server)
+        let other = try makeStore()
+        #expect(try await postEvents(authenticator(other, server, keys: FakeKeys(secureEnclave: false))) == 200)
+        try replaced.setValue(other.value(forKey: "device_credential"), forKey: "device_credential")
+        #expect(await stale.lastSignedSuccess?.deviceID == firstID)
+        #expect(await stale.deviceID != firstID)
+        #expect(try await stale.rotationDue(now: clock.now) == nil)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func onlyTheProcessLaunchdStartedIsTheDaemon() {
+        let launchd = ["XPC_SERVICE_NAME": "com.altiward.agent", "PATH": "/usr/bin"]
+        let other = ["XPC_SERVICE_NAME": "com.apple.Terminal", "PATH": "/usr/bin"]
+        let standard = AgentConfiguration.defaultDataDirectory
+        let own = URL(fileURLWithPath: "/tmp/altiward-dev")
+
+        #expect(DeviceAuthenticator.Role.forProcess(environment: launchd, dataDirectory: standard) == .daemon)
+        #expect(DeviceAuthenticator.Role.forProcess(environment: [:], dataDirectory: standard) == .command)
+        #expect(DeviceAuthenticator.Role.forProcess(environment: other, dataDirectory: standard) == .command)
+        #expect(DeviceAuthenticator.Role.forProcess(environment: ["XPC_SERVICE_NAME": "0"], dataDirectory: standard) == .command)
+        #expect(DeviceAuthenticator.Role.forProcess(environment: [:], dataDirectory: own) == .daemon)
+        #expect(DeviceAuthenticator.Role.forProcess(environment: other, dataDirectory: own) == .daemon)
+    }
+
+    /// A call to rotate that waits behind a send finishing the saved rotation doesn't try
+    /// the request again the moment that send gives up.
+    @Test(.timeLimit(.minutes(1))) func aRotateParkedBehindARetryHonoursTheRetryInterval() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let transport = HoldingTransport(server: server, holding: false)
+        let (auth, _) = try await readyToRotate(store, server, transport: transport)
+        server.dropNextRotateResponse()
+        #expect(await auth.rotate(reason: "test") == .unknown)
+        let rotateRequests = transport.sent.filter { $0.path == "/v1/agent/rotate" }.count
+        #expect(rotateRequests == 1)
+
+        // A send finds the saved rotation and retries it; the retry is held, and so is its
+        // answer, which is lost again.
+        clock.advance(15)
+        server.dropNextRotateResponse()
+        transport.setHolding(true)
+        let sent = transport.sent.count
+        let send = Task { try await postEvents(auth) }
+        try await transport.waitUntilSent(sent + 1)
+        #expect(transport.sent.last?.path == "/v1/agent/rotate")
+
+        let rotation = Task { await auth.rotate(reason: "test") }
+        try await Task.sleep(for: .milliseconds(200))  // it waits for the gate
+        transport.setHolding(false)
+        await #expect(throws: DeviceKeyError.rotationOutcomeUnknown) { try await send.value }
+        #expect(await rotation.value == .unknown)
+        #expect(transport.sent.filter { $0.path == "/v1/agent/rotate" }.count == rotateRequests + 1)
+
+        // Once the interval has passed, a call tries again.
+        clock.advance(15)
+        #expect(await auth.rotate(reason: "test") == .rotated(.secureEnclave))
+        #expect(server.staleKeyUses == 0)
     }
 
     /// The real Secure Enclave, as in ``signsWithTheRealSecureEnclave()``.

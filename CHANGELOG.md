@@ -33,6 +33,14 @@ None.
 
 - The daemon and commands share the server clock offset they learn, so a command run on a
   Mac whose clock is wrong no longer needs a round trip to correct it.
+- The daemon now rotates the device key. A Mac with a Secure Enclave moves a file key into
+  it, once the key has signed a request successfully since the daemon started. A Mac
+  without one replaces its file key every 30 days, counted from when the key was made (a
+  key with no recorded date starts counting when the agent first sees it). A Secure Enclave
+  key never rotates. The daemon checks between long polls and at least hourly, starting
+  5 to 65 minutes after it starts, and `altiward-agent status` shows a rotation still in
+  progress. A process counts as the daemon only when launchd started it or it has its own
+  data directory, so a `run` typed in a Terminal on a managed Mac is a command.
 
 ## Server 1.0.0 - unreleased
 

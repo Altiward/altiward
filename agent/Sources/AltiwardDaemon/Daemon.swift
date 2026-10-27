@@ -165,13 +165,25 @@ final class Daemon: Sendable {
         // Long polls back to back, so a console revoke lands within about a second;
         // CommandPollInterval is the pause after an error or with a server that doesn't hold.
         let pollInterval = configuration.commandPollInterval
-        Task { [commands, tracker, delivery] in
+        // Whether this Mac's key is due to rotate: checked between long polls, so a rotation
+        // rarely waits on one, and at least hourly. The first check is 5 to 65 minutes in.
+        let rotation = authenticator.map {
+            KeyRotationSchedule(authenticator: $0, log: { log.notice("\($0, privacy: .public)") })
+        }
+        Task { [rotation] in
+            while true {
+                try? await Task.sleep(for: .seconds(KeyRotationSchedule.checkInterval))
+                await rotation?.checkIfDue()
+            }
+        }
+        Task { [commands, tracker, delivery, rotation] in
             guard let commands else { return }
             while true {
                 let started = Date()
                 let summary = await commands.poll(wait: CommandLoop.longPollWait)
                 // The server answered, so events held back because it couldn't be reached go now.
                 if summary.error == nil { await delivery.serverAnswered() }
+                await rotation?.checkIfDue()
                 // A revoke queues elevation.revoked events; send them straight away.
                 if summary.executed > 0 {
                     Self.checkPersistence(tracker)
@@ -255,6 +267,9 @@ final class Daemon: Sendable {
         print("device id: \(deviceID ?? "(not enrolled)")")
         if deviceID != nil, let storage = await authenticator?.keyStorage {
             print("device key: \(storage == .secureEnclave ? "Secure Enclave" : "file")")
+        }
+        if let since = await authenticator?.rotationPendingSince {
+            print("key rotation: in progress since \(AltiwardJSON.format(since))")
         }
         print("queued events: \(try store.pendingCount())")
         let sessions = try store.openSessions()

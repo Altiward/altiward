@@ -217,6 +217,16 @@ public actor DeviceAuthenticator {
         /// daemon too, so the Mac doesn't end up with a file key. It never rotates, and
         /// while the daemon is rotating it sends, discards and enrols nothing.
         case command
+
+        /// The role of a process: the daemon when launchd started it (it sets
+        /// `XPC_SERVICE_NAME` to the job's label) or when it has a data directory of its own
+        /// (development), where no daemon shares the store; otherwise a command. A
+        /// `sudo altiward-agent run` beside the daemon is a command too, so it never rotates the key
+        /// the daemon is using.
+        public static func forProcess(environment: [String: String], dataDirectory: URL) -> Role {
+            environment["XPC_SERVICE_NAME"] == "com.altiward.agent"
+                || dataDirectory != AgentConfiguration.defaultDataDirectory ? .daemon : .command
+        }
     }
 
     private struct Credential: Codable {
@@ -277,6 +287,11 @@ public actor DeviceAuthenticator {
     static let rotationRetryInterval: TimeInterval = 15
     /// How long a refused rotation, or one the Secure Enclave failed, waits.
     static let rotationDeferral: TimeInterval = 86400
+    /// How long a file key lasts on a Mac that can't move it into the Secure Enclave.
+    public static let fileKeyLifetime: TimeInterval = 30 * 86400
+    /// Failures in a row to make or use a Secure Enclave key, after which the Mac counts as
+    /// having none for ``fileKeyLifetime``.
+    static let secureEnclaveFailureLimit = 3
 
     private let store: AgentStore
     private let serverURL: URL
@@ -476,15 +491,20 @@ public actor DeviceAuthenticator {
                 return
             }
             guard role == .daemon else { throw DeviceKeyError.rotationInProgress(since: since) }
-            if let last = lastRotationAttempt {
-                let elapsed = now().timeIntervalSince(last)
-                if elapsed >= 0, elapsed < Self.rotationRetryInterval { throw DeviceKeyError.rotationOutcomeUnknown }
-            }
+            if rotationAttemptedRecently() { throw DeviceKeyError.rotationOutcomeUnknown }
             await acquireExclusive()
             let outcome = await finishPendingRotation()
             releaseExclusive()
             if outcome == .unknown { throw DeviceKeyError.rotationOutcomeUnknown }
         }
+    }
+
+    /// Whether the rotate request was tried less than ``rotationRetryInterval`` ago, and its
+    /// outcome is still unknown.
+    private func rotationAttemptedRecently() -> Bool {
+        guard let last = lastRotationAttempt else { return false }
+        let elapsed = now().timeIntervalSince(last)
+        return elapsed >= 0 && elapsed < Self.rotationRetryInterval
     }
 
     private func leave() {
@@ -532,17 +552,20 @@ public actor DeviceAuthenticator {
         if (try? pendingSince()) != nil {
             await acquireExclusive()
             defer { releaseExclusive() }
+            // Parked behind a holder that has just tried the request and heard nothing: the
+            // retry interval applies to this call too.
+            if rotationAttemptedRecently() { return .unknown }
             return await finishPendingRotation()
         }
-        guard let current = try? load(), current.storage == .software,
-            let fromDeviceID = current.credential.deviceID, lastSignedSuccess?.deviceID == fromDeviceID,
-            let serial = current.credential.serial, let hardwareUUID = current.credential.hardwareUUID
-        else { return .notDue }
+        guard let candidate = try? rotationCandidate() else { return .notDue }
+        let (current, fromDeviceID, serial, hardwareUUID) = (
+            candidate.current, candidate.deviceID, candidate.serial, candidate.hardwareUUID
+        )
 
         // Made before the gate closes and outside any transaction: the Secure Enclave can
         // take seconds while someone signs in. The proof is signed with the new key itself,
         // never through withKey, which would drop the current credential on a failure.
-        let storage: KeyStorage = keys.secureEnclaveAvailable && secureEnclaveFailures < 3 ? .secureEnclave : .software
+        let storage: KeyStorage = movesIntoSecureEnclave ? .secureEnclave : .software
         let key: Data
         let proven: Proven
         do {
@@ -589,6 +612,57 @@ public actor DeviceAuthenticator {
             log("rotating this Mac's key (\(reason))")
             return await requestRotation(pending, proven)
         }
+    }
+
+    /// A file key this process may rotate: the daemon's, enrolled, bound to this Mac, and
+    /// the one that has signed a request successfully in this run.
+    private struct RotationCandidate {
+        var current: Stored
+        var deviceID: String
+        var serial: String
+        var hardwareUUID: String
+    }
+
+    private func rotationCandidate() throws -> RotationCandidate? {
+        guard role == .daemon, let current = try load(), current.storage == .software,
+            let deviceID = current.credential.deviceID, lastSignedSuccess?.deviceID == deviceID,
+            let serial = current.credential.serial, let hardwareUUID = current.credential.hardwareUUID
+        else { return nil }
+        return RotationCandidate(current: current, deviceID: deviceID, serial: serial, hardwareUUID: hardwareUUID)
+    }
+
+    /// Whether a file key goes into the Secure Enclave: the Mac has one, and making or using
+    /// a key there hasn't failed ``secureEnclaveFailureLimit`` times in a row.
+    private var movesIntoSecureEnclave: Bool {
+        keys.secureEnclaveAvailable && secureEnclaveFailures < Self.secureEnclaveFailureLimit
+    }
+
+    /// Why this Mac's key should be replaced at `now`, or nil when it shouldn't. The daemon
+    /// asks, then calls ``rotate(reason:)``.
+    ///
+    /// Due when a file key can go into the Secure Enclave, or when it is
+    /// ``fileKeyLifetime`` old. Never for a Secure Enclave key, for a process other than the
+    /// daemon, while a rotation is pending, or before the key has signed a request
+    /// successfully in this run: the same conditions under which `rotate` does nothing. A
+    /// record without a creation time, or with one in the future, starts its clock now, so an
+    /// upgrade doesn't rotate every Mac at once.
+    public func rotationDue(now: Date) throws -> String? {
+        guard try pendingSince() == nil, let candidate = try rotationCandidate() else { return nil }
+        if movesIntoSecureEnclave { return "move into the Secure Enclave" }
+        let key = candidate.current.credential
+        guard let madeAt = key.madeAt, madeAt <= now else {
+            try store.transaction {
+                // Unless another process has replaced the key, or set its time, meanwhile.
+                if var latest = try record(.software), latest.privateKey == key.privateKey,
+                    latest.madeAt == key.madeAt
+                {
+                    latest.madeAt = now
+                    try save(Stored(credential: latest, storage: .software))
+                }
+            }
+            return nil
+        }
+        return now.timeIntervalSince(madeAt) >= Self.fileKeyLifetime ? "the file key is 30 days old" : nil
     }
 
     /// Finishes the saved rotation, holding the gate: the checks that it is still this
