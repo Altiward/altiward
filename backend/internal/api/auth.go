@@ -151,12 +151,13 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "single sign-on isn't set up")
 		return
 	}
-	// The account picker is for someone who asked for it, or who has just signed out: the
-	// marker that sign-out left is used up by this attempt, however it ends.
+	// The account picker is for someone who asked for it, or who has just signed out. The
+	// marker that sign-out left is used up once the browser is sent to the identity
+	// provider, however that sign-in ends, but it stays if the provider can't be reached.
 	selectAccount := r.URL.Query().Get("select_account") == "1"
-	if _, err := r.Cookie(s.cookieName("altiward_signed_out")); err == nil {
+	_, signedOut := r.Cookie(s.cookieName("altiward_signed_out"))
+	if signedOut == nil {
 		selectAccount = true
-		s.setCookie(w, "altiward_signed_out", "", -1)
 	}
 	st := loginState{State: rand.Text(), Nonce: rand.Text(), Verifier: oauth2.GenerateVerifier(), Next: safeNext(r.URL.Query().Get("next"))}
 	to, err := s.sso.AuthCodeURL(r.Context(), st.State, st.Nonce, st.Verifier, selectAccount)
@@ -164,6 +165,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("single sign-on unavailable", "err", err)
 		signInFailed(w, r, "unavailable")
 		return
+	}
+	if signedOut == nil {
+		s.setCookie(w, "altiward_signed_out", "", -1)
 	}
 	b, _ := json.Marshal(st)
 	s.setCookie(w, "altiward_login", base64.RawURLEncoding.EncodeToString(b), int(loginLifetime.Seconds()))
