@@ -760,9 +760,8 @@ internet access, download the release into a directory of its own as in
 ./upgrade.sh ~/altiward-<version>
 ```
 
-The script from release 1.0.0 or earlier can't download, so upgrade from one of those with
-a directory. The script updates itself as it upgrades, so the next upgrade can use the
-version.
+The script from release 1.0.0 can't download, so upgrade from 1.0.0 with a directory. The
+script updates itself as it upgrades, so the next upgrade can use the version.
 
 Either way, it checks the files and their signature ([Checking a release](#checking-a-release)),
 shows the notes' upgrade order, breaking changes and security fixes, and asks before it

@@ -14,7 +14,7 @@ Every section has the four headings below, with "None." under any that don't app
 ### Upgrade order
 
 Upgrade to this release from a directory of its files, as before: the `upgrade.sh` of
-1.0.0 and earlier can't download a release. From this release on, it can.
+1.0.0 can't download a release. From this release on, it can.
 
 ### Breaking changes
 
