@@ -1,8 +1,9 @@
 // altiward-api serves agent ingestion and the console read API, and, with
 // ALTIWARD_CONSOLE_DIR set, the console itself. It runs the SIEM export workers and the
-// monitor that notices Macs that stop checking in, and, with a retention period set, removes
-// old audit entries. Configuration: ALTIWARD_* environment
-// variables (see backend/internal/config and backend/README.md).
+// monitor that notices Macs that stop checking in, keeps a copy of the Macs Intune manages
+// when connected to it, and, with a retention period set, removes old audit entries.
+// Configuration: ALTIWARD_* environment variables (see backend/internal/config and
+// backend/README.md).
 //
 //	altiward-api            run the server
 //	altiward-api health     exit 0 if the server on ALTIWARD_LISTEN_ADDR answers /healthz
@@ -33,10 +34,13 @@ import (
 	"github.com/Altiward/altiward/backend/internal/config"
 	"github.com/Altiward/altiward/backend/internal/diagnose"
 	"github.com/Altiward/altiward/backend/internal/export"
+	"github.com/Altiward/altiward/backend/internal/intune"
+	"github.com/Altiward/altiward/backend/internal/mdm"
 	"github.com/Altiward/altiward/backend/internal/monitor"
 	"github.com/Altiward/altiward/backend/internal/retention"
 	"github.com/Altiward/altiward/backend/internal/sso"
 	"github.com/Altiward/altiward/backend/internal/store"
+	"github.com/Altiward/altiward/integrations/entra"
 	"github.com/Altiward/altiward/integrations/sentinel"
 	"github.com/Altiward/altiward/integrations/splunk"
 	"github.com/Altiward/altiward/integrations/syslog"
@@ -193,6 +197,52 @@ func parseSince(s string) (time.Time, error) {
 	return t.UTC(), nil
 }
 
+// What to do when IMDS or a container app's identity endpoint refuses the Intune connection
+// a token (HTTP 400): the identity isn't there, or isn't the one configured.
+const (
+	intuneGrant = "Microsoft Graph's DeviceManagementManagedDevices.Read.All with setup.sh from deploy/intune " +
+		"(integrations/intune in the server bundle) or the grant template (deploy/azure/intune-read.bicep), " +
+		"and for a user-assigned identity set ALTIWARD_INTUNE_CLIENT_ID to its client ID"
+	intuneIMDSHint     = "give the VM a managed identity with az vm identity assign, grant it " + intuneGrant
+	intuneEndpointHint = "grant the container app's managed identity " + intuneGrant
+)
+
+// connectIntune starts the sync of Intune's Macs, and returns the checker the API asks.
+func connectIntune(ctx context.Context, i *config.Intune, st store.Store, httpClient *http.Client, log *slog.Logger) (*mdm.Checker, error) {
+	var tokens entra.TokenSource
+	if i.Auth == config.AuthManagedIdentity {
+		// Its own client: neither IMDS nor a container app's identity endpoint may go through a proxy.
+		tokens = &entra.ManagedIdentity{
+			ClientID: i.ClientID, Endpoint: i.IdentityEndpoint, Header: i.IdentityHeader,
+			Resource: "https://graph.microsoft.com/", IMDSHint: intuneIMDSHint, EndpointHint: intuneEndpointHint,
+			HTTP: entra.NoProxyClient(),
+		}
+	} else {
+		cc := &entra.ClientCredentials{
+			TenantID: i.TenantID, ClientID: i.ClientID, ClientSecret: i.ClientSecret,
+			Scope: "https://graph.microsoft.com/.default", HTTP: httpClient,
+		}
+		if i.Auth == config.AuthCertificate {
+			var err error
+			if cc.Certificate, err = entra.LoadCertificate(i.CertificateFile); err != nil {
+				return nil, fmt.Errorf("ALTIWARD_INTUNE_CERTIFICATE_FILE: %w", err)
+			}
+			if left := time.Until(cc.Certificate.Leaf.NotAfter); left < 30*24*time.Hour {
+				log.Warn("the Intune certificate expires soon: upload a new one to the app and replace the file",
+					"expires", cc.Certificate.Leaf.NotAfter)
+			}
+		}
+		tokens = cc
+	}
+	graph := &intune.Client{Tokens: tokens, HTTP: httpClient}
+	sync := &mdm.Sync{Store: st, Source: graph, TenantID: i.Tenant, Log: log, Now: time.Now}
+	go sync.Run(ctx, mdm.Interval)
+	log.Info("Intune connection", "auth", i.Auth, "tenant", i.Tenant)
+	return &mdm.Checker{
+		Store: st, Source: graph, TenantID: i.Tenant, Log: log, Now: time.Now, LookupTimeout: 10 * time.Second,
+	}, nil
+}
+
 func run(log *slog.Logger) error {
 	cfg, err := config.FromEnv()
 	if err != nil {
@@ -219,7 +269,7 @@ func run(log *slog.Logger) error {
 	}
 	defer st.Close()
 
-	// Shared by the SIEMs and the identity provider.
+	// Shared by the SIEMs, the identity provider and Intune.
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 	trusted, err := cfg.TrustedRoots()
 	if err != nil {
@@ -290,6 +340,20 @@ func run(log *slog.Logger) error {
 	// Azure Container Apps names the app, which the console's upgrade notice needs.
 	if name := os.Getenv("CONTAINER_APP_NAME"); name != "" {
 		opts = append(opts, api.WithAzureContainerApp(name))
+	}
+	if i := cfg.Intune; i != nil {
+		checker, err := connectIntune(ctx, i, st, httpClient, log)
+		if err != nil {
+			return err
+		}
+		opts = append(opts, api.WithMDM(checker))
+	} else {
+		// Turning Intune off deletes the copy it kept.
+		for _, tenant := range cfg.Tenants() {
+			if err := st.ClearMDM(ctx, tenant, store.MDMIntune); err != nil {
+				return fmt.Errorf("delete the copy of Intune's Macs: %w", err)
+			}
+		}
 	}
 	if o := cfg.OIDC; o != nil {
 		tokens.BreakGlass()

@@ -73,7 +73,7 @@ You need:
 - **From [GitHub Releases](https://github.com/Altiward/altiward/releases):** a server
   release and an agent release. A server
   release is the bundle (`altiward-server-<version>.tar.gz`, holding the deployment files
-  in `deploy/compose/`, this guide, the SIEM guides and Sentinel's setup script in
+  in `deploy/compose/`, this guide, the SIEM guides and the Sentinel and Intune setup scripts in
   `integrations/`, and the agent's example Mac profiles in `profiles/`), the server image
   as a file for your platform (`altiward-api-<version>-linux-amd64.tar.gz` or `…-arm64`),
   `RELEASE_NOTES.md`, `SHA256SUMS` and its signature, `SHA256SUMS.sigstore.json`. An
@@ -576,6 +576,169 @@ SIEM. To remove old entries, set `ALTIWARD_AUDIT_RETENTION_DAYS` in `.env` (at l
 and run `docker compose up -d`. Altiward then removes older entries once a day, but never
 one your SIEM hasn't received yet.
 
+## 7. Connect Intune (optional)
+
+If your Macs are managed by Microsoft Intune, Altiward can read the list of them. It is
+read-only, and the server connects out to Microsoft Graph, so nothing needs to reach in.
+
+**What it reads.** The macOS devices Intune manages: each one's serial number, name,
+primary user, last check-in, and Intune and Entra ID device IDs. It asks Graph for the
+macOS devices and those fields only, every 15 minutes, and keeps the last good copy if a
+sync fails. It never changes anything in Intune, and sends none of it to your SIEM.
+Turning Intune off deletes the copy when the server next starts.
+
+**Who can see it.** Everyone who can sign in to the console, viewers included, sees each
+Mac's serial number, name, primary user and last check-in, including Macs that don't run
+Altiward. The two device IDs aren't shown to anyone. The Graph permission that allows this,
+`DeviceManagementManagedDevices.Read.All`, would let a holder of the credential read every
+device Intune manages, on every platform, so look after it as you would a secret
+([identity hygiene](#identity-hygiene), below). [What is stored](data-handling.md) has the
+full list.
+
+The server needs a way to sign in to Graph with that permission. Granting it takes someone
+who is a Privileged Role Administrator or a Global Administrator, and you choose how it
+signs in.
+
+### The three ways
+
+**A managed identity on Azure, with no secret.** Use this if the server runs on an Azure VM
+or as the Deploy to Azure container app. Give the identity the permission in one of two
+ways:
+
+- **The button**, which grants it to the identity whose object ID you enter, in a resource
+  group you choose. For the Deploy to Azure server, the object ID is
+  `az identity show --name <appName>-identity --resource-group <group> --query principalId -o tsv`.
+  For a VM's own identity, it is the *Object (principal) ID* on the VM's *Identity* page.
+
+  [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v1.0.0%2Fdeploy%2Fazure%2Fintune-read.json)
+  ([what it creates](../deploy/azure/intune-read.bicep): one permission grant, and nothing
+  else). If the portal won't deploy it, `az deployment group create --resource-group <group>
+  --template-uri <the template's URL> --parameters principalId=<object ID>` does the same.
+- **The script**, `integrations/intune/setup.sh` in the server bundle, in
+  [Azure Cloud Shell](https://shell.azure.com) (Bash) or anywhere the Azure CLI is signed
+  in. Upload it, then run one of these. It asks before it changes anything, and is safe to
+  run again:
+
+  ```sh
+  bash setup.sh --vm <resource group>/<vm name>     # gives the VM its own identity, and the permission
+  bash setup.sh --identity <client ID>              # a user-assigned identity: identityClientId, for the Deploy to Azure server
+  ```
+
+  It prints the lines for `.env`. For `--identity` that is `ALTIWARD_INTUNE_AUTH=managed-identity`
+  and `ALTIWARD_INTUNE_CLIENT_ID=<client ID>`; for `--vm`, the first line alone.
+
+**An app registration, with a secret.** Use this anywhere else, such as the Compose bundle
+on your own server. Run the script with `--app`; it makes the registration, grants and
+consents to the permission, adds a secret that lasts a year, and prints the four lines
+for `.env` once:
+
+```sh
+bash setup.sh --app "Altiward Intune"
+```
+
+**An app registration by hand.** In the [Microsoft Entra admin
+center](https://entra.microsoft.com):
+
+1. **Entra ID › App registrations › New registration.** Name it `Altiward Intune`, choose
+   **Accounts in this organizational directory only**, leave the redirect URI empty, and
+   select **Register**.
+2. On the app's **API permissions** page, select **Add a permission › Microsoft Graph ›
+   Application permissions**, search for `DeviceManagementManagedDevices.Read.All`, tick it
+   and select **Add permissions**. Then select **Grant admin consent for** your
+   organisation and confirm.
+3. On **Certificates & secrets**, select **New client secret**, choose a lifetime of 12
+   months or less, and copy the **Value** (not the Secret ID) now: it is shown once.
+4. On **Overview**, copy the **Application (client) ID** and the **Directory (tenant) ID**.
+
+**You should see** the permission listed on the **API permissions** page with the status
+**Granted for** your organisation. Entra also adds `User.Read` to a new registration;
+Altiward doesn't need it, so you can remove it.
+
+### The settings
+
+Add these lines to `.env` in the deployment directory and run `docker compose up -d`. On
+Azure Container Apps, set each on the app instead
+([Changing settings](../deploy/azure/README.md#changing-settings)).
+
+| Sign-in | Lines |
+| --- | --- |
+| Managed identity | `ALTIWARD_INTUNE_AUTH=managed-identity`, and `ALTIWARD_INTUNE_CLIENT_ID=<client ID>` only for a user-assigned identity |
+| Secret | `ALTIWARD_INTUNE_AUTH=secret`, `ALTIWARD_INTUNE_TENANT_ID`, `ALTIWARD_INTUNE_CLIENT_ID`, `ALTIWARD_INTUNE_CLIENT_SECRET` |
+| Certificate | `ALTIWARD_INTUNE_AUTH=certificate`, `ALTIWARD_INTUNE_TENANT_ID`, `ALTIWARD_INTUNE_CLIENT_ID` and `ALTIWARD_INTUNE_CERTIFICATE_FILE=/etc/altiward/certs/intune.pem`: add the certificate to the app instead of a secret, and set up the file as for [Sentinel](../integrations/sentinel/README.md) |
+
+Without `ALTIWARD_INTUNE_AUTH`, Intune is off, and the server refuses to start with any
+other `ALTIWARD_INTUNE_*` line set. It needs a server whose tokens name one organisation.
+The server needs outbound HTTPS to `login.microsoftonline.com` and `graph.microsoft.com`;
+with a managed identity on a VM, its container must reach `169.254.169.254` instead of
+`login.microsoftonline.com`.
+
+A secret expires on its date. Before then, add a new one on the app's **Certificates &
+secrets** page (or run `az ad app credential reset --id <client ID> --append --years 1`),
+put it in `.env`, run `docker compose up -d`, and delete the old one once the sync works.
+A new permission can take a few minutes to apply, and a managed identity's token is cached
+by Azure, so if a sync fails with `403` straight after granting, wait and look again.
+
+### Identity hygiene
+
+- **Give the server an identity of its own.** A VM's system-assigned identity belongs to
+  the whole VM, so anything running on it can use the permission. Prefer a user-assigned
+  identity that only Altiward uses, which the Deploy to Azure server already has, and
+  assign it to the VM with `az vm identity assign --identities`.
+- **Keep other containers away from the metadata service.** On a VM, any container that
+  reaches `169.254.169.254` can ask for the identity's token. If the VM runs anything
+  besides Altiward, block that address for the other containers in the firewall rules
+  Docker applies, and allow it for Altiward's network only. For example, with iptables:
+  `sudo iptables -I DOCKER-USER -d 169.254.169.254 -j DROP`, then
+  `sudo iptables -I DOCKER-USER -s <Altiward's network subnet> -d 169.254.169.254 -j ACCEPT`
+  (`docker network inspect` shows the subnet). Make the rules survive a reboot as you do
+  your others.
+- **Take the permission away when you stop.** Remove the app, or the identity's
+  **Microsoft Graph** permission under **Entra ID › Enterprise applications**, then unset
+  `ALTIWARD_INTUNE_AUTH`.
+
+### Check it
+
+After the restart, give the first sync a minute, then check the connection and the sync:
+
+```sh
+docker compose exec altiward /usr/local/bin/altiward-api diagnose |
+  jq '.sinks[] | select(.sink | startswith("intune")), .database.stats.mdm, .problems'
+```
+
+**You should see** the connection reachable, and the sync's last success a few minutes
+ago, with the number of Macs Intune manages. `problems` is empty:
+
+```json
+{
+  "sink": "intune",
+  "endpoint": "https://graph.microsoft.com",
+  "auth": "managed-identity",
+  "reachable": true
+}
+{
+  "sink": "intune-identity",
+  "endpoint": "http://169.254.169.254",
+  "reachable": true
+}
+[
+  {
+    "tenant_id": "yourcompany",
+    "source": "intune",
+    "last_success_at": "2026-11-02T09:45:02Z",
+    "last_error_at": null,
+    "silence_held_at": null,
+    "devices": 212,
+    "silence_held": 0
+  }
+]
+[]
+```
+
+A failing sync adds a line to `problems` that says why, such as `The Intune sync is failing: intune: HTTP 403 Forbidden: …`.
+The same status, and the copy of the Macs, are at `GET /v1/mdm` and `GET /v1/mdm/devices`
+with a console token or a signed-in session. See [Troubleshooting](#troubleshooting) for
+what the errors mean.
+
 ## Enforcement
 
 Two keys in the agent's profile let it act on a Mac, not only report. Both default to
@@ -953,6 +1116,9 @@ Logs aren't included. If a maintainer asks for them:
 | A Mac never appears | `ServerURL` is wrong, the agent hostname isn't reachable from the Mac, or the enrollment token doesn't match ([A Mac never appears](#a-mac-never-appears)) |
 | A Privileges grant shows as **Without a grant** | Privileges didn't run Altiward's hook, usually because its checksum is from another agent release ([Rights show as "Without a grant"](#rights-show-as-without-a-grant)) |
 | **Privileges tamper protection** fails on a Mac | `EnableSystemExtension` is off, or SAP's system extension isn't running: the Mac hasn't got SAP's system extension policy and Full Disk Access ([step 2](#2-deploy-the-agent)), or someone stopped it. The check names which |
+| `The Intune sync is failing: intune: HTTP 403` in diagnostics | The identity or app doesn't have `DeviceManagementManagedDevices.Read.All`, or an administrator hasn't consented ([step 7](#7-connect-intune-optional)). A grant takes a few minutes, and longer for a managed identity whose token Azure cached just before |
+| The Intune sync works but lists no Macs (`devices` is 0) | Intune manages no macOS devices in that tenant, or the tenant ID is another organisation's. Check **Devices › macOS** in the Intune admin center, and `ALTIWARD_INTUNE_TENANT_ID` |
+| `IMDS HTTP 400` or `identity endpoint HTTP 400` in the Intune sync's error | The managed identity isn't set up: the VM has none, or `ALTIWARD_INTUNE_CLIENT_ID` isn't the client ID of a user-assigned identity assigned to this VM or container app ([step 7](#7-connect-intune-optional)) |
 | **Settings › SIEM export** shows **Failing** | The SIEM is rejecting events or can't be reached. The row shows the last error; after a fix, **Retry now** ([step 4](#4-connect-your-siem)) |
 | A Mac waits in **Enrollments** | It enrolled again with a new key while approval is on: approve it. |
 | A `rotated_key_used` alert, or a Mac that enrolled again by itself | A key that was replaced was used again: two holders of one Mac's identity ([A rotated key was used](#a-rotated-key-was-used)) |

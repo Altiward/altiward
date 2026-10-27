@@ -21,7 +21,7 @@ help: ## List targets
 test: agent-test backend-test console-test ## Run all unit tests (no database needed)
 
 lint: go-check changelog-check ## gofmt + go vet, and the changelog fragments
-	@test -z "$$(gofmt -l backend integrations deploy/sentinel)" || (gofmt -l backend integrations deploy/sentinel; echo "run gofmt -w"; exit 1)
+	@test -z "$$(gofmt -l backend integrations deploy/sentinel deploy/intune)" || (gofmt -l backend integrations deploy/sentinel deploy/intune; echo "run gofmt -w"; exit 1)
 	go vet ./...
 	cd integrations && go vet ./...
 
@@ -101,10 +101,11 @@ test-upgrade: ## Install a release in Docker and upgrade it with deploy/compose/
 # rebuilds it use this one: az bicep install --version v$(BICEP_VERSION)
 BICEP_VERSION := 0.48.1
 
-azure-template: ## Compile deploy/azure/main.bicep into azuredeploy.json, which the Deploy to Azure button deploys
+azure-template: ## Compile main.bicep and intune-read.bicep (deploy/azure/) into the JSON the Deploy to Azure buttons deploy
 	@az bicep version 2>/dev/null | grep -q "Bicep CLI version $(BICEP_VERSION) " || \
 		{ echo "needs Bicep $(BICEP_VERSION): az bicep install --version v$(BICEP_VERSION)" >&2; exit 1; }
 	az bicep build --file deploy/azure/main.bicep --outfile deploy/azure/azuredeploy.json
+	az bicep build --file deploy/azure/intune-read.bicep --outfile deploy/azure/intune-read.json
 
 # Drive a local agent against `make run-api`, without launchd or root.
 AGENT_ENV := ALTIWARD_DATA_DIR=$(SWIFT_SCRATCH)/dev-agent-data \

@@ -27,6 +27,8 @@ type Stats struct {
 	PendingCommands    int64            `json:"pending_commands"`
 	AuditEntries       int64            `json:"audit_entries"`
 	Exports            []ExportBacklog  `json:"exports"`
+	// MDM is each MDM copy's sync, by tenant and source.
+	MDM []MDMSync `json:"mdm"`
 	// InstalledAt is when this server's database was set up.
 	InstalledAt *time.Time `json:"installed_at,omitempty"`
 	// CountsSkipped says why the counts are missing: the schema isn't fully migrated, so
@@ -50,7 +52,7 @@ type ExportBacklog struct {
 // Stats gathers the diagnosis counts at now.
 func (p *Postgres) Stats(ctx context.Context, now time.Time) (Stats, error) {
 	s := Stats{
-		Credentials: map[string]int64{}, Exports: []ExportBacklog{},
+		Credentials: map[string]int64{}, Exports: []ExportBacklog{}, MDM: []MDMSync{},
 		MigrationsApplied: []string{}, MigrationsPending: []string{}, MigrationsUnknown: []string{},
 	}
 	if err := p.pool.QueryRow(ctx, `SHOW server_version`).Scan(&s.ServerVersion); err != nil {
@@ -106,8 +108,30 @@ func (p *Postgres) Stats(ctx context.Context, now time.Time) (Stats, error) {
 	if err := p.pool.QueryRow(ctx, `SELECT created_at FROM installation`).Scan(&s.InstalledAt); err != nil {
 		return s, fmt.Errorf("installation: %w", err)
 	}
-	s.Exports, err = p.exportBacklog(ctx, nil)
+	if s.Exports, err = p.exportBacklog(ctx, nil); err != nil {
+		return s, err
+	}
+	s.MDM, err = p.mdmSyncs(ctx)
 	return s, err
+}
+
+// mdmSyncs is every MDM copy's sync, by tenant and source.
+func (p *Postgres) mdmSyncs(ctx context.Context) ([]MDMSync, error) {
+	rows, err := p.pool.Query(ctx, `SELECT `+mdmSyncColumns+` FROM mdm_sync ORDER BY tenant_id, source`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []MDMSync{}
+	for rows.Next() {
+		m, err := scanMDMSync(rows)
+		if err != nil {
+			return nil, err
+		}
+		m.LastError = truncate(m.LastError, 500)
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 func (p *Postgres) ExportStatus(ctx context.Context, tenantID string) ([]ExportBacklog, error) {

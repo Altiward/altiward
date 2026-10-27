@@ -1,7 +1,8 @@
 // Package diagnose builds the support report `altiward-api diagnose` prints: the version,
-// the configuration with every secret removed, the database's migrations and counts, and
-// whether each SIEM endpoint answers. It reads; it never migrates the database or sends
-// anything to a SIEM, and it reports problems rather than failing on them.
+// the configuration with every secret removed, the database's migrations and counts, the
+// Intune sync's status, and whether each SIEM endpoint answers. It reads; it never migrates
+// the database or sends anything to a SIEM, and it reports problems rather than failing on
+// them.
 package diagnose
 
 import (
@@ -62,11 +63,12 @@ type Database struct {
 // SinkCheck is a connection test: TCP, then TLS where the sink uses it. Nothing is sent.
 // The identity provider for console sign-in, if set up, is checked as the sink "sso", and
 // where Sentinel's managed identity gets its tokens (the Azure Instance Metadata Service,
-// or a container app's identity endpoint) as "sentinel-identity".
+// or a container app's identity endpoint) as "sentinel-identity". The Intune connection is
+// checked as "intune", with "intune-identity" for its managed identity.
 type SinkCheck struct {
 	Sink      string `json:"sink"`
 	Endpoint  string `json:"endpoint"`
-	Auth      string `json:"auth,omitempty"` // Sentinel's: secret, certificate or managed-identity
+	Auth      string `json:"auth,omitempty"` // Sentinel's or Intune's: secret, certificate or managed-identity
 	Reachable bool   `json:"reachable"`
 	Error     string `json:"error,omitempty"`
 }
@@ -78,7 +80,9 @@ var notSecret = map[string]bool{
 	"ALTIWARD_SENTINEL_ENDPOINT": true, "ALTIWARD_SENTINEL_DCR_ID": true, "ALTIWARD_SENTINEL_STREAM": true,
 	"ALTIWARD_SENTINEL_AUTH": true, "ALTIWARD_SENTINEL_TENANT_ID": true, "ALTIWARD_SENTINEL_CLIENT_ID": true,
 	"ALTIWARD_SENTINEL_CERTIFICATE_FILE": true,
-	"ALTIWARD_SYSLOG_ADDR":               true, "ALTIWARD_SYSLOG_TLS": true, "ALTIWARD_SYSLOG_CA_FILE": true, "ALTIWARD_TRUSTED_CAS_FILE": true,
+	"ALTIWARD_INTUNE_AUTH":               true, "ALTIWARD_INTUNE_TENANT_ID": true, "ALTIWARD_INTUNE_CLIENT_ID": true,
+	"ALTIWARD_INTUNE_CERTIFICATE_FILE": true,
+	"ALTIWARD_SYSLOG_ADDR":             true, "ALTIWARD_SYSLOG_TLS": true, "ALTIWARD_SYSLOG_CA_FILE": true, "ALTIWARD_TRUSTED_CAS_FILE": true,
 	"ALTIWARD_SYSLOG_FORMAT": true, "ALTIWARD_SYSLOG_FRAMING": true, "ALTIWARD_AUDIT_RETENTION_DAYS": true,
 	"ALTIWARD_ENROLL_NEW_MACS_PER_HOUR": true, "ALTIWARD_ENROLL_KEYS_PER_MAC_PER_DAY": true,
 	"ALTIWARD_OIDC_ISSUER": true, "ALTIWARD_OIDC_CLIENT_ID": true, "ALTIWARD_CONSOLE_URL": true,
@@ -170,14 +174,15 @@ func Run(ctx context.Context, o Options) Report {
 		}
 	}
 
-	r.Database = database(ctx, o, env["ALTIWARD_DATABASE_URL"], cfg.SinkNames(), now, problem)
+	r.Database = database(ctx, o, env["ALTIWARD_DATABASE_URL"], cfg.SinkNames(), cfg.Intune, now, problem)
 	if err == nil {
 		r.Sinks = sinks(ctx, o, cfg, problem)
 	}
 	return r
 }
 
-func database(ctx context.Context, o Options, dsn string, sinks []string, now time.Time, problem func(string)) Database {
+func database(ctx context.Context, o Options, dsn string, sinks []string, intune *config.Intune, now time.Time,
+	problem func(string)) Database {
 	db := Database{Configured: dsn != ""}
 	if dsn == "" {
 		problem("No ALTIWARD_DATABASE_URL: the server keeps everything in memory and loses it on restart")
@@ -218,7 +223,26 @@ func database(ctx context.Context, o Options, dsn string, sinks []string, now ti
 	if stats.DevicesSilent > 0 {
 		problem("Some Macs have stopped checking in; see Fleet in the console")
 	}
+	// A copy left from before Intune was turned off is deleted at the next start; only a
+	// connection that is on can be failing.
+	for _, m := range stats.MDM {
+		if intune != nil && m.TenantID == intune.Tenant && m.Source == store.MDMIntune {
+			intuneSync(m, now, problem)
+		}
+	}
 	return db
+}
+
+// intuneSync reports an Intune sync that is failing, or that has stopped: it runs every 15
+// minutes.
+func intuneSync(m store.MDMSync, now time.Time, problem func(string)) {
+	switch {
+	case m.LastErrorAt != nil && (m.LastSuccessAt == nil || m.LastErrorAt.After(*m.LastSuccessAt)):
+		problem("The Intune sync is failing: " + m.LastError)
+	case m.LastSuccessAt != nil && now.Sub(*m.LastSuccessAt) > time.Hour:
+		problem("The Intune sync last succeeded at " + m.LastSuccessAt.UTC().Format(time.RFC3339) +
+			", more than an hour ago, though it runs every 15 minutes. Is the server running?")
+	}
 }
 
 func sinks(ctx context.Context, o Options, cfg config.Config, problem func(string)) []SinkCheck {
@@ -277,6 +301,18 @@ func sinks(ctx context.Context, o Options, cfg config.Config, problem func(strin
 			// Where a VM's token comes from. Nothing answers off Azure, or if the container
 			// can't reach the link-local address.
 			check("sentinel-identity", "http://169.254.169.254", "169.254.169.254:80", "", nil, nil)
+		}
+	}
+	if i := cfg.Intune; i != nil {
+		// The connection to Microsoft Graph; not an export sink, so only the diagnosis lists it.
+		httpsCheck("intune", "https://graph.microsoft.com")
+		checks[len(checks)-1].Auth = i.Auth
+		switch {
+		case i.Auth != config.AuthManagedIdentity:
+		case i.IdentityEndpoint != "":
+			httpsCheck("intune-identity", i.IdentityEndpoint)
+		default:
+			check("intune-identity", "http://169.254.169.254", "169.254.169.254:80", "", nil, nil)
 		}
 	}
 	if s := cfg.Syslog; s != nil {

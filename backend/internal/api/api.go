@@ -20,6 +20,8 @@
 //	POST /v1/devices/{serial}/revoke    operator          revoke a Mac's admins
 //	GET  /v1/commands, /v1/commands/{id} viewer           commands and their results
 //	GET  /v1/audit                      viewer            console actions, newest first
+//	GET  /v1/mdm                        viewer            the Intune connection and its sync
+//	GET  /v1/mdm/devices                viewer            the Macs Intune manages, from the server's copy
 //	GET  /v1/about                      viewer            the server's version, the oldest agent it accepts, tamper severities,
 //	                                                      whether the console may check GitHub for newer releases and
 //	                                                      the platform it runs on
@@ -38,6 +40,7 @@ import (
 	"time"
 
 	"github.com/Altiward/altiward/backend/internal/auth"
+	"github.com/Altiward/altiward/backend/internal/mdm"
 	"github.com/Altiward/altiward/backend/internal/ocsf"
 	"github.com/Altiward/altiward/backend/internal/release"
 	"github.com/Altiward/altiward/backend/internal/sso"
@@ -64,6 +67,7 @@ type Server struct {
 	enrollLogMu   sync.Mutex
 	enrollLog     map[enrollLogKey]enrollLogWindow
 
+	mdm           *mdm.Checker  // nil: Intune is off
 	sso           *sso.Provider // nil: console tokens only
 	secureCookies bool
 	stopping      <-chan struct{} // closed when the server starts shutting down
@@ -127,6 +131,8 @@ func New(s store.Store, tokens *auth.Tokens, log *slog.Logger, now func() time.T
 	mux.Handle("GET /v1/console-sessions", srv.console(auth.Admin, srv.listConsoleSessions))
 	mux.Handle("DELETE /v1/console-sessions/{id}", srv.console(auth.Admin, srv.endConsoleSession))
 	mux.Handle("GET /v1/about", srv.console(auth.Viewer, srv.about))
+	mux.Handle("GET /v1/mdm", srv.console(auth.Viewer, srv.getMDMStatus))
+	mux.Handle("GET /v1/mdm/devices", srv.console(auth.Viewer, srv.listMDMDevices))
 	mux.HandleFunc("GET /v1/auth/config", srv.authConfig)
 	mux.HandleFunc("GET /v1/auth/login", srv.login)
 	mux.HandleFunc("GET /v1/auth/callback", srv.callback)

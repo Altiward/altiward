@@ -216,6 +216,108 @@ func TestSentinelAuthMode(t *testing.T) {
 	}
 }
 
+func TestIntuneConnectionChecks(t *testing.T) {
+	run := func(extra ...string) (diagnose.Report, []string) {
+		var dialled []string
+		o := options(append(baseEnv(), extra...), fakeDB{}, nil, nil)
+		o.Dial = func(ctx context.Context, addr, serverName string, roots *x509.CertPool) error {
+			dialled = append(dialled, addr+" tls="+serverName)
+			return nil
+		}
+		return diagnose.Run(context.Background(), o), dialled
+	}
+
+	r, dialled := run("ALTIWARD_INTUNE_AUTH=secret", "ALTIWARD_INTUNE_TENANT_ID=tenant-1", "ALTIWARD_INTUNE_CLIENT_ID=client-1",
+		"ALTIWARD_INTUNE_CLIENT_SECRET=hunter2")
+	if !r.Config.Valid || len(r.Sinks) != 2 || r.Sinks[1].Sink != "intune" || r.Sinks[1].Auth != "secret" ||
+		r.Sinks[1].Endpoint != "https://graph.microsoft.com" || !r.Sinks[1].Reachable {
+		t.Fatalf("secret: config = %+v, sinks = %+v", r.Config, r.Sinks)
+	}
+	if len(dialled) != 2 || dialled[1] != "graph.microsoft.com:443 tls=graph.microsoft.com" {
+		t.Fatalf("dialled %q", dialled)
+	}
+	for k, want := range map[string]string{"ALTIWARD_INTUNE_AUTH": "secret", "ALTIWARD_INTUNE_TENANT_ID": "tenant-1",
+		"ALTIWARD_INTUNE_CLIENT_ID": "client-1"} {
+		if r.Config.Settings[k] != want {
+			t.Errorf("%s = %q, want %q", k, r.Config.Settings[k], want)
+		}
+	}
+	if out, _ := json.Marshal(r); strings.Contains(string(out), "hunter2") {
+		t.Fatalf("report shows the client secret: %s", out)
+	}
+
+	r, dialled = run("ALTIWARD_INTUNE_AUTH=managed-identity")
+	if len(r.Sinks) != 3 || r.Sinks[1].Sink != "intune" || r.Sinks[1].Auth != "managed-identity" ||
+		r.Sinks[2].Sink != "intune-identity" || r.Sinks[2].Endpoint != "http://169.254.169.254" || !r.Sinks[2].Reachable {
+		t.Fatalf("managed identity: sinks = %+v", r.Sinks)
+	}
+	if len(dialled) != 3 || dialled[2] != "169.254.169.254:80 tls=" {
+		t.Fatalf("dialled %q", dialled)
+	}
+
+	r, dialled = run("ALTIWARD_INTUNE_AUTH=managed-identity", "IDENTITY_ENDPOINT=http://localhost:42356/msi/token",
+		"IDENTITY_HEADER=header-1")
+	if len(r.Sinks) != 3 || r.Sinks[2].Sink != "intune-identity" || r.Sinks[2].Endpoint != "http://localhost:42356" {
+		t.Fatalf("container app: sinks = %+v", r.Sinks)
+	}
+	if len(dialled) != 3 || dialled[2] != "localhost:42356 tls=" {
+		t.Fatalf("dialled %q", dialled)
+	}
+	if out, _ := json.Marshal(r); strings.Contains(string(out), "header-1") {
+		t.Fatalf("report shows the platform's identity header: %s", out)
+	}
+
+	r, _ = run("ALTIWARD_INTUNE_AUTH=certificate", "ALTIWARD_INTUNE_TENANT_ID=t", "ALTIWARD_INTUNE_CLIENT_ID=c",
+		"ALTIWARD_INTUNE_CERTIFICATE_FILE=/etc/altiward/certs/intune.pem")
+	if !r.Config.Valid || r.Config.Settings["ALTIWARD_INTUNE_CERTIFICATE_FILE"] != "/etc/altiward/certs/intune.pem" {
+		t.Fatalf("config = %+v", r.Config)
+	}
+	if len(r.Sinks) != 2 || r.Sinks[1].Auth != "certificate" {
+		t.Fatalf("certificate: sinks = %+v", r.Sinks)
+	}
+
+	if r, _ = run(); len(r.Sinks) != 1 {
+		t.Fatalf("off: sinks = %+v", r.Sinks)
+	}
+}
+
+// TestIntuneSyncStatus: the copy of Intune's Macs is refreshed every 15 minutes, so a sync
+// that is failing, or hasn't succeeded for an hour, is a problem.
+func TestIntuneSyncStatus(t *testing.T) {
+	ago := func(d time.Duration) *time.Time { at := now.Add(-d); return &at }
+	on := []string{"ALTIWARD_INTUNE_AUTH=managed-identity"}
+	for _, c := range []struct {
+		name string
+		env  []string
+		sync store.MDMSync
+		want string
+	}{
+		{"healthy", on, store.MDMSync{LastSuccessAt: ago(10 * time.Minute), Devices: 40}, ""},
+		{"recovered", on, store.MDMSync{LastSuccessAt: ago(10 * time.Minute), LastErrorAt: ago(25 * time.Minute),
+			LastError: "intune: HTTP 503"}, ""},
+		{"failing", on, store.MDMSync{LastSuccessAt: ago(40 * time.Minute), LastErrorAt: ago(10 * time.Minute),
+			LastError: "intune: HTTP 403 Forbidden"}, "The Intune sync is failing: intune: HTTP 403 Forbidden"},
+		{"never succeeded", on, store.MDMSync{LastErrorAt: ago(time.Minute), LastError: "IMDS HTTP 400"},
+			"The Intune sync is failing: IMDS HTTP 400"},
+		{"stale", on, store.MDMSync{LastSuccessAt: ago(61 * time.Minute), LastErrorAt: ago(2 * time.Hour), LastError: "old"},
+			"The Intune sync last succeeded at 2026-10-17T10:59:00Z, more than an hour ago, though it runs every 15 minutes. " +
+				"Is the server running?"},
+		// A copy left from before Intune was turned off goes when the server next starts.
+		{"off", nil, store.MDMSync{LastErrorAt: ago(time.Minute), LastError: "boom"}, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			c.sync.TenantID, c.sync.Source = "acme", store.MDMIntune
+			other := store.MDMSync{TenantID: "other", Source: store.MDMIntune, LastErrorAt: ago(time.Minute), LastError: "not ours"}
+			stats := store.Stats{MDM: []store.MDMSync{c.sync, other}}
+			r := diagnose.Run(context.Background(), options(append(baseEnv(), c.env...), fakeDB{stats: stats}, nil, nil))
+			got := strings.Join(r.Problems, "\n")
+			if got != c.want {
+				t.Fatalf("problems = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 // A regression guard: the setup date reaches the report through the existing stats field.
 func TestReportShowsSetUpDate(t *testing.T) {
 	installed := now.AddDate(0, 0, -40)

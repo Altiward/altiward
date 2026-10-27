@@ -31,7 +31,7 @@ jobs:
       - name: Changelog fragments
         run: make changelog-check
       - name: gofmt
-        run: test -z "$(gofmt -l backend integrations deploy/sentinel deploy/caddy)" || (gofmt -l backend integrations deploy/sentinel deploy/caddy; exit 1)
+        run: test -z "$(gofmt -l backend integrations deploy/sentinel deploy/intune deploy/caddy)" || (gofmt -l backend integrations deploy/sentinel deploy/intune deploy/caddy; exit 1)
       - name: go vet
         run: |
           go vet ./...
@@ -145,6 +145,8 @@ jobs:
           scripts/server-bundle.sh 0.0.0 altiward-api:ci "$RUNNER_TEMP/bundle"
           tar -tvzf "$RUNNER_TEMP/bundle/altiward-server-0.0.0.tar.gz" |
             grep -E '^-rwxr-xr-x .*/integrations/sentinel/setup\.sh$'
+          tar -tvzf "$RUNNER_TEMP/bundle/altiward-server-0.0.0.tar.gz" |
+            grep -E '^-rwxr-xr-x .*/integrations/intune/setup\.sh$'
       - name: A release installs and upgrades with upgrade.sh
         run: scripts/test-upgrade.sh altiward-api:ci
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -175,16 +177,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Bicep, the version the Makefile names
         run: az bicep install --version "v$(sed -n 's/^BICEP_VERSION := //p' Makefile)"
-      - name: The committed azuredeploy.json is main.bicep compiled
+      - name: The committed azuredeploy.json and intune-read.json are their Bicep compiled
         run: |
           make azure-template
-          git diff --exit-code deploy/azure/azuredeploy.json ||
-            { echo "::error::Run make azure-template and commit deploy/azure/azuredeploy.json"; exit 1; }
-      - name: The template has no lint warnings
+          git diff --exit-code deploy/azure/azuredeploy.json deploy/azure/intune-read.json ||
+            { echo "::error::Run make azure-template and commit deploy/azure/azuredeploy.json and intune-read.json"; exit 1; }
+      - name: The templates have no lint warnings
         run: |
-          out=$(az bicep lint --file deploy/azure/main.bicep 2>&1)
-          echo "$out"
-          ! grep -Eq '(Warning|Error) ' <<<"$out"
+          for f in main intune-read; do
+            out=$(az bicep lint --file "deploy/azure/$f.bicep" 2>&1)
+            echo "$out"
+            ! grep -Eq '(Warning|Error) ' <<<"$out" || exit 1
+          done
       - name: The portal form fills in parameters the template has
         run: |
           jq -e --slurpfile t deploy/azure/azuredeploy.json \

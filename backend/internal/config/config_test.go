@@ -27,6 +27,20 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
+// Tenants are the distinct tenants the tokens name, so the server can clear what each
+// tenant kept from a connection that has been turned off.
+func TestTenants(t *testing.T) {
+	c, err := config.Load(env(map[string]string{
+		"ALTIWARD_AGENT_TOKENS": "acme=x, globex=y", "ALTIWARD_CONSOLE_TOKENS": "acme=z,initech=w",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(c.Tenants(), ","); got != "acme,globex,initech" {
+		t.Fatalf("tenants = %q", got)
+	}
+}
+
 func TestAuditRetention(t *testing.T) {
 	for v, want := range map[string]int{"": 0, "0": 0, "365": 365, "2555": 2555} {
 		c, err := config.Load(env(map[string]string{"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_AUDIT_RETENTION_DAYS": v}))
@@ -229,6 +243,103 @@ func TestSentinelCertificate(t *testing.T) {
 			bad[k] = v
 		}
 		bad[tc.key] = tc.value
+		if _, err := config.Load(env(bad)); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+}
+
+func TestIntune(t *testing.T) {
+	m := map[string]string{
+		"ALTIWARD_AGENT_TOKENS":            "acme=x",
+		"ALTIWARD_CONSOLE_TOKENS":          "acme=y",
+		"ALTIWARD_INTUNE_AUTH":             "certificate",
+		"ALTIWARD_INTUNE_TENANT_ID":        "t",
+		"ALTIWARD_INTUNE_CLIENT_ID":        "c",
+		"ALTIWARD_INTUNE_CERTIFICATE_FILE": "/etc/altiward/certs/intune.pem",
+	}
+	c, err := config.Load(env(m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i := c.Intune; i == nil || i.Auth != config.AuthCertificate || i.TenantID != "t" || i.ClientID != "c" ||
+		i.CertificateFile != "/etc/altiward/certs/intune.pem" || i.Tenant != "acme" {
+		t.Fatalf("certificate = %+v", c.Intune)
+	}
+	if got := strings.Join(c.SinkNames(), ","); got != "" {
+		t.Fatalf("Intune is not a sink, sinks = %q", got)
+	}
+
+	secret := map[string]string{
+		"ALTIWARD_AGENT_TOKENS":         "acme=x",
+		"ALTIWARD_INTUNE_AUTH":          "secret",
+		"ALTIWARD_INTUNE_TENANT_ID":     "t",
+		"ALTIWARD_INTUNE_CLIENT_ID":     "c",
+		"ALTIWARD_INTUNE_CLIENT_SECRET": "s",
+	}
+	if c, err = config.Load(env(secret)); err != nil || c.Intune.Auth != config.AuthSecret || c.Intune.ClientSecret != "s" {
+		t.Fatalf("secret = %+v, %v", c.Intune, err)
+	}
+
+	// A managed identity needs no tenant, and the platform's settings come with it.
+	mi := map[string]string{
+		"ALTIWARD_AGENT_TOKENS": "acme=x",
+		"ALTIWARD_INTUNE_AUTH":  "managed-identity",
+	}
+	if c, err = config.Load(env(mi)); err != nil || c.Intune.Auth != config.AuthManagedIdentity || c.Intune.Tenant != "acme" ||
+		c.Intune.TenantID != "" || c.Intune.IdentityEndpoint != "" {
+		t.Fatalf("managed identity = %+v, %v", c.Intune, err)
+	}
+	mi["ALTIWARD_INTUNE_CLIENT_ID"] = "user-assigned-id"
+	mi["IDENTITY_ENDPOINT"], mi["IDENTITY_HEADER"] = "http://localhost:42356/msi/token", "header-1"
+	if c, err = config.Load(env(mi)); err != nil || c.Intune.ClientID != "user-assigned-id" ||
+		c.Intune.IdentityEndpoint != "http://localhost:42356/msi/token" || c.Intune.IdentityHeader != "header-1" {
+		t.Fatalf("container app = %+v, %v", c.Intune, err)
+	}
+
+	// Off unless AUTH is set.
+	if c, err = config.Load(env(map[string]string{"ALTIWARD_AGENT_TOKENS": "acme=x"})); err != nil || c.Intune != nil {
+		t.Fatalf("off = %+v, %v", c.Intune, err)
+	}
+
+	for name, tc := range map[string]struct{ key, value, want string }{
+		"no auth":        {"ALTIWARD_INTUNE_AUTH", "", "set ALTIWARD_INTUNE_AUTH to turn Intune on (secret, certificate or managed-identity)"},
+		"unknown auth":   {"ALTIWARD_INTUNE_AUTH", "bogus", `ALTIWARD_INTUNE_AUTH: want secret, certificate or managed-identity, got "bogus"`},
+		"no file":        {"ALTIWARD_INTUNE_CERTIFICATE_FILE", "", "ALTIWARD_INTUNE_AUTH=certificate needs ALTIWARD_INTUNE_TENANT_ID, CLIENT_ID and CERTIFICATE_FILE"},
+		"no tenant":      {"ALTIWARD_INTUNE_TENANT_ID", "", "ALTIWARD_INTUNE_AUTH=certificate needs ALTIWARD_INTUNE_TENANT_ID, CLIENT_ID and CERTIFICATE_FILE"},
+		"no client":      {"ALTIWARD_INTUNE_CLIENT_ID", "", "ALTIWARD_INTUNE_AUTH=certificate needs ALTIWARD_INTUNE_TENANT_ID, CLIENT_ID and CERTIFICATE_FILE"},
+		"a secret too":   {"ALTIWARD_INTUNE_CLIENT_SECRET", "s", "ALTIWARD_INTUNE_CLIENT_SECRET isn't used with ALTIWARD_INTUNE_AUTH=certificate: remove it"},
+		"two tenants":    {"ALTIWARD_AGENT_TOKENS", "acme=x,beta=z", "ALTIWARD_INTUNE_* needs a server with one tenant: the tokens name more than one"},
+		"another auth":   {"ALTIWARD_INTUNE_AUTH", "secret", "ALTIWARD_INTUNE_CERTIFICATE_FILE is only used with ALTIWARD_INTUNE_AUTH=certificate"},
+		"managed + file": {"ALTIWARD_INTUNE_AUTH", "managed-identity", "ALTIWARD_INTUNE_CERTIFICATE_FILE is only used with ALTIWARD_INTUNE_AUTH=certificate"},
+	} {
+		bad := map[string]string{}
+		for k, v := range m {
+			bad[k] = v
+		}
+		bad[tc.key] = tc.value
+		if _, err := config.Load(env(bad)); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+
+	for name, tc := range map[string]struct {
+		set  map[string]string
+		want string
+	}{
+		"secret missing": {map[string]string{"ALTIWARD_INTUNE_AUTH": "secret", "ALTIWARD_INTUNE_TENANT_ID": "t", "ALTIWARD_INTUNE_CLIENT_ID": "c"},
+			"ALTIWARD_INTUNE_AUTH=secret needs ALTIWARD_INTUNE_TENANT_ID, CLIENT_ID and CLIENT_SECRET"},
+		"a secret with a managed identity": {map[string]string{"ALTIWARD_INTUNE_AUTH": "managed-identity", "ALTIWARD_INTUNE_CLIENT_SECRET": "s"},
+			"ALTIWARD_INTUNE_CLIENT_SECRET isn't used with ALTIWARD_INTUNE_AUTH=managed-identity: remove it"},
+		"a secret without auth": {map[string]string{"ALTIWARD_INTUNE_CLIENT_SECRET": "s"},
+			"set ALTIWARD_INTUNE_AUTH to turn Intune on (secret, certificate or managed-identity)"},
+		"a tenant without auth": {map[string]string{"ALTIWARD_INTUNE_TENANT_ID": "t"},
+			"set ALTIWARD_INTUNE_AUTH to turn Intune on (secret, certificate or managed-identity)"},
+	} {
+		bad := map[string]string{"ALTIWARD_AGENT_TOKENS": "acme=x"}
+		for k, v := range tc.set {
+			bad[k] = v
+		}
 		if _, err := config.Load(env(bad)); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v", name, err)
 		}

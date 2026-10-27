@@ -15,14 +15,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Altiward/altiward/integrations/entra"
 )
 
 const apiVersion = "2023-01-01"
 
 // TokenSource returns a bearer token for https://monitor.azure.com.
-type TokenSource interface {
-	Token(ctx context.Context) (string, error)
-}
+type TokenSource = entra.TokenSource
 
 // Client uploads to POST {Endpoint}/dataCollectionRules/{RuleID}/streams/{Stream}.
 type Client struct {
@@ -103,9 +103,10 @@ func (c *Client) post(ctx context.Context, batch []json.RawMessage) error {
 	return nil
 }
 
-// ClientCredentials gets Entra ID tokens with the OAuth 2.0 client-credentials grant
-// and caches them until shortly before expiry. It signs in with Certificate when set, and
-// with ClientSecret otherwise.
+// ClientCredentials gets Entra ID tokens for the Logs Ingestion API with the OAuth 2.0
+// client-credentials grant and caches them until shortly before expiry. It signs in with
+// Certificate when set, and with ClientSecret otherwise. Set the fields before the first
+// Token call.
 type ClientCredentials struct {
 	TenantID     string
 	ClientID     string
@@ -116,69 +117,27 @@ type ClientCredentials struct {
 	HTTP          *http.Client
 	Now           func() time.Time
 
-	mu      sync.Mutex
-	token   string
-	expires time.Time
+	once  sync.Once
+	entra *entra.ClientCredentials
 }
 
 // Scope for the Logs Ingestion API (the double slash is part of the documented value).
 const monitorScope = "https://monitor.azure.com//.default"
 
 func (cc *ClientCredentials) Token(ctx context.Context) (string, error) {
-	cc.mu.Lock()
-	defer cc.mu.Unlock()
-	now := time.Now
-	if cc.Now != nil {
-		now = cc.Now
-	}
-	if cc.token != "" && now().Before(cc.expires) {
-		return cc.token, nil
-	}
-	host := cc.AuthorityHost
-	if host == "" {
-		host = "https://login.microsoftonline.com"
-	}
-	u := fmt.Sprintf("%s/%s/oauth2/v2.0/token", strings.TrimRight(host, "/"), url.PathEscape(cc.TenantID))
-	form := url.Values{
-		"grant_type": {"client_credentials"},
-		"client_id":  {cc.ClientID},
-		"scope":      {monitorScope},
-	}
-	if cc.Certificate != nil {
-		assertion, err := cc.Certificate.assertion(cc.ClientID, u, now())
-		if err != nil {
-			return "", fmt.Errorf("sign client assertion: %w", err)
+	cc.once.Do(func() {
+		cc.entra = &entra.ClientCredentials{
+			TenantID:      cc.TenantID,
+			ClientID:      cc.ClientID,
+			ClientSecret:  cc.ClientSecret,
+			Certificate:   cc.Certificate,
+			Scope:         monitorScope,
+			AuthorityHost: cc.AuthorityHost,
+			HTTP:          cc.HTTP,
+			Now:           cc.Now,
 		}
-		form.Set("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
-		form.Set("client_assertion", assertion)
-	} else {
-		form.Set("client_secret", cc.ClientSecret)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := httpClient(cc.HTTP).Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("token endpoint HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	var tr struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int    `json:"expires_in"`
-	}
-	if err := json.Unmarshal(body, &tr); err != nil || tr.AccessToken == "" {
-		return "", fmt.Errorf("token endpoint returned no access_token")
-	}
-	cc.token = tr.AccessToken
-	// Refresh five minutes early so a token never expires mid-request.
-	cc.expires = now().Add(time.Duration(tr.ExpiresIn)*time.Second - 5*time.Minute)
-	return cc.token, nil
+	})
+	return cc.entra.Token(ctx)
 }
 
 func httpClient(c *http.Client) *http.Client {
