@@ -399,6 +399,25 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 	})
 
+	t.Run("re-approving an approved key is refused", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		enroll(t, s, tenant, serial, newKey(t), t0)
+		pending, err := enrollLimited(s, tenant, serial, "HW-other", newKey(t), t0.Add(time.Hour), EnrollLimits{})
+		if err != nil || pending.Credential.Status != CredentialPending {
+			t.Fatalf("different hardware = %+v, %v", pending.Credential, err)
+		}
+		id := pending.Credential.DeviceID
+		if _, err := s.ApproveCredential(ctx, tenant, id, t0.Add(2*time.Hour), auditFor(t, tenant, AuditApproveEnrollment)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.ApproveCredential(ctx, tenant, id, t0.Add(3*time.Hour), auditFor(t, tenant, AuditApproveEnrollment)); !errors.Is(err, ErrInvalidState) {
+			t.Fatalf("second approval = %v, want %v", err, ErrInvalidState)
+		}
+		if c := lookup(t, s, id); c.Status != CredentialActive {
+			t.Fatalf("after the refused approval = %s", c.Status)
+		}
+	})
+
 	// A tenant's enrolment token can add Macs without end, so a tenant may add only so many
 	// new serials an hour. A serial is new when the tenant has no credential of any status
 	// for it, and counts for the hour after its first key.
@@ -731,6 +750,74 @@ func TestPostgresRefusesNewMacsWithoutTheTenantLock(t *testing.T) {
 	}
 	if err := <-done; err != nil {
 		t.Fatalf("with room, after the lock is released: %v", err)
+	}
+}
+
+// TestPostgresRevokeWinsOverConcurrentApproval checks that a revoke answered with success
+// leaves the key revoked, however it races an approval of the same key, and that the
+// Mac never ends with two active keys.
+func TestPostgresRevokeWinsOverConcurrentApproval(t *testing.T) {
+	url := os.Getenv("ALTIWARD_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("ALTIWARD_TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	p, err := OpenPostgres(ctx, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+	t0 := testfixture.Time(t, "2026-10-16T12:00:00Z")
+	tenant := "tenant-" + randomHex(t)
+	for i := 0; i < 30; i++ {
+		serial := "C02RACE" + randomHex(t)
+		enrol := func(hardware string, at time.Time) DeviceCredential {
+			t.Helper()
+			res, err := p.Enroll(ctx, DeviceCredential{
+				DeviceID: newUUID(t), TenantID: tenant, Serial: serial, HardwareUUID: hardware, PublicKey: newKey(t), CreatedAt: at,
+			}, EnrollLimits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return res.Credential
+		}
+		enrol("HW-A", t0)
+		b := enrol("HW-B", t0.Add(time.Hour))
+		if b.Status != CredentialPending {
+			t.Fatalf("run %d: key from other hardware = %s, want pending", i, b.Status)
+		}
+
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		var approveErr, revokeErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, approveErr = p.ApproveCredential(ctx, tenant, b.DeviceID, t0.Add(2*time.Hour), auditFor(t, tenant, AuditApproveEnrollment))
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			_, revokeErr = p.RevokeCredential(ctx, tenant, b.DeviceID, t0.Add(2*time.Hour), auditFor(t, tenant, AuditRevokeEnrollment))
+		}()
+		close(start)
+		wg.Wait()
+
+		if revokeErr != nil {
+			t.Fatalf("run %d: revoke = %v", i, revokeErr)
+		}
+		if approveErr != nil && !errors.Is(approveErr, ErrInvalidState) {
+			t.Fatalf("run %d: approve = %v", i, approveErr)
+		}
+		got, err := p.Credential(ctx, b.DeviceID)
+		if err != nil || got.Status != CredentialRevoked {
+			t.Fatalf("run %d: after a successful revoke, the key = %s, %v (approve = %v)", i, got.Status, err, approveErr)
+		}
+		active, err := p.ListCredentials(ctx, tenant, CredentialFilter{Status: CredentialActive, Serial: serial})
+		if err != nil || len(active) > 1 {
+			t.Fatalf("run %d: %d active keys, %v", i, len(active), err)
+		}
 	}
 }
 

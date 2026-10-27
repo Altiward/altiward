@@ -9,6 +9,25 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Server 1.0.0 - unreleased
+
+### Upgrade order
+
+Upgrade the server before the agents.
+
+### Breaking changes
+
+None.
+
+### Security
+
+- Revoking a key that an admin approved at the same moment could leave the key active. The
+  revoke now always wins.
+
+### Changes
+
+None.
+
 ## Agent 0.9.0 - 2026-10-27
 
 ### Upgrade order
