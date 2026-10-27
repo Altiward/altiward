@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -37,6 +38,35 @@ func (p *Postgres) insertAudit(ctx context.Context, tx pgx.Tx, a AuditEntry) err
 
 func (p *Postgres) RecordAudit(ctx context.Context, a AuditEntry) error {
 	return pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error { return p.insertAudit(ctx, tx, a) })
+}
+
+func (p *Postgres) RecordTokenSignIn(ctx context.Context, a AuditEntry, within time.Duration) (time.Time, error) {
+	covered := a.At
+	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+		// SET LOCAL ends with the transaction, so the pooled connection keeps its setting.
+		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout = '5s'`); err != nil {
+			return err
+		}
+		// Calls for one actor queue here, so the first records and the rest find it.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 7243100004))`,
+			a.TenantID+"/"+a.Actor); err != nil {
+			return err
+		}
+		err := tx.QueryRow(ctx, `
+			SELECT at FROM audit_log
+			WHERE tenant_id = $1 AND action = 'sign_in' AND actor = $2 AND detail->>'method' = 'token'
+			AND at >= $3 AND at <= $4 ORDER BY at DESC LIMIT 1`,
+			a.TenantID, a.Actor, a.At.Add(-within), a.At.Add(tokenSignInSkew)).Scan(&covered)
+		if errors.Is(err, pgx.ErrNoRows) {
+			covered = a.At
+			return p.insertAudit(ctx, tx, a)
+		}
+		return err
+	})
+	if err != nil {
+		return time.Time{}, err
+	}
+	return covered, nil
 }
 
 func (p *Postgres) ListAudit(ctx context.Context, tenantID string, f AuditFilter) ([]AuditEntry, error) {

@@ -437,6 +437,20 @@ func suite(t *testing.T, newStore func(t *testing.T, sink string) Store) {
 		if listed, _ := s.ListAudit(ctx, tenant, AuditFilter{}); len(listed) != 2 {
 			t.Fatalf("audit log = %+v", listed)
 		}
+
+		// A token sign-in is queued once, however many calls it covers.
+		signIn := auditFor(t, tenant, AuditSignIn)
+		signIn.At, signIn.Target, signIn.Detail = retryAt, "console", map[string]any{"method": "token"}
+		for range 2 {
+			signIn.ID = newUUID(t)
+			if _, err := s.RecordTokenSignIn(ctx, signIn, time.Hour); err != nil {
+				t.Fatal(err)
+			}
+		}
+		queued, _ = s.ClaimExports(ctx, sink, 10, time.Minute, retryAt)
+		if len(queued) != 1 || queued[0].Audit == nil || queued[0].Audit.Action != AuditSignIn {
+			t.Fatalf("token sign-in queued %+v", queued)
+		}
 	})
 }
 
@@ -504,6 +518,28 @@ func TestPostgres(t *testing.T) {
 	commandSuite(t, openPlain)
 	auditSuite(t, openPlain)
 	mdmSuite(t, openPlain)
+
+	t.Run("lock_timeout stays inside the transaction", func(t *testing.T) {
+		ctx := context.Background()
+		sep := "?"
+		if strings.Contains(url, "?") {
+			sep = "&"
+		}
+		// One connection, so the SHOW below runs on the one RecordTokenSignIn used.
+		one, err := OpenPostgres(ctx, url+sep+"pool_max_conns=1", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(one.Close)
+		a := auditFor(t, "tenant-"+randomHex(t), AuditSignIn)
+		a.Detail = map[string]any{"method": "token"}
+		if _, err := one.RecordTokenSignIn(ctx, a, time.Hour); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := one.lockTimeout(ctx); err != nil || got != "0" {
+			t.Fatalf("lock_timeout = %q, %v", got, err)
+		}
+	})
 }
 
 // TestPostgresStats checks the diagnosis counts. The test database is shared, so it checks

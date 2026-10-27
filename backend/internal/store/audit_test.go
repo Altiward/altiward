@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -251,6 +252,132 @@ func auditSuite(t *testing.T, newStore func(t *testing.T) Store) {
 			if left, _ := s.ListAudit(ctx, tenant, AuditFilter{}); len(left) != 1 {
 				t.Fatalf("purged a young entry: %+v", left)
 			}
+		}
+	})
+
+	tokenSignIn := func(t *testing.T, tenant, actor string, at time.Time) AuditEntry {
+		a := auditFor(t, tenant, AuditSignIn)
+		a.At, a.Actor, a.Target = at, actor, "console"
+		a.Detail = map[string]any{"method": "token", "role": "admin", "route": "GET /v1/devices"}
+		return a
+	}
+	signIns := func(t *testing.T, s Store, tenant string) []AuditEntry {
+		t.Helper()
+		got, err := s.ListAudit(ctx, tenant, AuditFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []AuditEntry
+		for _, a := range got {
+			if a.Action == AuditSignIn {
+				out = append(out, a)
+			}
+		}
+		return out
+	}
+	recordToken := func(t *testing.T, s Store, a AuditEntry) time.Time {
+		t.Helper()
+		covered, err := s.RecordTokenSignIn(ctx, a, time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return covered
+	}
+
+	t.Run("a token sign-in covers the hour after it", func(t *testing.T) {
+		s, tenant := newStore(t), "tenant-"+randomHex(t)
+		for _, c := range []struct{ at, want time.Duration }{
+			{0, 0}, {59 * time.Minute, 0}, {61 * time.Minute, 61 * time.Minute},
+		} {
+			if got := recordToken(t, s, tokenSignIn(t, tenant, "token:aaaaaaaa", t0.Add(c.at))); !got.Equal(t0.Add(c.want)) {
+				t.Fatalf("at +%v: covered by %v, want +%v", c.at, got, c.want)
+			}
+		}
+		if got := signIns(t, s, tenant); len(got) != 2 {
+			t.Fatalf("sign-ins = %+v", got)
+		}
+	})
+
+	t.Run("an entry up to a minute ahead covers, one further ahead doesn't", func(t *testing.T) {
+		s, tenant := newStore(t), "tenant-"+randomHex(t)
+		if err := s.RecordAudit(ctx, tokenSignIn(t, tenant, "token:aaaaaaaa", t0.Add(30*time.Second))); err != nil {
+			t.Fatal(err)
+		}
+		if got := recordToken(t, s, tokenSignIn(t, tenant, "token:aaaaaaaa", t0)); !got.Equal(t0.Add(30 * time.Second)) {
+			t.Fatalf("covered by %v, want +30s", got)
+		}
+		if got := signIns(t, s, tenant); len(got) != 1 {
+			t.Fatalf("sign-ins = %+v", got)
+		}
+
+		other := "tenant-" + randomHex(t)
+		if err := s.RecordAudit(ctx, tokenSignIn(t, other, "token:aaaaaaaa", t0.Add(2*time.Minute))); err != nil {
+			t.Fatal(err)
+		}
+		if got := recordToken(t, s, tokenSignIn(t, other, "token:aaaaaaaa", t0)); !got.Equal(t0) {
+			t.Fatalf("covered by %v, want %v", got, t0)
+		}
+		if got := signIns(t, s, other); len(got) != 2 {
+			t.Fatalf("sign-ins = %+v", got)
+		}
+	})
+
+	t.Run("single sign-on sign-ins don't cover", func(t *testing.T) {
+		s, tenant := newStore(t), "tenant-"+randomHex(t)
+		sso := auditFor(t, tenant, AuditSignIn)
+		sso.At, sso.Actor, sso.Target, sso.Detail = t0, "token:aaaaaaaa", "console", map[string]any{"role": "admin"}
+		if err := s.RecordAudit(ctx, sso); err != nil {
+			t.Fatal(err)
+		}
+		at := t0.Add(time.Minute)
+		if got := recordToken(t, s, tokenSignIn(t, tenant, "token:aaaaaaaa", at)); !got.Equal(at) {
+			t.Fatalf("covered by %v, want %v", got, at)
+		}
+		if got := signIns(t, s, tenant); len(got) != 2 {
+			t.Fatalf("sign-ins = %+v", got)
+		}
+	})
+
+	t.Run("other actors and tenants don't cover", func(t *testing.T) {
+		s, tenant := newStore(t), "tenant-"+randomHex(t)
+		recordToken(t, s, tokenSignIn(t, tenant, "token:aaaaaaaa", t0))
+		at := t0.Add(time.Minute)
+		if got := recordToken(t, s, tokenSignIn(t, tenant, "token:bbbbbbbb", at)); !got.Equal(at) {
+			t.Fatalf("another actor: covered by %v, want %v", got, at)
+		}
+		other := "tenant-" + randomHex(t)
+		if got := recordToken(t, s, tokenSignIn(t, other, "token:aaaaaaaa", at)); !got.Equal(at) {
+			t.Fatalf("another tenant: covered by %v, want %v", got, at)
+		}
+		if got := signIns(t, s, tenant); len(got) != 2 {
+			t.Fatalf("sign-ins = %+v", got)
+		}
+		if got := signIns(t, s, other); len(got) != 1 {
+			t.Fatalf("other tenant's sign-ins = %+v", got)
+		}
+	})
+
+	t.Run("concurrent calls record one entry", func(t *testing.T) {
+		s, tenant := newStore(t), "tenant-"+randomHex(t)
+		const n = 20
+		var wg sync.WaitGroup
+		covered := make([]time.Time, n)
+		errs := make([]error, n)
+		for i := range n {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				covered[i], errs[i] = s.RecordTokenSignIn(ctx, tokenSignIn(t, tenant, "token:aaaaaaaa", t0), time.Hour)
+			}()
+		}
+		wg.Wait()
+		for i := range n {
+			if errs[i] != nil || !covered[i].Equal(t0) {
+				t.Fatalf("call %d = %v, %v", i, covered[i], errs[i])
+			}
+		}
+		if got := signIns(t, s, tenant); len(got) != 1 {
+			t.Fatalf("sign-ins = %+v", got)
 		}
 	})
 }
