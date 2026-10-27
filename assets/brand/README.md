@@ -9,7 +9,7 @@ one signal orange that means admin is held now).
 | `altiward-mark-on-dark.svg` | The mark on graphite and other dark grounds: paper steps, orange top step |
 | `altiward-mark-mono.svg` | One ink, for stamps and single-colour print |
 | `altiward-avatar.svg` | The GitHub organisation's and other square profile pictures; the mark stays inside the inscribed circle, so circle crops keep it whole |
-| `altiward-app-icon.svg` | The macOS app icon: graphite body, paper steps, orange top step |
+| `altiward-app-icon.svg` | The macOS app icon: graphite body, paper steps, orange top step. Also the logo in this README and the organisation profile, because it reads on light and dark grounds alike: GitHub picks a `<picture>` source by the computer's light or dark setting, not GitHub's own theme |
 | `altiward-app-icon-signal.svg` | The orange alternate, for the website and release notes only, never in the Dock |
 
 Never rotate, outline, round, shadow or animate the mark.
