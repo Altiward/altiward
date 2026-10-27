@@ -90,11 +90,7 @@ use one, the server revokes the key and raises an alert, and the Mac enrols agai
 See [settings](docs/install.md#6-settings-worth-reviewing) and the agent's
 [design notes](agent/README.md#design-notes).
 
-### Status
-
-The agent needs macOS 13 or later.
-
-Known limits:
+### Good to know
 
 - Altiward needs SAP Privileges to grant admin rights; it has no way to grant them itself.
   Without Privileges, every admin who isn't a permanent admin shows as one nobody granted.
@@ -121,12 +117,41 @@ Known limits:
 - Altiward doesn't have Apple's Endpoint Security entitlement, so it shows what changed
   during an elevation rather than every process that ran; your EDR covers that. The
   process behind admin rights nobody granted comes from Privileges' own system extension,
-  so it needs Privileges 2.6 or later with the extension on, on macOS 14 or later.
+  so it needs Privileges 2.6 or later with the extension on.
 - Persistence found during an elevation is reported, never undone, except for admin
   rights: an account an elevated user created as an admin, or added to `admin`, holds
   rights nobody granted, and with `OutOfBandEnforcement` on `enforce` the agent removes
   them (the account stays). Responding to the rest is a job for your EDR or MDM: Altiward
   changes nothing on a Mac but the `admin` group.
+
+## Requirements
+
+**On each Mac**
+
+| | Minimum | Notes |
+| --- | --- | --- |
+| macOS | 14 Sonoma | |
+| Chip | Apple silicon or Intel | The Mac's key is kept in the Secure Enclave on Apple silicon and on Intel Macs with a T2 chip, and in a root-only file on other Intel Macs |
+| SAP Privileges | 2.5, with its system extension on | With 2.6 or later, the agent also confirms each grant against Privileges' own log and names the process behind admin rights nobody granted |
+
+**Around them**
+
+- **An MDM** that can install a package and configuration profiles, including a system
+  extension policy and Full Disk Access for Privileges' extension: Jamf Pro, Intune,
+  Kandji, Mosyle or similar.
+- **A server:** Linux on x86_64 or Arm with Docker Engine and the Compose plugin (to
+  start, 2 vCPUs, 4 GB of memory and 20 GB of disk), or Azure Container Apps through
+  [Deploy to Azure](deploy/azure/README.md).
+- **Postgres:** the one in the bundle, your own (tested with Postgres 17), or the one
+  Deploy to Azure creates.
+- **Two DNS names**, one for Macs and one for the console (on Azure, one address serves
+  both). Macs report over port 443 from wherever they are, and Caddy also needs port 80
+  to get certificates unless you bring your own.
+- **The agent and server from the same release.**
+- **Optional:** single sign-on through OpenID Connect (Entra ID or Okta), and a SIEM
+  (Splunk, Microsoft Sentinel or syslog).
+
+[Before you start](docs/install.md#before-you-start) in the install guide has the details.
 
 ## Quick start
 
@@ -145,8 +170,8 @@ When it says `Demo ready`, open http://localhost:8080 and sign in with
 also deletes the demo data; leave out `-v` to keep it. [dev/README.md](dev/README.md) has
 the details and fixes for common errors.
 
-For a real deployment you need a Linux server with Docker Compose, two DNS names (one for Macs, one for the
-console), and an MDM. The [install guide](docs/install.md) covers each step, running on
+For a real deployment, check the [requirements](#requirements) first. The
+[install guide](docs/install.md) covers each step, running on
 your own Postgres or load balancer, backups and troubleshooting. On Azure,
 [Deploy to Azure](deploy/azure/README.md) creates the server in your
 subscription instead, on Azure Container Apps, with no VM to look after:
