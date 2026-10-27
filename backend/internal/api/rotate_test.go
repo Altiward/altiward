@@ -64,6 +64,7 @@ type flakyStore struct {
 	// cancelled, as a real store does; staleKeyDeadline and rotateDeadline are the deadlines
 	// of the last one's context.
 	cancelledStaleKeyUsed, cancelledRotate bool
+	deadlines                              sync.Mutex // guards the two below: requests may run at once
 	staleKeyDeadline, rotateDeadline       time.Time
 	// held, when set, is sent the context of each Ingest of a rotated event, which then
 	// waits until release is closed.
@@ -86,7 +87,9 @@ func (f *flakyStore) StaleKeyUsed(ctx context.Context, deviceID string, signedAt
 	if f.failStaleKeyUsed {
 		return nil, errors.New("database unavailable")
 	}
+	f.deadlines.Lock()
 	f.staleKeyDeadline, _ = ctx.Deadline()
+	f.deadlines.Unlock()
 	if err := ctx.Err(); f.cancelledStaleKeyUsed && err != nil {
 		return nil, err
 	}
@@ -97,7 +100,9 @@ func (f *flakyStore) Rotate(ctx context.Context, r store.RotateRequest) (store.R
 	if f.failRotate {
 		return store.RotateResult{}, errors.New("database unavailable")
 	}
+	f.deadlines.Lock()
 	f.rotateDeadline, _ = ctx.Deadline()
+	f.deadlines.Unlock()
 	if err := ctx.Err(); f.cancelledRotate && err != nil {
 		return store.RotateResult{}, err
 	}
