@@ -16,8 +16,7 @@ case "$TARGET" in
     'assets/brand/altiward-mark-on-dark.svg:public/brand/altiward-mark-on-dark.svg'
   ) ;;
   github) files=(
-    'assets/brand/altiward-mark.svg:profile/images/altiward-mark.svg'
-    'assets/brand/altiward-mark-on-dark.svg:profile/images/altiward-mark-on-dark.svg'
+    'assets/brand/altiward-app-icon.svg:profile/images/altiward-app-icon.svg'
     'docs/images/console-overview.png:profile/images/console-overview.png'
   ) ;;
   website) files=('assets/brand/altiward-mark.svg:mark.svg') ;;

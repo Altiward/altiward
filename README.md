@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/altiward-mark-on-dark.svg">
-    <img src="assets/brand/altiward-mark.svg" alt="Altiward" width="72" height="72">
-  </picture>
+  <img src="assets/brand/altiward-app-icon.svg" alt="Altiward" width="96" height="96">
 </p>
 
 <h1 align="center">Altiward</h1>
