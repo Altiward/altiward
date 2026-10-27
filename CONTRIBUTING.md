@@ -74,7 +74,7 @@ Some things are contracts with people who already run Altiward. Please keep to t
   idempotent by `event_id`. Remove an event only after it is acknowledged.
 - **`docs/data-handling.md` is a promise to users.** Update it in the same change whenever
   the agent collects, the server stores or keeps, or either sends something new, and add a
-  line to `CHANGELOG.md`.
+  changelog fragment.
 - **Dependencies stay permissively licensed.** A new dependency must use a licence on the
   allowlist in `scripts/third-party-notices.mjs`. `make notices` fails otherwise. If you
   need something else, ask in the issue first.
@@ -101,7 +101,9 @@ case, and keep text at 4.5:1 contrast or better in both the light and dark theme
 ## Pull requests
 
 - Keep a pull request to one change, and say in it what and why, and how you tested it.
-- Add a `CHANGELOG.md` line for anything users will notice.
+- For anything users will notice, add a changelog fragment: a short file in
+  [`changelog.d/`](changelog.d/README.md). Don't edit `CHANGELOG.md`; the release writes
+  it, so pull requests don't conflict over it.
 - Naming: say "works with SAP Privileges" and nothing else; don't put "SAP" or
   "Privileges" in a product, binary or package name.
 

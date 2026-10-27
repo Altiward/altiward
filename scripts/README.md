@@ -5,6 +5,8 @@ Run these from the repository root, or use the corresponding Make target.
 | Tool | Purpose |
 | --- | --- |
 | [`server-bundle.sh`](server-bundle.sh) | Assemble the deployment archive, templates, SIEM content and notices |
+| [`changelog.sh`](changelog.sh) | Check the changelog fragments in `changelog.d/`, and fold them into `CHANGELOG.md` at a release |
+| [`test-changelog.sh`](test-changelog.sh) | Test `changelog.sh` and `release-notes.sh` on a made-up changelog |
 | [`release-notes.sh`](release-notes.sh) | Extract and validate a component's changelog section |
 | [`test-upgrade.sh`](test-upgrade.sh) | Install and upgrade a server in disposable Docker resources |
 | [`azure-template.sh`](azure-template.sh) | Move the Deploy to Azure template, and its buttons, to a server release |

@@ -53,8 +53,8 @@ const psql = (database, sql) => execFileSync("docker", ["compose", "-f", join(ro
 { stdio: ["ignore", "ignore", "inherit"] });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// The console shows the server's version. The site pictures the release being prepared, so
-// this is the newest Server section, released or not.
+// The console shows the server's version: the newest Server section's. To picture the
+// release being prepared, run this after `scripts/changelog.sh release` has written it.
 const version = readFileSync(join(root, "CHANGELOG.md"), "utf8").match(/^## Server (\S+) - /m)[1];
 const work = mkdtempSync(join(tmpdir(), "altiward-site-screenshots-"));
 const api = join(work, "altiward-api");

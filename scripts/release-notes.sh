@@ -1,8 +1,8 @@
 #!/bin/bash
 # Prints one release's section of CHANGELOG.md, the notes published with the release.
 # Fails if the section is missing, still unreleased, or lacks one of the four headings.
-# A server release candidate (X.Y.Z-rc.N) takes the coming release's section,
-# which may still be unreleased.
+# A server release candidate (X.Y.Z-rc.N) takes the coming release's section, or, until
+# the release writes it, the section changelog.d/ makes (scripts/changelog.sh).
 #
 #   scripts/release-notes.sh server 0.1.0
 #   scripts/release-notes.sh server 0.1.0-rc.1
@@ -34,6 +34,9 @@ SECTION="$(awk -v head="## $TITLE $RELEASE - " '
   found && /^## / { exit }
   found { print }
 ' CHANGELOG.md)"
+if [ -z "$SECTION" ] && [ -n "$CANDIDATE" ]; then
+  SECTION="$(scripts/changelog.sh show "$PRODUCT" "$RELEASE")"
+fi
 
 if [ -z "$SECTION" ]; then
   echo "CHANGELOG.md has no \"## $TITLE $RELEASE - <date>\" section" >&2

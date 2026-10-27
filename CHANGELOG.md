@@ -5,67 +5,9 @@ published on GitHub, and each release's section
 is its notes.
 
 Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
-`## Agent X.Y.Z - YYYY-MM-DD`. Write `unreleased` instead of the date until the day it
-ships: the release workflows refuse a version whose section is missing or unreleased.
-Every section has the four headings below, with "None." under any that don't apply.
-
-## Agent 1.0.1 - unreleased
-
-### Upgrade order
-
-None.
-
-### Breaking changes
-
-None.
-
-### Security
-
-None.
-
-### Changes
-
-- When a key rotation's outcome stays unknown, `altiward-agent status` says that the Mac's
-  reports wait for it, and shows the last answer that kept it waiting and when. An answer
-  that may come from something between the Mac and the server, such as an HTTP 5xx, a
-  timeout or a dropped connection, now says to check that the whole of `/v1/agent/`
-  reaches the server, in the log and in `status`, as a refused first request already did.
-  The agent keeps that answer in `agent.sqlite` only until the rotation settles
-  (`docs/data-handling.md`).
-
-## Server 1.0.1 - unreleased
-
-### Upgrade order
-
-Upgrade to this release from a directory of its files, as before: the `upgrade.sh` of
-1.0.0 can't download a release. From this release on, it can.
-
-### Breaking changes
-
-None.
-
-### Security
-
-- If storing a `rotated_key_used` alert failed, the server had already revoked the Mac's
-  current key and marked the use as reported, so an admin saw a revoked key with no alert,
-  and the key's other uses that day raised none. The alert is now stored in the same step:
-  if it can't be, nothing changes, and the key's next use is checked again.
-
-### Changes
-
-- `upgrade.sh` downloads the release when you give it a version: `./upgrade.sh 1.0.2`
-  fetches the five files it needs from GitHub into `releases/1.0.2/` in the deployment
-  directory, using `curl`, which goes through `HTTPS_PROXY` if it's set, then checks and
-  installs them as before. A failed download stops before anything changes and names the
-  file. A directory of release files still works, for servers without internet access.
-  The console's upgrade notice shows the one-line command.
-- With the inspector open on a laptop screen, the Sessions, Admins now and Fleet lists fit
-  their pane instead of scrolling sideways. As the pane narrows, the time-used bar shows
-  only its text, then the columns the inspector also shows give way: Started and Time
-  used, or Queued, macOS and Privileges.
-- The console's help tags stay inside the window. Near the right edge of a page or in the
-  inspector, they used to run off the screen or be cut off, and the inspector could scroll
-  sideways because of them.
+`## Agent X.Y.Z - YYYY-MM-DD`, with the four headings below and "None." under any that
+don't apply. Changes that haven't shipped wait in [`changelog.d/`](changelog.d/), one
+file each, and the release adds them here: don't edit this file in a pull request.
 
 ## Agent 1.0.0 - 2026-10-27
 
