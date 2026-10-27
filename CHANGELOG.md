@@ -9,6 +9,27 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
+## Server 1.0.1 - unreleased
+
+### Upgrade order
+
+None.
+
+### Breaking changes
+
+None.
+
+### Security
+
+- If storing a `rotated_key_used` alert failed, the server had already revoked the Mac's
+  current key and marked the use as reported, so an admin saw a revoked key with no alert,
+  and the key's other uses that day raised none. The alert is now stored in the same step:
+  if it can't be, nothing changes, and the key's next use is checked again.
+
+### Changes
+
+None.
+
 ## Agent 1.0.0 - 2026-10-27
 
 ### Upgrade order

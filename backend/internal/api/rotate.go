@@ -44,8 +44,8 @@ type rotateRequest struct {
 // is told so even though the key that signed it is revoked by now.
 //
 // A key that rotation replaced and that asks for anything else shows a second holder of
-// the Mac's identity: the store's contest settles it, and this raises rotated_key_used
-// when the contest calls for it.
+// the Mac's identity: the store's contest settles it, and stores rotated_key_used with it
+// when it calls for one.
 func (s *Server) rotate(w http.ResponseWriter, r *http.Request) {
 	cred, sr, body, ok := s.authenticateDevice(w, r)
 	if !ok {
@@ -75,12 +75,13 @@ func (s *Server) rotate(w http.ResponseWriter, r *http.Request) {
 	res, err := s.store.Rotate(r.Context(), store.RotateRequest{
 		TenantID: cred.TenantID, FromDeviceID: cred.DeviceID, DeviceID: id, PublicKey: spki,
 		KeyStorage: store.ParseKeyStorage(req.KeyStorage), SignedAt: time.Unix(sr.Timestamp, 0), Now: now,
+		Alert: staleKeyAlert(r, now),
 	})
 	switch {
 	case errors.Is(err, store.ErrRotatedElsewhere), errors.Is(err, store.ErrRevoked), errors.Is(err, store.ErrNotFound):
 		// A key that has been rotated away, whoever now holds it, is as dead as a revoked one.
 		if res.Contest != nil {
-			s.reportStaleKeyUse(r, cred.TenantID, *res.Contest, now)
+			s.logStaleKeyUse(cred.TenantID, *res.Contest)
 		}
 		writeCodedError(w, http.StatusUnauthorized, codeCredentialInvalid, "device credential revoked")
 	case errors.Is(err, store.ErrInvalidState):

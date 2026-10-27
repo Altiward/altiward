@@ -81,7 +81,7 @@ func (f *flakyStore) Ingest(ctx context.Context, tenantID string, events []event
 	return f.Store.Ingest(ctx, tenantID, events, receivedAt)
 }
 
-func (f *flakyStore) StaleKeyUsed(ctx context.Context, deviceID string, signedAt, now time.Time) (*store.ContestResult, error) {
+func (f *flakyStore) StaleKeyUsed(ctx context.Context, deviceID string, signedAt, now time.Time, alert store.ContestAlert) (*store.ContestResult, error) {
 	if f.failStaleKeyUsed {
 		return nil, errors.New("database unavailable")
 	}
@@ -89,7 +89,7 @@ func (f *flakyStore) StaleKeyUsed(ctx context.Context, deviceID string, signedAt
 	if err := ctx.Err(); f.cancelledStaleKeyUsed && err != nil {
 		return nil, err
 	}
-	return f.Store.StaleKeyUsed(ctx, deviceID, signedAt, now)
+	return f.Store.StaleKeyUsed(ctx, deviceID, signedAt, now, alert)
 }
 
 func (f *flakyStore) Rotate(ctx context.Context, r store.RotateRequest) (store.RotateResult, error) {
