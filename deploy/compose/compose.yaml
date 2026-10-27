@@ -62,9 +62,16 @@ services:
       ALTIWARD_SYSLOG_FRAMING: ${ALTIWARD_SYSLOG_FRAMING:-}
       # An internal CA to trust for the SIEM and the identity provider.
       ALTIWARD_TRUSTED_CAS_FILE: ${ALTIWARD_TRUSTED_CAS_FILE:-}
+      # Intune connection (docs/install.md, "Connect Intune").
+      ALTIWARD_INTUNE_AUTH: ${ALTIWARD_INTUNE_AUTH:-}
+      ALTIWARD_INTUNE_TENANT_ID: ${ALTIWARD_INTUNE_TENANT_ID:-}
+      ALTIWARD_INTUNE_CLIENT_ID: ${ALTIWARD_INTUNE_CLIENT_ID:-}
+      ALTIWARD_INTUNE_CLIENT_SECRET: ${ALTIWARD_INTUNE_CLIENT_SECRET:-}
+      ALTIWARD_INTUNE_CERTIFICATE_FILE: ${ALTIWARD_INTUNE_CERTIFICATE_FILE:-}
     volumes:
       # CA files, such as your SIEM's: ALTIWARD_TRUSTED_CAS_FILE=/etc/altiward/certs/<file>,
-      # and the Sentinel certificate: ALTIWARD_SENTINEL_CERTIFICATE_FILE=/etc/altiward/certs/<file>
+      # and the Sentinel or Intune certificate: ALTIWARD_SENTINEL_CERTIFICATE_FILE or
+      # ALTIWARD_INTUNE_CERTIFICATE_FILE=/etc/altiward/certs/<file>
       - ./certs:/etc/altiward/certs:ro
     healthcheck:
       test: ["CMD", "/usr/local/bin/altiward-api", "health"]

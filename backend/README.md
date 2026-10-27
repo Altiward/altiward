@@ -136,6 +136,8 @@ out-of-band session).
 | `ALTIWARD_OIDC_TENANT` | the only tenant | The Altiward tenant people who sign in belong to. Required when the tokens name more than one. |
 | `ALTIWARD_SPLUNK_HEC_URL`, `_HEC_TOKEN`, `_INDEX` | None | Enables the Splunk sink |
 | `ALTIWARD_SENTINEL_ENDPOINT`, `_DCR_ID`, `_STREAM`, `_TENANT_ID`, `_CLIENT_ID`, `_CLIENT_SECRET` | stream `Custom-AltiwardOCSF` | Enables the Sentinel sink |
+| `ALTIWARD_INTUNE_AUTH` | None | Turns on the read-only Microsoft Graph connection to Intune: `secret`, `certificate` or `managed-identity`. Setting any other `ALTIWARD_INTUNE_*` without it stops the server. Needs a server whose tokens name one tenant. Not an export sink. |
+| `ALTIWARD_INTUNE_TENANT_ID`, `_CLIENT_ID`, `_CLIENT_SECRET`, `_CERTIFICATE_FILE` | None | The app registration for `secret` (tenant, client ID and secret) or `certificate` (tenant, client ID and a PEM file with the certificate and private key). `managed-identity` needs none; `_CLIENT_ID` picks a user-assigned identity. |
 | `ALTIWARD_SYSLOG_ADDR`, `_TLS`, `_CA_FILE`, `_FORMAT`, `_FRAMING` | TLS, `cef`, `octet` | Enables the syslog sink; see [integrations/syslog](../integrations/syslog/README.md) |
 
 Each sink gets every exportable agent event and every console action from the audit log

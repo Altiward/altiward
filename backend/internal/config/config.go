@@ -40,7 +40,8 @@ type Config struct {
 	Splunk   *Splunk
 	Sentinel *Sentinel
 	Syslog   *Syslog
-	OIDC     *OIDC // console single sign-on; nil = console tokens only
+	OIDC     *OIDC   // console single sign-on; nil = console tokens only
+	Intune   *Intune // the Microsoft Graph connection; nil = off
 }
 
 // OIDC is the console's identity provider. Set ALTIWARD_OIDC_ISSUER to turn it on.
@@ -98,12 +99,39 @@ type Sentinel struct {
 	IdentityHeader   string
 }
 
-// How the Sentinel export signs in to Entra ID.
+// How the Sentinel export and the Intune connection sign in to Entra ID.
 const (
-	SentinelSecret          = "secret"           // an app registration's client secret
-	SentinelCertificate     = "certificate"      // an app registration's certificate, from a file
-	SentinelManagedIdentity = "managed-identity" // the Azure VM's or container app's managed identity
+	AuthSecret          = "secret"           // an app registration's client secret
+	AuthCertificate     = "certificate"      // an app registration's certificate, from a file
+	AuthManagedIdentity = "managed-identity" // the Azure VM's or container app's managed identity
 )
+
+// The Sentinel export's names for them.
+const (
+	SentinelSecret          = AuthSecret
+	SentinelCertificate     = AuthCertificate
+	SentinelManagedIdentity = AuthManagedIdentity
+)
+
+// Intune is the read-only Microsoft Graph connection that lists the organisation's Macs.
+// It is not an export sink.
+type Intune struct {
+	Auth     string // ALTIWARD_INTUNE_AUTH: AuthSecret, AuthCertificate or AuthManagedIdentity; empty turns it off
+	TenantID string // ALTIWARD_INTUNE_TENANT_ID: the Entra tenant; secret and certificate only
+	// ALTIWARD_INTUNE_CLIENT_ID: the app registration's, or with a managed identity, a
+	// user-assigned identity's (empty = the VM's or container app's system-assigned identity)
+	ClientID     string
+	ClientSecret string // ALTIWARD_INTUNE_CLIENT_SECRET; secret only
+	// ALTIWARD_INTUNE_CERTIFICATE_FILE; certificate only: a PEM file with the app's
+	// certificate and its private key
+	CertificateFile string
+	// IDENTITY_ENDPOINT and IDENTITY_HEADER, set by Azure Container Apps for an app with a
+	// managed identity; managed identity only. Empty means a VM's IMDS.
+	IdentityEndpoint string
+	IdentityHeader   string
+	// Tenant is the Altiward tenant the Macs belong to: the one the tokens name.
+	Tenant string
+}
 
 // Load reads and validates the environment.
 func Load(getenv func(string) string) (Config, error) {
@@ -240,7 +268,60 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 		c.OIDC = o
 	}
+	i, err := loadIntune(getenv, c.AgentTokens, c.ConsoleTokens)
+	if err != nil {
+		return c, err
+	}
+	c.Intune = i
 	return c, nil
+}
+
+// loadIntune reads the ALTIWARD_INTUNE_* settings. Setting any of them without AUTH is an
+// error, so a half-written connection is never silently off.
+func loadIntune(getenv func(string) string, agentTokens, consoleTokens string) (*Intune, error) {
+	i := &Intune{
+		Auth:            getenv("ALTIWARD_INTUNE_AUTH"),
+		TenantID:        getenv("ALTIWARD_INTUNE_TENANT_ID"),
+		ClientID:        getenv("ALTIWARD_INTUNE_CLIENT_ID"),
+		ClientSecret:    getenv("ALTIWARD_INTUNE_CLIENT_SECRET"),
+		CertificateFile: getenv("ALTIWARD_INTUNE_CERTIFICATE_FILE"),
+	}
+	if i.Auth == "" {
+		if i.TenantID != "" || i.ClientID != "" || i.ClientSecret != "" || i.CertificateFile != "" {
+			return nil, errors.New("set ALTIWARD_INTUNE_AUTH to turn Intune on (secret, certificate or managed-identity)")
+		}
+		return nil, nil
+	}
+	if !slices.Contains([]string{AuthSecret, AuthCertificate, AuthManagedIdentity}, i.Auth) {
+		return nil, fmt.Errorf("ALTIWARD_INTUNE_AUTH: want secret, certificate or managed-identity, got %q", i.Auth)
+	}
+	if i.CertificateFile != "" && i.Auth != AuthCertificate {
+		return nil, errors.New("ALTIWARD_INTUNE_CERTIFICATE_FILE is only used with ALTIWARD_INTUNE_AUTH=certificate")
+	}
+	switch i.Auth {
+	case AuthSecret:
+		if i.TenantID == "" || i.ClientID == "" || i.ClientSecret == "" {
+			return nil, errors.New("ALTIWARD_INTUNE_AUTH=secret needs ALTIWARD_INTUNE_TENANT_ID, CLIENT_ID and CLIENT_SECRET")
+		}
+	case AuthCertificate:
+		if i.TenantID == "" || i.ClientID == "" || i.CertificateFile == "" {
+			return nil, errors.New("ALTIWARD_INTUNE_AUTH=certificate needs ALTIWARD_INTUNE_TENANT_ID, CLIENT_ID and CERTIFICATE_FILE")
+		}
+		if i.ClientSecret != "" {
+			return nil, errors.New("ALTIWARD_INTUNE_CLIENT_SECRET isn't used with ALTIWARD_INTUNE_AUTH=certificate: remove it")
+		}
+	case AuthManagedIdentity:
+		if i.ClientSecret != "" {
+			return nil, errors.New("ALTIWARD_INTUNE_CLIENT_SECRET isn't used with ALTIWARD_INTUNE_AUTH=managed-identity: remove it")
+		}
+		i.IdentityEndpoint, i.IdentityHeader = getenv("IDENTITY_ENDPOINT"), getenv("IDENTITY_HEADER")
+	}
+	tenants := tokenTenants(agentTokens + "," + consoleTokens)
+	if len(tenants) != 1 {
+		return nil, errors.New("ALTIWARD_INTUNE_* needs a server with one tenant: the tokens name more than one")
+	}
+	i.Tenant = tenants[0]
+	return i, nil
 }
 
 func loadOIDC(getenv func(string) string, issuer, agentTokens, consoleTokens string) (*OIDC, error) {
