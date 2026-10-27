@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "event_id": "9b4e2d71-3c5a-4f8e-a6d2-7e1f0c9b8a35",
+  "type": "agent.tamper",
+  "session_id": null,
+  "timestamp": "2026-10-16T10:10:00Z",
+  "device": {
+    "serial": "C02XK0AAJGH5",
+    "hardware_uuid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+    "os_version": "26.1.0",
+    "agent_version": "0.1.0",
+    "privileges_version": "2.6.0"
+  },
+  "user": null,
+  "elevation": null,
+  "delayed": false,
+  "detail": {
+    "check": "privileges_blocked",
+    "state": "detected",
+    "problem": "SAP Privileges blocked /bin/rm from trying to delete /Applications/Privileges.app (2 attempts)",
+    "blocked_action": "DELETE",
+    "item": "/Applications/Privileges.app",
+    "instigator": {
+      "executable": "/bin/rm",
+      "signing_id": "com.apple.rm",
+      "team_id": "",
+      "platform_binary": true,
+      "pid": 812,
+      "ppid": 700,
+      "tty": "/dev/ttys001"
+    },
+    "attempts": 2,
+    "first_attempt": "2026-10-16T10:07:12.104Z",
+    "last_attempt": "2026-10-16T10:07:20.551Z"
+  }
+}
