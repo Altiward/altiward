@@ -11,12 +11,15 @@ import { explanations } from "../explanations";
 import { dateTime, lastCheckIn, relativeTime } from "../format";
 import { useLoad } from "../useLoad";
 
-type Filter = CredentialStatus | "all";
+type Filter = CredentialStatus | "rotated" | "all";
 const statusTitle: Record<CredentialStatus, string> = { active: "Active", pending: "Waiting for approval", revoked: "Revoked" };
 const statusLook = { active: "verified", pending: "claimed", revoked: "ended" } as const;
 /** A key replaced by rotation is revoked too, but says "Rotated": nobody revoked it, and there is
  *  nothing to do about it. */
 const isRotated = (e: Enrollment) => e.status === "revoked" && !!e.rotated_to;
+/** Rotated keys have a filter of their own, so Revoked lists only keys someone revoked. */
+const shows = (filter: Filter, e: Enrollment) =>
+  filter === "all" || (filter === "rotated" ? isRotated(e) : e.status === filter && !isRotated(e));
 const Status = ({ enrollment: e, explain }: { enrollment: Enrollment; explain?: boolean }) => isRotated(e)
   ? explain
     ? <Explain tip={explanations.rotated} bare><StateBadge state="ended" label="Rotated" glyph={RotatedGlyph} /></Explain>
@@ -56,11 +59,21 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return (data ?? []).filter((e) => (filter === "all" || e.status === filter) && (!q || e.serial.toLowerCase().includes(q) || e.token.toLowerCase().includes(q)));
+    return (data ?? []).filter((e) => shows(filter, e) && (!q || e.serial.toLowerCase().includes(q) || e.token.toLowerCase().includes(q)));
   }, [data, filter, query]);
   const current = rows.find((e) => e.device_id === selected) ?? null;
   const pending = (data ?? []).filter((e) => e.status === "pending").length;
   const byID = (id: string | undefined) => (data ?? []).find((e) => e.device_id === id);
+  // The key in use after a rotated key: the end of its rotations, when that key is active.
+  const inUseAfter = (e: Enrollment) => {
+    const seen = new Set([e.device_id]);
+    let key = byID(e.rotated_to);
+    while (key?.rotated_to && !seen.has(key.device_id)) {
+      seen.add(key.device_id);
+      key = byID(key.rotated_to);
+    }
+    return key?.status === "active" ? key : undefined;
+  };
   const keyInUse = byID(rotatedTo ?? undefined);
   // A key may be hidden by the filter or the search: show them all, then select it.
   const follow = (id: string) => { setFilter("all"); setQuery(""); setRotatedTo(null); setSelected(id); };
@@ -71,6 +84,7 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
         <Segmented label="Show" value={filter} onChange={setFilter} options={[
           { value: "all", title: "All" }, { value: "pending", title: "Waiting" },
           { value: "active", title: "Active" }, { value: "revoked", title: "Revoked" },
+          { value: "rotated", title: "Rotated" },
         ]} />
         <SearchField value={query} onChange={setQuery} placeholder="Search serial numbers and tokens" />
       </Toolbar>
@@ -85,7 +99,7 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
           )}
           {data && rows.length === 0 ? (
             <Empty title={data.length ? "No matching enrollments" : "No Macs enrolled yet"}>
-              {data.length ? "Try another filter." : "A Mac enrolls the first time its agent reaches the server with your enrollment token."}
+              {data.length ? "Try another filter." : "A Mac enrols the first time its agent reaches the server with your enrolment token."}
             </Empty>
           ) : (
             <Table label="Enrollments" rows={rows} rowKey={(e) => e.device_id} selected={selected} onSelect={setSelected}
@@ -109,7 +123,8 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
         {current && (
           <EnrollmentInspector enrollment={current} onClose={() => setSelected(null)} evidenceVersion={evidenceVersion}
             active={(data ?? []).find((e) => e.serial === current.serial && e.device_id !== current.device_id && e.status === "active")}
-            predecessor={byID(current.rotated_from)} successor={byID(current.rotated_to)} onFollow={follow}
+            predecessor={byID(current.rotated_from)} successor={byID(current.rotated_to)} inUse={inUseAfter(current)}
+            onFollow={follow}
             onRotated={async (id) => { await reload(); setDone(null); setRotatedTo(id); }}
             onDone={(text) => { setDone(text); setRotatedTo(null); void reload(); onChanged?.(); }} />
         )}
@@ -119,8 +134,10 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
 }
 
 /** A pending key replaces the Mac's active key when approved, if it has one. */
-function EnrollmentInspector({ enrollment: e, active, predecessor, successor, evidenceVersion, onClose, onDone, onRotated, onFollow }: {
+function EnrollmentInspector({ enrollment: e, active, predecessor, successor, inUse, evidenceVersion, onClose, onDone, onRotated, onFollow }: {
   enrollment: Enrollment; active: Enrollment | undefined; predecessor: Enrollment | undefined; successor: Enrollment | undefined;
+  /** For a rotated key, the active key its rotations led to, if the list has it. */
+  inUse: Enrollment | undefined;
   evidenceVersion: number; onClose: () => void; onDone: (message: string) => void;
   /** The server refused a revoke because the key was rotated: its answer names the key in use. */
   onRotated: (keyInUse: string) => Promise<void>; onFollow: (deviceID: string) => void;
@@ -185,6 +202,7 @@ function EnrollmentInspector({ enrollment: e, active, predecessor, successor, ev
       <div className="group">
         <Details rows={[
           ["Key fingerprint", <span key="fp" className="data"><Fingerprint publicKey={e.public_key} /></span>],
+          ["Device ID", <span key="id" className="data">{e.device_id}</span>],
           ...(e.rotated_from ? [["Rotated from", predecessor
             ? <KeyLink key="from" enrollment={predecessor} onFollow={onFollow} />
             : <Missing key="from">Not in this list</Missing>] as [string, JSX.Element]] : []),
@@ -195,13 +213,16 @@ function EnrollmentInspector({ enrollment: e, active, predecessor, successor, ev
           </Explain>],
           ["Enrolled", dateTime(e.created_at)],
           ["Activated", e.activated_at ? dateTime(e.activated_at) : <Missing key="activated">Not yet</Missing>],
-          ["Revoked", e.revoked_at ? dateTime(e.revoked_at) : <Missing key="revoked">Not revoked</Missing>],
+          // A rotated key's date is in the note below, as when rotation replaced it.
+          ...(isRotated(e) ? [] : [["Revoked", e.revoked_at ? dateTime(e.revoked_at) : <Missing key="revoked">Not revoked</Missing>]] as [string, JSX.Element | string][]),
         ]} />
       </div>
       {isRotated(e) && (
         <p className="secondary" style={{ marginTop: 12 }}>
           Replaced by rotation on {e.revoked_at ? dateTime(e.revoked_at) : "an unknown date"}.
-          {successor && <> The key that replaced it is <KeyLink enrollment={successor} onFollow={onFollow} />.</>}
+          {inUse
+            ? <> The key in use is <KeyLink enrollment={inUse} onFollow={onFollow} />.</>
+            : successor && <> The key that replaced it is <KeyLink enrollment={successor} onFollow={onFollow} />.</>}
         </p>
       )}
       {e.status === "pending" && !newMac && (
@@ -220,7 +241,8 @@ function EnrollmentInspector({ enrollment: e, active, predecessor, successor, ev
       {e.status === "active" && e.key_storage !== "secure_enclave" && (
         <p className="secondary" style={{ marginTop: 12 }}>
           This key is in a file, so someone with admin rights on the Mac could copy it and report as this Mac from
-          elsewhere. The agent moves this key into the Secure Enclave by itself.
+          elsewhere. With agent 1.0 or later, the agent moves this key into the Secure Enclave by itself, or, on a
+          Mac without one, replaces it every 30 days.
         </p>
       )}
       {e.status === "pending" && newMac && (
@@ -235,8 +257,10 @@ function EnrollmentInspector({ enrollment: e, active, predecessor, successor, ev
         <ConfirmSheet
           title={e.status === "pending" ? `Reject the new key for ${e.serial}?` : `Revoke the key for ${e.serial}?`}
           message={e.status === "pending"
-            ? "The Mac keeps reporting with its previous key."
-            : "The Mac can’t report with this key. Unless re-enrollment needs approval, it enrolls again on its next check-in."}
+            ? active
+              ? "The Mac keeps reporting with its previous key."
+              : "This Mac has no active key, so it can’t report until it enrols again with a new key."
+            : "The Mac can’t report with this key. Unless re-enrolment needs approval, it enrols again on its next check-in."}
           confirm={e.status === "pending" ? "Reject" : "Revoke"} destructive busy={busy}
           onConfirm={() => act("revoke")} onCancel={() => setConfirming(false)} />
       )}

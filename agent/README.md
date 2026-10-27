@@ -140,9 +140,10 @@ profile that arrives after the package, or a later change, applies within second
 
 The agent enrols with the `EnrollmentToken` on first delivery, then signs every request
 with its own P-256 key. On a Mac with a Secure Enclave the daemon makes the key there; on
-other Macs, and on Macs that enrolled before agent 0.2.0, the key starts in the agent store
-under the root-only data directory. `altiward-agent status` shows the device ID and where
-the key is kept. Only the daemon can use a Secure Enclave key, so on such a Mac
+other Macs, and on Macs that enrolled before agent 0.2.0, the key starts in the agent
+store under the root-only data directory. `altiward-agent status` shows the device ID,
+where the key is kept, and the key's fingerprint as the console's Enrollments view shows
+it. Only the daemon can use a Secure Enclave key, so on such a Mac
 `altiward-agent heartbeat`, `flush`, `commands` and `simulate-hook` do their local part
 and leave the sending to the daemon. When the server's enrolment limits refuse the Mac
 (HTTP 429), the agent doesn't try to enrol again until `Retry-After` says, an hour if it
@@ -155,18 +156,23 @@ when the agent first sees it, so an upgrade doesn't rotate every Mac at once. A 
 Enclave key is never replaced. The daemon checks after each long poll and at least hourly,
 starting 5 to 65 minutes after it starts, and only once the current key has signed a
 request successfully since then. The server also wants the key to have been active for 24
-hours. The Mac makes the new key, signs a proof with it, and asks the server to swap, in
-a request signed by the old key. Nothing waits for approval, because the old key vouched
-for the new one. Until the server's answer is known the agent keeps both keys, asks again
-at most every 15 seconds, and sends nothing else signed by the old key, so events stay
-queued. A command run beside the daemon (`altiward-agent heartbeat` and the others)
-never rotates, and while a rotation is unresolved it sends nothing and says the daemon is
-rotating the key. `altiward-agent status` shows "key rotation: in progress since
-<date>" while one is. A server that doesn't know rotation (HTTP 404 or 405), or refuses
-it, leaves the Mac's key in place and the agent tries again a day later (after
-`Retry-After` for HTTP 429). If the server says the old key is dead, or this Mac's Secure
-Enclave can't use the replacement it saved, the agent drops both keys and enrols again
-(and waits for approval when approval is on).
+hours. The Mac makes the new key, signs a proof with it, and asks the server to swap, in a
+request signed by the old key. Nothing waits for approval, because the old key vouched for
+the new one. Until the server's answer is known the agent keeps both keys, asks again at
+most every 15 seconds, and sends nothing else signed by the old key, so events stay
+queued. A command run beside the daemon (`altiward-agent heartbeat` and the others) never
+rotates, and while a rotation is unresolved it sends nothing and says the daemon is
+rotating the key. `altiward-agent status` shows "key rotation: in progress since <date>"
+while one is. A server that doesn't know rotation (HTTP 404 or 405), or refuses it, leaves
+the Mac's key in place and the agent tries again a day later (after `Retry-After` for HTTP
+429). On a retry, only the server's refusal, with its code, counts: an HTTP 400, 403, 409
+or 429 without one, such as a proxy's block page, says nothing about an earlier attempt
+that may have gone through, so the agent keeps both keys and asks again. Such an answer to
+the first send, which can't have committed anything, counts as a refusal, so a firewall
+that blocks the rotate path delays the rotation without stopping the Mac's reports. If the
+server says the old key is dead, or this Mac's Secure Enclave can't use the replacement it
+saved, the agent drops both keys and enrols again (and waits for approval when approval is
+on).
 
 Remote commands are fetched by a long poll the server holds for up to 50 seconds, so a
 revoke lands within about a second; also after each heartbeat and when the network

@@ -95,7 +95,7 @@ func rotationEvent(tenantID string, res store.RotateResult, userAgent string, no
 // Its ID is random. One made from what the event reports could be worked out by the Mac,
 // which could then send an event of its own with that ID first, and this one would be
 // dropped as a duplicate. The store reports a stale key at most once a day instead.
-func rotatedKeyUsedEvent(tenantID string, c store.ContestResult, userAgent string, now time.Time) event.Event {
+func rotatedKeyUsedEvent(c store.ContestResult, userAgent string, now time.Time) event.Event {
 	stale := c.Stale
 	detail := map[string]any{
 		"state":           event.EnrollmentStateRotatedKeyUsed,

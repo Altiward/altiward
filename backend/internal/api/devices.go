@@ -35,6 +35,10 @@ const enrollRetryAfter = "3600"
 // enrolment, a rotation or a stale key's use), which doesn't stop when the request does.
 const enrollEventTimeout = 10 * time.Second
 
+// staleKeyContestTimeout bounds the contest a stale key's use starts, which, like the event
+// it may raise, doesn't stop when the request does.
+const staleKeyContestTimeout = 10 * time.Second
+
 // requireDevice authenticates a request signed by an enrolled Mac and hands the
 // handler a principal carrying its tenant, device ID and serial.
 func (s *Server) requireDevice(h handler) http.Handler {
@@ -61,10 +65,13 @@ func (s *Server) requireDevice(h handler) http.Handler {
 
 // staleKeyUsed resolves the contest when cred, a key that rotation replaced, signed sr and
 // the signature verified. The request is refused with 401 whatever this finds, so a failure
-// is only logged.
+// is only logged. A client that gives up now must not stop the contest, as for storeRaised,
+// but a database that doesn't answer still mustn't hold the handler.
 func (s *Server) staleKeyUsed(r *http.Request, cred store.DeviceCredential, sr auth.SignedRequest) {
 	now := s.now()
-	c, err := s.store.StaleKeyUsed(r.Context(), cred.DeviceID, time.Unix(sr.Timestamp, 0), now)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), staleKeyContestTimeout)
+	defer cancel()
+	c, err := s.store.StaleKeyUsed(ctx, cred.DeviceID, time.Unix(sr.Timestamp, 0), now)
 	if err != nil {
 		s.log.Error("stale key contest", "tenant", cred.TenantID, "serial", cred.Serial, "device_id", cred.DeviceID, "err", err)
 		return
@@ -87,7 +94,7 @@ func (s *Server) reportStaleKeyUse(r *http.Request, tenantID string, c store.Con
 	st := c.Stale
 	s.log.Warn("rotated device key used", "tenant", tenantID, "serial", st.Serial, "device_id", st.DeviceID,
 		"rotated_to", st.RotatedTo, "revoked_device_id", revoked)
-	if err := s.storeRaised(r, tenantID, rotatedKeyUsedEvent(tenantID, c, r.UserAgent(), now), now); err != nil {
+	if err := s.storeRaised(r, tenantID, rotatedKeyUsedEvent(c, r.UserAgent(), now), now); err != nil {
 		s.log.Error("rotated key use event not recorded", "tenant", tenantID, "serial", st.Serial, "device_id", st.DeviceID, "err", err)
 	}
 }

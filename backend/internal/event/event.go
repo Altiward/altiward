@@ -263,13 +263,13 @@ func (e *Event) Validate(now time.Time) error {
 	case AgentEnrollment:
 		st, _ := e.Detail["state"].(string)
 		id, _ := e.Detail["device_id"].(string)
+		knownState := false
 		switch st {
 		case EnrollmentStateEnrolled, EnrollmentStatePending, EnrollmentStateReplaced,
 			EnrollmentStateRotated, EnrollmentStateRotatedKeyUsed:
-		default:
-			id = ""
+			knownState = true
 		}
-		if id == "" {
+		if !knownState || id == "" {
 			return fmt.Errorf("%s requires detail.state (enrolled, pending, replaced, rotated or rotated_key_used) and detail.device_id", e.Type)
 		}
 	}

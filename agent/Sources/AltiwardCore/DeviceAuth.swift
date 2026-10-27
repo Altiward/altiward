@@ -179,6 +179,25 @@ struct PendingRotation: Codable {
     var privateKey: Data
     var storage: KeyStorage
     var madeAt: Date
+    /// Whether the rotate request may have left the Mac. Set, and saved, before the first
+    /// send, so a refusal of a request never sent before can't hide an earlier commit.
+    /// Read leniently, and true when missing: a record that doesn't say is treated as sent.
+    var sent = true
+}
+
+extension PendingRotation {
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        serverURL = try c.decode(String.self, forKey: .serverURL)
+        fromDeviceID = try c.decode(String.self, forKey: .fromDeviceID)
+        fromPrivateKey = try c.decode(Data.self, forKey: .fromPrivateKey)
+        serial = try c.decode(String.self, forKey: .serial)
+        hardwareUUID = try c.decode(String.self, forKey: .hardwareUUID)
+        privateKey = try c.decode(Data.self, forKey: .privateKey)
+        storage = try c.decode(KeyStorage.self, forKey: .storage)
+        madeAt = try c.decode(Date.self, forKey: .madeAt)
+        sent = (try? c.decodeIfPresent(Bool.self, forKey: .sent)) ?? true
+    }
 }
 
 private extension DeviceInfo {
@@ -243,10 +262,15 @@ public actor DeviceAuthenticator {
         /// When the key was made. Nil in a record from before agent 1.0.0, and read
         /// leniently, so a value this agent can't read never costs it the key.
         var madeAt: Date?
+        /// The key's public half as SubjectPublicKeyInfo DER, so a command can show its
+        /// fingerprint without asking the Secure Enclave, which only the daemon may. Nil in
+        /// a record from before agent 1.0.0 until the daemon next signs with the key, and
+        /// read leniently like `madeAt`.
+        var publicKey: Data?
 
         init(
             serverURL: String, privateKey: Data, deviceID: String? = nil, serial: String?, hardwareUUID: String?,
-            madeAt: Date?
+            madeAt: Date?, publicKey: Data? = nil
         ) {
             self.serverURL = serverURL
             self.privateKey = privateKey
@@ -254,6 +278,7 @@ public actor DeviceAuthenticator {
             self.serial = serial
             self.hardwareUUID = hardwareUUID
             self.madeAt = madeAt
+            self.publicKey = publicKey
         }
 
         init(from decoder: any Decoder) throws {
@@ -264,6 +289,7 @@ public actor DeviceAuthenticator {
             serial = try c.decodeIfPresent(String.self, forKey: .serial)
             hardwareUUID = try c.decodeIfPresent(String.self, forKey: .hardwareUUID)
             madeAt = try? c.decodeIfPresent(Date.self, forKey: .madeAt)
+            publicKey = try? c.decodeIfPresent(Data.self, forKey: .publicKey)
         }
     }
 
@@ -366,6 +392,28 @@ public actor DeviceAuthenticator {
         (try? load())?.storage
     }
 
+    /// The fingerprint of the key for the configured server, as the console shows it, if
+    /// the store says. Reads the store only; it never asks the Secure Enclave, so a Secure
+    /// Enclave key enrolled before agent 1.0.0 has none until the daemon next signs with it.
+    public var keyFingerprint: String? {
+        guard let c = try? load() else { return nil }
+        guard let publicKey = c.credential.publicKey
+            ?? (c.storage == .software ? try? keys.publicKey(c.credential.privateKey, .software) : nil)
+        else { return nil }
+        return Self.fingerprint(publicKey: publicKey)
+    }
+
+    /// The first 64 bits of the SHA-256 of a key's SubjectPublicKeyInfo DER, in upper-case
+    /// hex in groups of four digits: how the console shows a key, so an admin can tell
+    /// which pending key is this Mac's.
+    public static func fingerprint(publicKey: Data) -> String {
+        let hex = SHA256.hash(data: publicKey).prefix(8).map { String(format: "%02X", $0) }.joined()
+        return stride(from: 0, to: hex.count, by: 4).map { start in
+            let from = hex.index(hex.startIndex, offsetBy: start)
+            return String(hex[from..<hex.index(from, offsetBy: 4)])
+        }.joined(separator: " ")
+    }
+
     /// When the rotation the daemon hasn't finished yet began, if there is one.
     public var rotationPendingSince: Date? {
         try? pendingSince()
@@ -407,7 +455,10 @@ public actor DeviceAuthenticator {
         case (403, "enrollment_pending"):
             throw DeliveryError.enrollmentPending
         default:
-            if (200..<300).contains(response.statusCode) { lastSignedSuccess = (signedWith, now()) }
+            if (200..<300).contains(response.statusCode) {
+                lastSignedSuccess = (signedWith, now())
+                recordPublicKey(used)
+            }
             return (data, response, signedWith)
         }
     }
@@ -596,7 +647,7 @@ public actor DeviceAuthenticator {
                 let pending = PendingRotation(
                     serverURL: serverURL.absoluteString, fromDeviceID: fromDeviceID,
                     fromPrivateKey: current.credential.privateKey, serial: serial, hardwareUUID: hardwareUUID,
-                    privateKey: key, storage: storage, madeAt: now())
+                    privateKey: key, storage: storage, madeAt: now(), sent: false)
                 try store.setValue(Self.encode(pending), forKey: PendingRotation.storeKey)
                 return .saved(pending)
             }
@@ -715,6 +766,9 @@ public actor DeviceAuthenticator {
                 log("the Secure Enclave can't use the key this Mac was rotating to (\(error)); enrolling again with a new key")
                 return dropRotation(pending, alsoTheOldKey: true, .enrolAgain)
             }
+            // Counts like a failure to make one: once the saved rotation settles, a Mac whose
+            // Secure Enclave keeps failing rotates on the 30-day schedule instead.
+            if pending.storage == .secureEnclave { secureEnclaveFailures += 1 }
             return holding("couldn't sign with the new key: \(error)")
         }
         return await requestRotation(pending, proven)
@@ -724,6 +778,17 @@ public actor DeviceAuthenticator {
     /// retry, and what its answer means. Holding the gate.
     private func requestRotation(_ pending: PendingRotation, _ proven: Proven) async -> RotationOutcome {
         lastRotationAttempt = now()
+        // A request that has never left the Mac can't have committed, so any refusal of
+        // its first send is final. That it went is saved before it goes, so a restart after
+        // sending never takes a retry for a first send.
+        let firstSend = !pending.sent
+        if firstSend {
+            do {
+                guard try markSent(pending) else { return settled(.notDue) }
+            } catch {
+                return holding("couldn't save that the rotation is being sent: \(error)")
+            }
+        }
         let old = Stored(
             credential: Credential(
                 serverURL: pending.serverURL, privateKey: pending.fromPrivateKey, deviceID: pending.fromDeviceID,
@@ -760,7 +825,7 @@ public actor DeviceAuthenticator {
                 !id.isEmpty, id != pending.fromDeviceID
             else { return holding("HTTP \(status) without a key: \(Self.excerpt(data))") }
             switch answer.status {
-            case "active": return commit(pending, deviceID: id)
+            case "active": return commit(pending, deviceID: id, publicKey: proven.publicKey)
             case "revoked":
                 log("the server revoked this Mac's new key; enrolling again")
                 return dropRotation(pending, alsoTheOldKey: true, .enrolAgain)
@@ -771,11 +836,23 @@ public actor DeviceAuthenticator {
             return dropRotation(pending, alsoTheOldKey: true, .enrolAgain)
         case 400, 403, 404, 405, 409, 429:
             // Not done, now or on any earlier attempt: the server answers a retry before
-            // anything else. The current key stays.
-            let wait = status == 429 ? retryDelay(response.value(forHTTPHeaderField: "Retry-After")) : Self.rotationDeferral
+            // anything else. The current key stays. But on a retry only Altiward's own
+            // refusal, with its code, says so: a proxy's block page or throttle says nothing
+            // about an earlier attempt, which may have committed. A server without rotation
+            // has no code to send with its 404 or 405.
+            let coded = Self.refusesRotation(status, code: Self.code(data))
+            guard status == 404 || status == 405 || coded || firstSend else {
+                return holding("HTTP \(status) without the server's refusal code: \(Self.excerpt(data))")
+            }
+            let wait = status == 429 && coded
+                ? retryDelay(response.value(forHTTPHeaderField: "Retry-After")) : Self.rotationDeferral
             let until = now().addingTimeInterval(wait)
             if status == 404 || status == 405 {
                 log("the server does not support key rotation yet; keeping the current key")
+            } else if !coded {
+                log("something other than the server refused the request to rotate this Mac's key (HTTP \(status): "
+                    + "\(Self.excerpt(data))); keeping the current key until \(until.formatted(.iso8601)). "
+                    + "Check that the whole of /v1/agent/ reaches the server")
             } else {
                 log("the server refused to rotate this Mac's key (HTTP \(status): \(Self.excerpt(data))); "
                     + "keeping the current key until \(until.formatted(.iso8601))")
@@ -790,7 +867,7 @@ public actor DeviceAuthenticator {
     /// record for its kind, unless the saved rotation changed meanwhile. If the store
     /// can't be written, the rotation stays saved and the retry, answered with the same
     /// key, commits it.
-    private func commit(_ pending: PendingRotation, deviceID: String) -> RotationOutcome {
+    private func commit(_ pending: PendingRotation, deviceID: String, publicKey: Data) -> RotationOutcome {
         do {
             let committed = try store.transaction { () -> Bool in
                 guard let raw = try store.value(forKey: PendingRotation.storeKey),
@@ -801,7 +878,8 @@ public actor DeviceAuthenticator {
                     Stored(
                         credential: Credential(
                             serverURL: pending.serverURL, privateKey: pending.privateKey, deviceID: deviceID,
-                            serial: pending.serial, hardwareUUID: pending.hardwareUUID, madeAt: pending.madeAt),
+                            serial: pending.serial, hardwareUUID: pending.hardwareUUID, madeAt: pending.madeAt,
+                            publicKey: publicKey),
                         storage: pending.storage))
                 try store.setValue(nil, forKey: Self.storeKey(pending.storage == .software ? .secureEnclave : .software))
                 try store.setValue(nil, forKey: PendingRotation.storeKey)
@@ -819,6 +897,20 @@ public actor DeviceAuthenticator {
             log("rotated this Mac's key")
         }
         return settled(.rotated(pending.storage))
+    }
+
+    /// Saves that `pending`'s rotate request is about to leave the Mac, if the saved rotation
+    /// still holds its key. False when it doesn't, and nothing is to be sent.
+    private func markSent(_ pending: PendingRotation) throws -> Bool {
+        try store.transaction {
+            guard let raw = try store.value(forKey: PendingRotation.storeKey),
+                var saved = try? JSONDecoder().decode(PendingRotation.self, from: Data(raw.utf8)),
+                saved.privateKey == pending.privateKey
+            else { return false }
+            saved.sent = true
+            try store.setValue(Self.encode(saved), forKey: PendingRotation.storeKey)
+            return true
+        }
     }
 
     /// Drops the saved rotation if it still holds `pending`'s key, and with
@@ -948,6 +1040,7 @@ public actor DeviceAuthenticator {
             throw DeliveryError.credentialInvalid
         }
         c.credential.deviceID = enrolled.device_id
+        c.credential.publicKey = publicKey
         try store.transaction {
             // Unless another process has replaced the key meanwhile.
             if try record(c.storage)?.privateKey == c.credential.privateKey { try save(c) }
@@ -1078,6 +1171,28 @@ public actor DeviceAuthenticator {
             String(decoding: try JSONEncoder().encode(c.credential), as: UTF8.self), forKey: Self.storeKey(c.storage))
     }
 
+    /// Saves the public half of a Secure Enclave key in its record, when a record from
+    /// before agent 1.0.0 lacks it, so `status` can show the key's fingerprint. In the
+    /// daemon, the only process that can use the key. A file key's needs no record: a
+    /// command works it out from the key.
+    private func recordPublicKey(_ c: Stored) {
+        guard role == .daemon, c.storage == .secureEnclave, c.credential.publicKey == nil,
+            let publicKey = try? keys.publicKey(c.credential.privateKey, c.storage)
+        else { return }
+        do {
+            try store.transaction {
+                // Unless another process has replaced the key meanwhile.
+                guard var current = try record(c.storage), current.privateKey == c.credential.privateKey,
+                    current.publicKey == nil
+                else { return }
+                current.publicKey = publicKey
+                try save(Stored(credential: current, storage: c.storage))
+            }
+        } catch {
+            log("couldn't record this Mac's public key (\(error)); trying again after the next report")
+        }
+    }
+
     /// Drops `c`'s record if it still holds `c`'s key. Another process sharing the store
     /// may have enrolled a new key since `c` was loaded; that one stays. Refuses while a
     /// rotation is saved, since its retry needs the old key's identity to stay.
@@ -1108,6 +1223,17 @@ public actor DeviceAuthenticator {
             return found
         }
         if discarded { log("the server says this key belongs to another Mac; enrolling again") }
+    }
+
+    /// Whether `code` is the one the server sends when it refuses a rotation with `status`.
+    private static func refusesRotation(_ status: Int, code: String?) -> Bool {
+        switch (status, code) {
+        case (400, "rotation_invalid"), (403, "enrollment_pending"), (409, "key_in_use"),
+            (409, "rotation_not_allowed"), (429, "rotation_rate_limited"):
+            return true
+        default:
+            return false
+        }
     }
 
     private static func code(_ data: Data) -> String? {

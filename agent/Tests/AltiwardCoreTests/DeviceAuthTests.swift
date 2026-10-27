@@ -465,6 +465,13 @@ struct RequestSigningTests {
         let other = RotationProof.statement(deviceID: "00000000-0000-4000-8000-000000000000", newPublicKey: key.derRepresentation)
         #expect(!key.isValidSignature(proof, for: Data(other.utf8)))
     }
+
+    /// The console's shortFingerprint gives the same for both keys (format.test.ts).
+    @Test func keyFingerprintMatchesTheConsole() throws {
+        let v = try SignatureVector.load()
+        #expect(DeviceAuthenticator.fingerprint(publicKey: Data(base64Encoded: v.publicKeySPKI)!) == "1A93 E3D5 98CC 0F43")
+        #expect(DeviceAuthenticator.fingerprint(publicKey: Data("abc".utf8)) == "BA78 16BF 8F01 CFEA")
+    }
 }
 
 struct DeviceAuthenticatorTests {
@@ -522,6 +529,61 @@ struct DeviceAuthenticatorTests {
         // A restarted agent reuses the stored credential.
         #expect(try await postEvents(authenticator(store, server)) == 200)
         #expect(server.enrollments.count == 1)
+    }
+
+    /// `status` shows the key's fingerprint as the console does, read from the store, so a
+    /// command shows a Secure Enclave key's without asking the Secure Enclave.
+    @Test func theKeyFingerprintIsReadFromTheStore() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let daemon = authenticator(store, server)
+        #expect(try await postEvents(daemon) == 200)
+        let enrollment = try #require(server.enrollments.first)
+        let enrolled = try #require(Data(base64Encoded: try enrolledKey(enrollment)))
+        let fingerprint = DeviceAuthenticator.fingerprint(publicKey: enrolled)
+        #expect(await daemon.keyStorage == .secureEnclave)
+        #expect(await daemon.keyFingerprint == fingerprint)
+
+        let unusable = FakeKeys()
+        unusable.busy(true)
+        #expect(await authenticator(store, server, keys: unusable, role: .command).keyFingerprint == fingerprint)
+    }
+
+    /// Replaces a stored record with one as agent 0.9 wrote it, without the public key.
+    func dropRecordedPublicKey(_ store: AgentStore, _ key: String) throws {
+        var record = try JSONSerialization.jsonObject(
+            with: Data(try #require(try store.value(forKey: key)).utf8)) as! [String: Any]
+        #expect(record.removeValue(forKey: "publicKey") != nil)
+        try store.setValue(String(decoding: try JSONSerialization.data(withJSONObject: record), as: UTF8.self), forKey: key)
+    }
+
+    /// A Secure Enclave record from before agent 1.0.0 has no public key in it: the daemon
+    /// adds it the next time it signs a request.
+    @Test func theDaemonRecordsAnOldRecordsPublicKey() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let daemon = authenticator(store, server)
+        #expect(try await postEvents(daemon) == 200)
+        let fingerprint = try #require(await daemon.keyFingerprint)
+        try dropRecordedPublicKey(store, "device_credential_se")
+        #expect(await daemon.keyFingerprint == nil)
+
+        #expect(try await postEvents(daemon) == 200)
+        #expect(await authenticator(store, server, role: .command).keyFingerprint == fingerprint)
+    }
+
+    /// A file key's fingerprint comes from the key itself when the record has no public key.
+    @Test func aFileKeysFingerprintNeedsNoRecordedPublicKey() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let noEnclave = FakeKeys(secureEnclave: false)
+        #expect(try await postEvents(authenticator(store, server, keys: noEnclave)) == 200)
+        let enrollment = try #require(server.enrollments.first)
+        let enrolled = try #require(Data(base64Encoded: try enrolledKey(enrollment)))
+        try dropRecordedPublicKey(store, "device_credential")
+        #expect(
+            await authenticator(store, server, keys: noEnclave, role: .command).keyFingerprint
+                == DeviceAuthenticator.fingerprint(publicKey: enrolled))
     }
 
     @Test func retryAfterLostEnrollResponseReusesKey() async throws {
@@ -1295,6 +1357,8 @@ extension DeviceAuthenticatorTests {
         #expect(try loadAsAgent09(store)?.deviceID == newID)
         let rotation = try #require(server.rotations.first)
         #expect(rotation.rotatedKey == (try keys.publicKey(saved.privateKey, .secureEnclave).base64EncodedString()))
+        let rotatedKey = try #require(rotation.rotatedKey.flatMap { Data(base64Encoded: $0) })
+        #expect(await auth.keyFingerprint == DeviceAuthenticator.fingerprint(publicKey: rotatedKey))
 
         #expect(try await postEvents(auth) == 200)
         #expect(server.requests.last?.deviceID == newID)
@@ -1846,6 +1910,127 @@ extension DeviceAuthenticatorTests {
         #expect(oldKeyRequests(server, oldID, after: start).isEmpty)
     }
 
+    /// The rotation commits but its answer is lost, and a proxy answers the retry with a
+    /// block page of its own. Only the server's refusal, with its code, says the rotation
+    /// didn't happen, so the new key stays saved and the old one unused.
+    @Test(.timeLimit(.minutes(1))) func aProxyRefusingARetryLeavesTheRotationUnknown() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (auth, oldID) = try await readyToRotate(store, server)
+        let start = server.requests.count
+
+        server.dropNextRotateResponse()
+        #expect(await auth.rotate(reason: "test") == .unknown)
+        let pending = try #require(try nextRecord(store))
+        server.answerRotate(
+            status: 403, body: Data("<html><body>Blocked by your organisation's web policy</body></html>".utf8), times: 1)
+        clock.advance(15)
+        #expect(await auth.rotate(reason: "test") == .unknown)
+        #expect(try nextRecord(store)?.privateKey == pending.privateKey)
+        #expect(await auth.deviceID == oldID)
+        #expect(server.staleKeyUses == 0)
+
+        clock.advance(15)
+        #expect(try await postEvents(auth) == 200)
+        #expect(await auth.deviceID == server.successors[oldID])
+        #expect(try nextRecord(store) == nil)
+        #expect(server.staleKeyUses == 0)
+        #expect(oldKeyRequests(server, oldID, after: start).isEmpty)
+    }
+
+    /// A load balancer throttles a retry without the server's code: that is no refusal of
+    /// the rotation, so the agent holds and asks again.
+    @Test(.timeLimit(.minutes(1))) func anUncodedRateLimitOfARetryLeavesTheRotationUnknown() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (auth, oldID) = try await readyToRotate(store, server)
+        let start = server.requests.count
+
+        server.failRotate(URLError(.timedOut))
+        #expect(await auth.rotate(reason: "test") == .unknown)
+        server.answerRotate(status: 429, retryAfter: 60, body: Data("Too Many Requests".utf8), times: 1)
+        clock.advance(15)
+        #expect(await auth.rotate(reason: "test") == .unknown)
+        #expect(try nextRecord(store) != nil)
+        #expect(server.successors[oldID] == nil)
+
+        clock.advance(15)
+        #expect(try await postEvents(auth) == 200)
+        #expect(await auth.deviceID == server.successors[oldID])
+        #expect(server.staleKeyUses == 0)
+        #expect(oldKeyRequests(server, oldID, after: start).isEmpty)
+    }
+
+    /// On a retry, a 4xx whose code belongs to another refusal is no refusal of the
+    /// rotation either.
+    @Test(.timeLimit(.minutes(1))) func aMismatchedRefusalCodeOnARetryLeavesTheRotationUnknown() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (auth, oldID) = try await readyToRotate(store, server)
+
+        server.failRotate(URLError(.networkConnectionLost))
+        #expect(await auth.rotate(reason: "test") == .unknown)
+        server.answerRotate(status: 409, code: "rotation_rate_limited", times: 1)
+        clock.advance(15)
+        #expect(await auth.rotate(reason: "test") == .unknown)
+        #expect(try nextRecord(store) != nil)
+        clock.advance(15)
+        #expect(await auth.rotate(reason: "test") == .rotated(.secureEnclave))
+        #expect(server.successors[oldID] != nil)
+        #expect(server.staleKeyUses == 0)
+    }
+
+    /// A proxy or firewall refuses the very first rotate request with a page of its own.
+    /// Nothing can have committed, so the rotation is dropped for a day and the Mac keeps
+    /// reporting with its key, rather than holding everything behind a path it can't use.
+    @Test(.timeLimit(.minutes(1))) func aProxyRefusingTheFirstRequestDefersTheRotation() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (logged, log) = logLines()
+        let (auth, oldID) = try await readyToRotate(store, server, log: log)
+
+        server.answerRotate(
+            status: 403, body: Data("<html><body>Blocked by your organisation's web policy</body></html>".utf8))
+        #expect(await auth.rotate(reason: "test") == .deferred(until: clock.now.addingTimeInterval(86400)))
+        #expect(try nextRecord(store) == nil)
+        #expect(logged.withLock { $0 }.contains { $0.contains("Check that the whole of /v1/agent/ reaches the server") })
+        #expect(try await postEvents(auth) == 200)
+        #expect(server.requests.last?.deviceID == oldID)
+        #expect(await auth.keyStorage == .software)
+        #expect(server.successors.isEmpty)
+        #expect(server.staleKeyUses == 0)
+
+        // The same for an uncoded throttle, which waits a day whatever Retry-After says.
+        clock.advance(86400)
+        server.stopAnsweringRotate()
+        server.answerRotate(status: 429, retryAfter: 60, body: Data("Too Many Requests".utf8))
+        #expect(await auth.rotate(reason: "test") == .deferred(until: clock.now.addingTimeInterval(86400)))
+        #expect(try nextRecord(store) == nil)
+        #expect(server.staleKeyUses == 0)
+    }
+
+    /// A saved rotation from before the agent recorded whether it was sent counts as sent:
+    /// a proxy's refusal of it holds, since an earlier attempt may have committed.
+    @Test(.timeLimit(.minutes(1))) func aSavedRotationThatDoesNotSayCountsAsSent() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (_, oldID) = try await readyToRotate(store, server)
+        _ = try saveNextRecord(store, from: oldID)
+        var record = try JSONSerialization.jsonObject(
+            with: Data(try #require(try store.value(forKey: "device_credential_next")).utf8)) as! [String: Any]
+        #expect(record.removeValue(forKey: "sent") != nil)
+        try store.setValue(
+            String(decoding: try JSONSerialization.data(withJSONObject: record), as: UTF8.self),
+            forKey: "device_credential_next")
+        #expect(try nextRecord(store)?.sent == true)
+
+        let restarted = authenticator(store, server)
+        server.answerRotate(status: 403, body: Data("<html>Blocked</html>".utf8), times: 1)
+        #expect(await restarted.rotate(reason: "test") == .unknown)
+        #expect(try nextRecord(store) != nil)
+        #expect(server.staleKeyUses == 0)
+    }
+
     /// The server commits, but saving the new key fails: another connection holds the
     /// store's write lock past its 5-second busy timeout.
     @Test(.timeLimit(.minutes(1))) func aFailedLocalCommitIsRetried() async throws {
@@ -2032,6 +2217,29 @@ extension DeviceAuthenticatorTests {
         #expect(try await auth.rotationDue(now: clock.now) == nil)
         clock.advance(1)
         #expect(try await auth.rotationDue(now: clock.now) != nil)
+    }
+
+    /// Failing to use a saved Secure Enclave key counts like failing to make one.
+    @Test(.timeLimit(.minutes(1))) func failingToUseASavedSecureEnclaveKeyCounts() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (auth, oldID) = try await readyToRotate(store, server)
+        _ = try saveNextRecord(store, from: oldID)
+
+        keys.busy(true)
+        for failures in 1...3 {
+            clock.advance(15)
+            #expect(await auth.rotate(reason: "test") == .unknown)
+            #expect(await auth.secureEnclaveFailures == failures)
+        }
+        #expect(try nextRecord(store) != nil)
+        #expect(server.rotations.isEmpty)
+
+        keys.busy(false)
+        clock.advance(15)
+        #expect(await auth.rotate(reason: "test") == .rotated(.secureEnclave))
+        #expect(await auth.secureEnclaveFailures == 0)
+        #expect(server.staleKeyUses == 0)
     }
 
     @Test(.timeLimit(.minutes(1))) func aCommandIsNeverDue() async throws {
