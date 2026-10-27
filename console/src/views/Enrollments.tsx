@@ -234,15 +234,15 @@ function EnrollmentInspector({ enrollment: e, active, predecessor, successor, in
       )}
       {e.status === "pending" && replacesEnclaveKey && e.key_storage !== "secure_enclave" && (
         <p className="secondary" style={{ marginTop: 12 }}>
-          The key this Mac uses now is in the Secure Enclave, but this new one isn’t. An agent older than 0.2.0
-          installed over a newer one does that; otherwise, find out why before you approve it.
+          The key this Mac uses now is in the Secure Enclave, but this new one isn’t. Find out why before you
+          approve it.
         </p>
       )}
       {e.status === "active" && e.key_storage !== "secure_enclave" && (
         <p className="secondary" style={{ marginTop: 12 }}>
           This key is in a file, so someone with admin rights on the Mac could copy it and report as this Mac from
-          elsewhere. With agent 1.0 or later, the agent moves this key into the Secure Enclave by itself, or, on a
-          Mac without one, replaces it every 30 days.
+          elsewhere. The agent moves this key into the Secure Enclave by itself, or, on a Mac without one,
+          replaces it every 30 days.
         </p>
       )}
       {e.status === "pending" && newMac && (

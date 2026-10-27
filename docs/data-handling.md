@@ -195,25 +195,23 @@ security records ([Backups](install.md#backups)).
   under `/Library/Application Support/Altiward/` that only root can read, and only that
   Mac's Secure Enclave can use the handle, so a copy is no use anywhere else. Someone with
   admin rights on the Mac can still have it sign while they're there. On other Macs, the
-  key itself is in that file, and so it is on a Mac with a Secure Enclave until the agent
-  moves it there by rotation (a Mac that enrolled before agent 0.2.0, or whose Secure
-  Enclave failed at enrolment). A key in a file is protected from standard users but not
-  from someone with admin rights on the Mac. Revoking a Mac's key in **Enrollments** makes
-  it enrol again with a new one. The key isn't in the Keychain, so removing the agent with
-  `--purge` leaves nothing behind.
+  key itself is in that file, and so it is on a Mac whose Secure Enclave failed at
+  enrolment, until the agent moves it there by rotation. A key in a file is protected from
+  standard users but not from someone with admin rights on the Mac. Revoking a Mac's key
+  in **Enrollments** makes it enrol again with a new one. The key isn't in the Keychain,
+  so removing the agent with `--purge` leaves nothing behind.
 - **The enrolment token** lets a Mac enrol, and does nothing else. It is in the MDM
   profile, so anyone on a Mac can read it. A new enrolment shows in **Enrollments**, where
   an admin can revoke it. It also reaches your SIEM as an `agent.enrollment` event.
   **Approve Macs that enrol again** is on by default: a new key for a serial that enrolled
   before waits for approval, even after its earlier key was revoked. An earlier active key
-  stays valid until approval. Server 0.8.0 also enables approval once for existing
-  tenants; admins can explicitly turn it off afterwards. A new key whose hardware UUID
-  differs from the earlier active key's waits for approval whatever the setting. With
-  approval off, anyone with the shared token can replace an enrolled Mac's identity by
-  naming its serial and hardware UUID, even when the earlier key is protected by the
-  Secure Enclave. The hardware UUID is the agent's own claim, not a secret, so that rule
-  catches a key made on another Mac, not someone who names the UUID. The shared token
-  cannot verify ownership of a serial enrolling for the first time. Check new enrolments
+  stays valid until approval. A new key whose hardware UUID differs from the earlier active
+  key's waits for approval whatever the setting. With approval off, anyone with the shared
+  token can replace an enrolled Mac's identity by naming its serial and hardware UUID,
+  even when the earlier key is protected by the Secure Enclave. The hardware UUID is the
+  agent's own claim, not a secret, so that rule catches a key made on another Mac, not
+  someone who names the UUID. The shared token cannot verify ownership of a serial
+  enrolling for the first time. Check new enrolments
   against independently verified inventory, or turn on **Approve every new Mac** so each
   Mac's first key waits for approval too; per-device bootstrap credentials are needed
   for stronger first-enrolment assurance. Changing the token doesn't affect Macs already

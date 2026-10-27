@@ -6,7 +6,7 @@ The button creates an Altiward server in your own Azure subscription, running on
 Container Apps, with nothing to install on a VM. It is the third way to run the server, next to the
 Compose bundle and your own infrastructure in the [install guide](../../docs/install.md),
 which covers everything else: the agent, your SIEM and single sign-on. This page covers
-what differs on Azure. The button works from server 0.2.0's release. After each server release, an automated
+what differs on Azure. After each server release, an automated
 check deploys it from the release tag, tests it as a Mac and an admin would, and deletes it
 again ([docs/releasing.md](../../docs/releasing.md#deploy-to-azure-check)).
 
