@@ -6,6 +6,7 @@ package api
 //
 //	GET  /v1/auth/config    none            whether single sign-on is on
 //	GET  /v1/auth/login     none            start signing in: redirect to the identity provider
+//	                                        (?select_account=1 asks it for its account picker)
 //	GET  /v1/auth/callback  none            where the identity provider sends people back
 //	GET  /v1/auth/me        console         who is signed in, their role and CSRF token
 //	POST /v1/auth/logout    console         end the session
@@ -150,12 +151,23 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "single sign-on isn't set up")
 		return
 	}
+	// The account picker is for someone who asked for it, or who has just signed out. The
+	// marker that sign-out left is used up once the browser is sent to the identity
+	// provider, however that sign-in ends, but it stays if the provider can't be reached.
+	selectAccount := r.URL.Query().Get("select_account") == "1"
+	_, signedOut := r.Cookie(s.cookieName("altiward_signed_out"))
+	if signedOut == nil {
+		selectAccount = true
+	}
 	st := loginState{State: rand.Text(), Nonce: rand.Text(), Verifier: oauth2.GenerateVerifier(), Next: safeNext(r.URL.Query().Get("next"))}
-	to, err := s.sso.AuthCodeURL(r.Context(), st.State, st.Nonce, st.Verifier)
+	to, err := s.sso.AuthCodeURL(r.Context(), st.State, st.Nonce, st.Verifier, selectAccount)
 	if err != nil {
 		s.log.Error("single sign-on unavailable", "err", err)
 		signInFailed(w, r, "unavailable")
 		return
+	}
+	if signedOut == nil {
+		s.setCookie(w, "altiward_signed_out", "", -1)
 	}
 	b, _ := json.Marshal(st)
 	s.setCookie(w, "altiward_login", base64.RawURLEncoding.EncodeToString(b), int(loginLifetime.Seconds()))
@@ -278,5 +290,8 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, "end console session", err)
 		return
 	}
+	// Tell the next sign-in to show the account picker, so signing out isn't undone by one
+	// click that signs the same account straight back in.
+	s.setCookie(w, "altiward_signed_out", "1", 0)
 	w.WriteHeader(http.StatusNoContent)
 }

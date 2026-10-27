@@ -55,7 +55,7 @@ func TestIdentityFallsBackFromEmail(t *testing.T) {
 		{map[string]any{"sub": "only-a-subject"}, "only-a-subject"},
 	} {
 		verifier, nonce := oauth2.GenerateVerifier(), "n-1"
-		authURL, err := p.AuthCodeURL(ctx, "s", nonce, verifier)
+		authURL, err := p.AuthCodeURL(ctx, "s", nonce, verifier, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -84,12 +84,34 @@ func TestDiscoveryIsRetriedAfterAFailure(t *testing.T) {
 	defer srv.Close()
 	// Down at first: the server starts anyway, and sign-in works once it's back.
 	p := provider(t, srv.URL, srv.Client())
-	if _, err := p.AuthCodeURL(context.Background(), "s", "n", "v"); err == nil {
+	if _, err := p.AuthCodeURL(context.Background(), "s", "n", "v", false); err == nil {
 		t.Fatal("discovered a provider that is down")
 	}
 	down = false
-	if u, err := p.AuthCodeURL(context.Background(), "s", "n", "v"); err != nil || mustQuery(t, u, "state") != "s" {
+	if u, err := p.AuthCodeURL(context.Background(), "s", "n", "v", false); err != nil || mustQuery(t, u, "state") != "s" {
 		t.Fatalf("%s, %v", u, err)
+	}
+}
+
+func TestAuthCodeURLAsksForTheAccountPickerOnlyWhenTold(t *testing.T) {
+	idp := ssotest.New(t)
+	p := provider(t, idp.URL, idp.Client())
+	for _, c := range []struct {
+		selectAccount bool
+		prompt        string
+	}{{false, ""}, {true, "select_account"}} {
+		u, err := p.AuthCodeURL(context.Background(), "s", "n", "v", c.selectAccount)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := neturl.Parse(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, present := parsed.Query()["prompt"]
+		if got := parsed.Query().Get("prompt"); got != c.prompt || present != (c.prompt != "") {
+			t.Errorf("selectAccount=%v: prompt = %q (present %v), want %q", c.selectAccount, got, present, c.prompt)
+		}
 	}
 }
 

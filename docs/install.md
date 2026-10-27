@@ -477,12 +477,16 @@ Then set these in `.env` and run `docker compose up -d`:
 If your identity provider's certificate comes from your own CA, set
 `ALTIWARD_TRUSTED_CAS_FILE` as for the SIEM (step 4).
 
-The console then shows **Sign in with single sign-on**. Sessions end after 12 hours, or
-after an hour unused. A change to someone's groups applies the next time they sign in.
+The console then shows **Sign in with single sign-on**. If your browser is already
+signed in to your identity provider, it signs you straight in as that account. To sign
+in as someone else, such as a separate admin account, choose **Use a different account**
+below it, and your identity provider shows its account picker. The first sign-in after
+**Sign out** shows the picker too. Sessions end after 12 hours, or after an hour unused.
+A change to someone's groups applies the next time they sign in.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/install/sign-in-sso-dark.png">
-  <img src="images/install/sign-in-sso-light.png" width="400" alt="The sign-in page with single sign-on: a Sign in with single sign-on button, and a link to use a break-glass token instead.">
+  <img src="images/install/sign-in-sso-light.png" width="400" alt="The sign-in page with single sign-on: a Sign in with single sign-on button, a link to use a different account, and a link to use a break-glass token instead.">
 </picture>
 
 **You should see** yourself under **Settings › Sign-ins** once you've
