@@ -339,6 +339,89 @@ func TestSessionsExpireAndSignOut(t *testing.T) {
 	}
 }
 
+func TestSignInAsksForTheAccountPickerOnRequestAndAfterSignOut(t *testing.T) {
+	env := newSSOServer(t)
+	b := env.browser(t)
+	// prompt is the prompt the login redirect asks the identity provider for, and whether
+	// it asks at all.
+	prompt := func(target string) (string, bool) {
+		t.Helper()
+		rec, _ := b.do("GET", target, nil)
+		if rec.Code != http.StatusFound {
+			t.Fatalf("%s: %d", target, rec.Code)
+		}
+		to, err := url.Parse(rec.Header().Get("Location"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, ok := to.Query()["prompt"]
+		return to.Query().Get("prompt"), ok
+	}
+	wantPrompt := func(target, want string) {
+		t.Helper()
+		if got, ok := prompt(target); got != want || ok != (want != "") {
+			t.Fatalf("%s: prompt = %q (present %v), want %q", target, got, ok, want)
+		}
+	}
+
+	wantPrompt("/v1/auth/login", "")
+	wantPrompt("/v1/auth/login?select_account=1", "select_account")
+	wantPrompt("/v1/auth/login?select_account=true", "")
+	wantPrompt("/v1/auth/login?select_account=", "")
+
+	// A failed sign-out leaves nothing behind.
+	if rec, _ := b.do("POST", "/v1/auth/logout", nil); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("logout without a session: %d", rec.Code)
+	}
+	if _, ok := b.cookies["__Host-altiward_signed_out"]; ok {
+		t.Fatal("a failed logout set the signed-out cookie")
+	}
+	wantPrompt("/v1/auth/login", "")
+
+	b.signIn(env.idp, "/", person("g-admin"))
+	if rec, _ := b.do("POST", "/v1/auth/logout", nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("logout without CSRF: %d", rec.Code)
+	}
+	if _, ok := b.cookies["__Host-altiward_signed_out"]; ok {
+		t.Fatal("a refused logout set the signed-out cookie")
+	}
+	rec, _ := b.mutate("POST", "/v1/auth/logout", nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("logout: %d", rec.Code)
+	}
+	var marker *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "__Host-altiward_signed_out" {
+			marker = c
+		}
+	}
+	if marker == nil || marker.Value != "1" || marker.MaxAge != 0 || marker.Path != "/" ||
+		!marker.HttpOnly || !marker.Secure || marker.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("signed-out cookie = %+v", marker)
+	}
+
+	// The next sign-in picks an account and uses the marker up; the one after is one click.
+	wantPrompt("/v1/auth/login", "select_account")
+	if _, ok := b.cookies["__Host-altiward_signed_out"]; ok {
+		t.Fatal("the login left the signed-out cookie")
+	}
+	wantPrompt("/v1/auth/login", "")
+
+	// Asking for the picker by hand works too, and a later sign-out sets the marker again.
+	b.signIn(env.idp, "/", person("g-admin"))
+	if rec, _ := b.mutate("POST", "/v1/auth/logout", nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("second logout: %d", rec.Code)
+	}
+	wantPrompt("/v1/auth/login?select_account=1", "select_account")
+	wantPrompt("/v1/auth/login", "")
+
+	// A token has no session to end, so signing out with one leaves no marker.
+	rec, _ = do(t, env.h, "POST", "/v1/auth/logout", consoleToken, nil)
+	if rec.Code != http.StatusNoContent || len(rec.Result().Cookies()) != 0 {
+		t.Fatalf("token logout: %d %v", rec.Code, rec.Result().Cookies())
+	}
+}
+
 func TestAdminsListAndEndConsoleSignIns(t *testing.T) {
 	env := newSSOServer(t)
 	admin, viewer := env.browser(t), env.browser(t)
