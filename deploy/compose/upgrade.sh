@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Upgrades this Altiward server to a new release, from the files Altiward sent you
-# (docs/install.md, "Releases and updates"). Run it from anywhere; it works on the
-# deployment directory it sits in.
+# Upgrades this Altiward server to a new release (docs/install.md, "Releases and
+# updates"). Run it from anywhere; it works on the deployment directory it sits in.
 #
+#   ./upgrade.sh [options] <version>
 #   ./upgrade.sh [options] <directory holding the release files>
 #
-# The directory needs altiward-server-<version>.tar.gz, the image for this machine
+# Given a version, such as 1.0.1 or 1.1.0-rc.1, it downloads the release from GitHub into
+# releases/<version>/ in the deployment directory, with curl, which uses HTTPS_PROXY if
+# it's set. On a server without internet access, give a directory holding the release
+# files instead: altiward-server-<version>.tar.gz, the image for this machine
 # (altiward-api-<version>-linux-amd64.tar.gz or …-arm64), RELEASE_NOTES.md, SHA256SUMS
 # and SHA256SUMS.sigstore.json.
 #
@@ -29,6 +32,10 @@ SIGNER_ISSUER=https://token.actions.githubusercontent.com
 CONFIG_FILES=(compose.yaml Caddyfile)
 OWN_FILES=(env.example README.md certs/README.md)
 HEALTH_TIMEOUT=180
+RELEASE_VERSION='^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$'
+# A version's files are at $RELEASES_URL/server-v<version>/. scripts/test-upgrade.sh
+# points it at a local server.
+RELEASES_URL="${ALTIWARD_RELEASES_URL:-https://github.com/Altiward/altiward/releases/download}"
 
 say() { printf '%s\n' "$*"; }
 warn() { printf 'upgrade: %s\n' "$*" >&2; }
@@ -73,7 +80,7 @@ compare() {
 if [ "${1:-}" = --compare ]; then compare "$2" "$3"; exit 0; fi # for scripts/test-upgrade.sh
 
 
-yes=false skip_signature=false skip_backup=false merged=false release=""
+yes=false skip_signature=false skip_backup=false merged=false target="" opts=()
 for arg in "$@"; do
   case "$arg" in
     --yes) yes=true ;;
@@ -82,12 +89,18 @@ for arg in "$@"; do
     --merged) merged=true ;;
     -h|--help) sed -n '2,/^set -euo/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//'; exit 0 ;;
     -*) die "unknown option $arg (see --help)" ;;
-    *) [ -z "$release" ] || die "give one release directory"; release="$arg" ;;
+    *) [ -z "$target" ] || die "give one version or release directory"; target="$arg"; continue ;;
   esac
+  opts+=("$arg") # passed on to the new release's script
 done
-[ -n "$release" ] || die "give the directory holding the release files (see --help)"
-[ -d "$release" ] || die "$release is not a directory"
-release="$(cd "$release" && pwd)"
+[ -n "$target" ] || die "give the version to upgrade to, or the directory holding the release files (see --help)"
+version="" release=""
+if [[ "$target" =~ $RELEASE_VERSION ]]; then
+  version="$target"
+else
+  [ -d "$target" ] || die "$target is neither a version, such as 1.0.1, nor a directory"
+  release="$(cd "$target" && pwd)"
+fi
 
 DEPLOY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SELF="$DEPLOY/$(basename "${BASH_SOURCE[0]}")"
@@ -102,14 +115,17 @@ env_value() { sed -n "s/^$1=//p" .env | tail -n 1 | sed -e 's/^"\(.*\)"$/\1/' -e
 
 ## The release files
 
-shopt -s nullglob
-bundles=("$release"/altiward-server-*.tar.gz)
-shopt -u nullglob
-[ "${#bundles[@]}" -eq 1 ] || die "expected one altiward-server-<version>.tar.gz in $release, found ${#bundles[@]}"
-bundle="$(basename "${bundles[0]}")"
-version="${bundle#altiward-server-}"
-version="${version%.tar.gz}"
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || die "can't read a version from $bundle"
+if [ -n "$release" ]; then
+  shopt -s nullglob
+  bundles=("$release"/altiward-server-*.tar.gz)
+  shopt -u nullglob
+  [ "${#bundles[@]}" -eq 1 ] || die "expected one altiward-server-<version>.tar.gz in $release, found ${#bundles[@]}"
+  version="$(basename "${bundles[0]}")"
+  version="${version#altiward-server-}"
+  version="${version%.tar.gz}"
+  [[ "$version" =~ $RELEASE_VERSION ]] || die "can't read a version from $(basename "${bundles[0]}")"
+fi
+bundle="altiward-server-$version.tar.gz"
 
 case "$(uname -m)" in
   x86_64|amd64) arch=amd64 ;;
@@ -117,6 +133,40 @@ case "$(uname -m)" in
   *) die "no Altiward image for $(uname -m)" ;;
 esac
 image_file="altiward-api-$version-linux-$arch.tar.gz"
+
+## Versions
+
+current="$(env_value ALTIWARD_VERSION)"
+if [ -n "$current" ]; then
+  if [ "$current" = "$version" ]; then say "Already running $version."; exit 0; fi
+  if [ "$(compare "$version" "$current")" != 1 ]; then
+    die "this server runs $current, which is newer than $version. Going back isn't supported: restore a backup instead"
+  fi
+fi
+
+# Checked before anything is downloaded.
+if ! command -v cosign >/dev/null && ! $skip_signature; then
+  die "cosign isn't installed, so the signature can't be checked. Install it (docs/install.md, \"Checking a release\"), check the files on another machine, or run again with --skip-signature"
+fi
+
+## Download
+
+if [ -z "$release" ]; then
+  command -v curl >/dev/null || die "needs curl to download $version, or give a directory holding the release files (see --help)"
+  release="$DEPLOY/releases/$version"
+  url="$RELEASES_URL/server-v$version"
+  say "Downloading $version from $url"
+  rm -rf "$release"
+  mkdir -p "$release"
+  # A failed download leaves nothing behind, so a partial release is never used.
+  trap 'rm -rf "$release"' EXIT
+  for f in "$bundle" "$image_file" RELEASE_NOTES.md SHA256SUMS SHA256SUMS.sigstore.json; do
+    curl -fsSL --connect-timeout 30 --retry 2 -o "$release/$f" "$url/$f" \
+      || die "couldn't download $f from $url, so nothing has changed. Check the version, and that this server can reach GitHub (set HTTPS_PROXY for a proxy), or give a directory holding the release files instead"
+  done
+  trap - EXIT
+fi
+
 for f in "$bundle" "$image_file" RELEASE_NOTES.md SHA256SUMS; do
   [ -f "$release/$f" ] || die "$release has no $f"
 done
@@ -136,20 +186,8 @@ if command -v cosign >/dev/null; then
     --certificate-oidc-issuer "$SIGNER_ISSUER" >/dev/null 2>&1 \
     || die "SHA256SUMS isn't signed by Altiward's release workflow for $version: don't install it, and report it at https://github.com/Altiward/altiward/security"
   say "  checksums match, signed by Altiward's release workflow for $version"
-elif $skip_signature; then
-  warn "cosign isn't installed, so only the checksums were checked, not who made them"
 else
-  die "cosign isn't installed, so the signature can't be checked. Install it (docs/install.md, \"Checking a release\"), check the files on another machine, or run again with --skip-signature"
-fi
-
-## Versions
-
-current="$(env_value ALTIWARD_VERSION)"
-if [ -n "$current" ]; then
-  if [ "$current" = "$version" ]; then say "Already running $version."; exit 0; fi
-  if [ "$(compare "$version" "$current")" != 1 ]; then
-    die "this server runs $current, which is newer than $version. Going back isn't supported: restore a backup instead"
-  fi
+  warn "cosign isn't installed, so only the checksums were checked, not who made them"
 fi
 
 work="$(mktemp -d)"
@@ -159,13 +197,14 @@ new="$work/altiward-server-$version/deploy/compose"
 [ -f "$new/compose.yaml" ] || die "$bundle has no deploy/compose: is it an Altiward server release?"
 
 # The new release's script does the rest, so its fixes apply to its own upgrade. It
-# replaces this one by rename, which leaves the copy bash is running intact.
+# replaces this one by rename, which leaves the copy bash is running intact. It gets the
+# release's directory, so a downloaded release isn't downloaded again.
 if [ -z "${ALTIWARD_UPGRADE_HANDOFF:-}" ] && [ -f "$new/upgrade.sh" ] && ! cmp -s "$new/upgrade.sh" "$SELF"; then
   cp "$new/upgrade.sh" "$SELF.tmp"
   chmod 755 "$SELF.tmp"
   mv "$SELF.tmp" "$SELF"
   say "Updated upgrade.sh from $version; it carries on"
-  ALTIWARD_UPGRADE_HANDOFF=1 exec "$SELF" "$@"
+  ALTIWARD_UPGRADE_HANDOFF=1 exec "$SELF" ${opts[@]+"${opts[@]}"} "$release"
 fi
 
 ## Deployment files

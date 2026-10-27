@@ -123,7 +123,8 @@ describe("Overview update notice", () => {
     expect(within(notice).getByText("Security")).toBeInTheDocument();
     expect(within(notice).getByRole("link", { name: "Release notes for 0.2.0" }))
       .toHaveAttribute("href", "https://github.com/Altiward/altiward/releases/tag/server-v0.2.0");
-    expect(within(notice).getByText("./upgrade.sh ~/altiward-0.2.0")).toBeInTheDocument();
+    expect(within(notice).getByText("./upgrade.sh 0.2.0")).toBeInTheDocument();
+    expect(within(notice).getByText(/On a server without internet access, put the release files in a directory/)).toBeInTheDocument();
     expect(within(notice).getByRole("button", { name: "Copy" })).toBeInTheDocument();
 
     const agent = screen.getByRole("region", { name: "Agent 0.2.0 is available" });
@@ -174,7 +175,7 @@ describe("Overview update notice", () => {
     renderAs("admin", { version: "0.2.0", agents: ["0.2.0"] });
     const notice = await screen.findByRole("region", { name: "Server release candidate 0.3.0-rc.1 is available" });
     expect(within(notice).getByText("Server release candidate 0.3.0-rc.1 is available. You’re running 0.2.0.")).toBeInTheDocument();
-    expect(within(notice).getByText("./upgrade.sh ~/altiward-0.3.0-rc.1")).toBeInTheDocument();
+    expect(within(notice).getByText("./upgrade.sh 0.3.0-rc.1")).toBeInTheDocument();
   });
 
   it("isn't shown to a viewer, who never asks GitHub", async () => {
