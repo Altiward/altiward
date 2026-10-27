@@ -230,8 +230,10 @@ readable only by root. It holds events waiting to send (removed once your server
 confirms them), the elevations open now, the Mac's key (or the handle to it in the Secure
 Enclave) and its public key, the server's clock offset it last learnt, and revoke results
 (removed 30 days after they are reported). While the agent is replacing the Mac's key and
-doesn't yet know the server's answer, it also holds the replacement key (or its handle) and
-a copy of the key it replaces, removed as soon as the answer is known. For checking grants against
+doesn't yet know the server's answer, it also holds the replacement key (or its handle), a
+copy of the key it replaces, and the last answer that kept it waiting (such as an HTTP
+status and the start of the reply, for `altiward-agent status`), removed as soon as the
+answer is known. For checking grants against
 Privileges' log it also holds:
 
 - each grant claim from the hook while it waits, up to a minute, for the log: the account,

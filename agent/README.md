@@ -162,7 +162,11 @@ most every 15 seconds, and sends nothing else signed by the old key, so events s
 queued. A command run beside the daemon (`altiward-agent heartbeat` and the others) never
 rotates, and while a rotation is unresolved it sends nothing and says the daemon is
 rotating the key. `altiward-agent status` shows "key rotation: in progress since <date>"
-while one is. A server that doesn't know rotation (HTTP 404 or 405), or refuses it, leaves
+while one is and, once an answer has kept it waiting, that answer and when the daemon
+logged it. An answer that may come from something between the Mac and the server (an HTTP
+5xx, a timeout, a dropped connection, or a 4xx without the server's code on a retry) adds
+the advice to check that the whole of `/v1/agent/` reaches the server, in the log and in
+`status`. A server that doesn't know rotation (HTTP 404 or 405), or refuses it, leaves
 the Mac's key in place and the agent tries again a day later (after `Retry-After` for HTTP
 429). On a retry, only the server's refusal, with its code, counts: an HTTP 400, 403, 409
 or 429 without one, such as a proxy's block page, says nothing about an earlier attempt
