@@ -183,6 +183,10 @@ struct PendingRotation: Codable {
     /// send, so a refusal of a request never sent before can't hide an earlier commit.
     /// Read leniently, and true when missing: a record that doesn't say is treated as sent.
     var sent = true
+    /// What last kept the rotation waiting, and when, for `altiward-agent status`. Saved
+    /// when the daemon logs it, so at most an hour old. Agent 1.0.0 ignores them.
+    var lastAnswer: String?
+    var lastAnswerAt: Date?
 }
 
 extension PendingRotation {
@@ -197,6 +201,8 @@ extension PendingRotation {
         storage = try c.decode(KeyStorage.self, forKey: .storage)
         madeAt = try c.decode(Date.self, forKey: .madeAt)
         sent = (try? c.decodeIfPresent(Bool.self, forKey: .sent)) ?? true
+        lastAnswer = try? c.decodeIfPresent(String.self, forKey: .lastAnswer)
+        lastAnswerAt = try? c.decodeIfPresent(Date.self, forKey: .lastAnswerAt)
     }
 }
 
@@ -417,6 +423,16 @@ public actor DeviceAuthenticator {
     /// When the rotation the daemon hasn't finished yet began, if there is one.
     public var rotationPendingSince: Date? {
         try? pendingSince()
+    }
+
+    /// What last kept the unfinished rotation waiting, and when, once the daemon has logged
+    /// it.
+    public var rotationLastAnswer: (at: Date, answer: String)? {
+        guard let raw = try? store.value(forKey: PendingRotation.storeKey),
+            let pending = try? JSONDecoder().decode(PendingRotation.self, from: Data(raw.utf8)),
+            let answer = pending.lastAnswer, let at = pending.lastAnswerAt
+        else { return nil }
+        return (at, answer)
     }
 
     // MARK: Sending
@@ -747,7 +763,7 @@ public actor DeviceAuthenticator {
             return dropRotation(pending, alsoTheOldKey: true, .enrolAgain)
         }
         let current: Stored?
-        do { current = try load() } catch { return holding("couldn't read this Mac's key: \(error)") }
+        do { current = try load() } catch { return holding("couldn't read this Mac's key: \(error)", pending) }
         if pending.serverURL != serverURL.absoluteString
             || (current != nil && current?.credential.deviceID != pending.fromDeviceID)
         {
@@ -769,7 +785,7 @@ public actor DeviceAuthenticator {
             // Counts like a failure to make one: once the saved rotation settles, a Mac whose
             // Secure Enclave keeps failing rotates on the 30-day schedule instead.
             if pending.storage == .secureEnclave { secureEnclaveFailures += 1 }
-            return holding("couldn't sign with the new key: \(error)")
+            return holding("couldn't sign with the new key: \(error)", pending)
         }
         return await requestRotation(pending, proven)
     }
@@ -786,7 +802,7 @@ public actor DeviceAuthenticator {
             do {
                 guard try markSent(pending) else { return settled(.notDue) }
             } catch {
-                return holding("couldn't save that the rotation is being sent: \(error)")
+                return holding("couldn't save that the rotation is being sent: \(error)", pending)
             }
         }
         let old = Stored(
@@ -810,8 +826,9 @@ public actor DeviceAuthenticator {
             }
             (data, response) = (answer, http)
         } catch {
-            // Whether or not it left the Mac, an earlier attempt may have reached the server.
-            return holding("\(error)")
+            // Whether or not it left the Mac, an earlier attempt may have reached the server. A
+            // URLError is the network's; anything else failed on the Mac, such as signing.
+            return holding("\(error)", pending, onTheWay: error is URLError)
         }
 
         struct Answer: Decodable {
@@ -823,13 +840,13 @@ public actor DeviceAuthenticator {
         case 200, 201:
             guard let answer = try? JSONDecoder().decode(Answer.self, from: data), let id = answer.device_id,
                 !id.isEmpty, id != pending.fromDeviceID
-            else { return holding("HTTP \(status) without a key: \(Self.excerpt(data))") }
+            else { return holding("HTTP \(status) without a key: \(Self.excerpt(data))", pending, onTheWay: true) }
             switch answer.status {
             case "active": return commit(pending, deviceID: id, publicKey: proven.publicKey)
             case "revoked":
                 log("the server revoked this Mac's new key; enrolling again")
                 return dropRotation(pending, alsoTheOldKey: true, .enrolAgain)
-            default: return holding("HTTP \(status) with status \(answer.status ?? "none")")
+            default: return holding("HTTP \(status) with status \(answer.status ?? "none")", pending, onTheWay: true)
             }
         case 401 where Self.code(data) == "credential_invalid":
             log("the server no longer accepts this Mac's key; enrolling again")
@@ -842,7 +859,8 @@ public actor DeviceAuthenticator {
             // has no code to send with its 404 or 405.
             let coded = Self.refusesRotation(status, code: Self.code(data))
             guard status == 404 || status == 405 || coded || firstSend else {
-                return holding("HTTP \(status) without the server's refusal code: \(Self.excerpt(data))")
+                return holding(
+                    "HTTP \(status) without the server's refusal code: \(Self.excerpt(data))", pending, onTheWay: true)
             }
             let wait = status == 429 && coded
                 ? retryDelay(response.value(forHTTPHeaderField: "Retry-After")) : Self.rotationDeferral
@@ -859,7 +877,8 @@ public actor DeviceAuthenticator {
             }
             return dropRotation(pending, alsoTheOldKey: false, .deferred(until: until))
         default:
-            return holding("HTTP \(status): \(Self.excerpt(data))")
+            let body = Self.excerpt(data)
+            return holding(body.isEmpty ? "HTTP \(status)" : "HTTP \(status): \(body)", pending, onTheWay: true)
         }
     }
 
@@ -888,7 +907,7 @@ public actor DeviceAuthenticator {
             guard committed else { return settled(.notDue) }
         } catch {
             log("couldn't save the rotated key (\(error)); keeping it to try again")
-            return holding("couldn't save the rotated key: \(error)")
+            return holding("couldn't save the rotated key: \(error)", pending)
         }
         if pending.storage == .secureEnclave {
             secureEnclaveFailures = 0
@@ -932,7 +951,7 @@ public actor DeviceAuthenticator {
                 }
             }
         } catch {
-            return holding("couldn't drop the saved key rotation: \(error)")
+            return holding("couldn't drop the saved key rotation: \(error)", pending)
         }
         return settled(outcome)
     }
@@ -944,14 +963,38 @@ public actor DeviceAuthenticator {
     }
 
     /// The outcome is unknown: the saved rotation stays, and so does the hold on sends.
-    /// Logged once an hour.
-    private func holding(_ detail: String) -> RotationOutcome {
+    /// Logged once an hour, and saved with `pending` then, for `altiward-agent status`. An
+    /// answer that came back `onTheWay`, from the network or something on it, adds advice:
+    /// a proxy or firewall that keeps the rotate request from the server holds the Mac's
+    /// reports until it lets it through.
+    private func holding(
+        _ detail: String, _ pending: PendingRotation? = nil, onTheWay: Bool = false
+    ) -> RotationOutcome {
         let t = now()
         if lastHoldingLog.map({ t.timeIntervalSince($0) >= 3600 || t < $0 }) ?? true {
             lastHoldingLog = t
-            log("the rotation's outcome is not known yet; holding requests until the server answers (\(detail))")
+            let advice = "If this goes on, check that the whole of /v1/agent/ reaches the server"
+            let answer = onTheWay ? "\(detail)\(detail.hasSuffix(".") ? "" : ".") \(advice)" : detail
+            log("the rotation's outcome is not known yet; holding requests until the server answers (\(answer))")
+            if let pending { noteAnswer(pending, answer, at: t) }
         }
         return .unknown
+    }
+
+    /// Saves `answer` with the saved rotation, if it still holds `pending`'s key. Only for
+    /// `altiward-agent status`, so a failure changes nothing.
+    private func noteAnswer(_ pending: PendingRotation, _ answer: String, at: Date) {
+        try? store.transaction {
+            guard let raw = try store.value(forKey: PendingRotation.storeKey),
+                var saved = try? JSONDecoder().decode(PendingRotation.self, from: Data(raw.utf8)),
+                saved.privateKey == pending.privateKey
+            else { return }
+            // Whatever answered wrote part of it, and `status` prints it to a terminal.
+            saved.lastAnswer = String(
+                String.UnicodeScalarView(answer.unicodeScalars.map { $0.properties.generalCategory == .control ? " " : $0 }))
+            saved.lastAnswerAt = at
+            try store.setValue(Self.encode(saved), forKey: PendingRotation.storeKey)
+        }
     }
 
     private struct Proven: Sendable {

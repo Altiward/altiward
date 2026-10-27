@@ -43,7 +43,20 @@ export function agentClient(server, enrollToken) {
     return { serial, deviceID: r.device_id, status: r.status, privateKey };
   }
 
-  return { request, enroll };
+  /** Replaces mac's key with a new one, as agent 1.0 does: the old key signs the request and
+   *  the new one signs a proof that it is held (docs/schema/rotation-vector.json). The new
+   *  key is kept where `keyStorage` says, a file by default, and mac then holds it. The
+   *  server refuses a key active for less than 24 hours. */
+  async function rotate(mac, { keyStorage = "software" } = {}) {
+    const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const spki = publicKey.export({ type: "spki", format: "der" });
+    const statement = ["ALTIWARD-ROTATE-V1", mac.deviceID, createHash("sha256").update(spki).digest("hex")].join("\n");
+    const proof = sign("sha256", Buffer.from(statement), { key: privateKey, dsaEncoding: "der" }).toString("base64");
+    const r = await request("POST", "/v1/agent/rotate", { mac, body: { public_key: spki.toString("base64"), key_storage: keyStorage, proof } });
+    return Object.assign(mac, { deviceID: r.device_id, status: r.status, privateKey });
+  }
+
+  return { request, enroll, rotate };
 }
 
 /** An event from mac, as the agent sends it (docs/schema/event.schema.json). */

@@ -46,7 +46,9 @@ simulated Macs and post signed events through the real agent protocol; it has no
 package dependencies. Development tokens are defined in the Makefile and seed script.
 Check-ins are timed by the server's clock, so to seed a Mac that stopped checking in it
 backdates that device in this Compose project's Postgres (`docker compose exec`); the
-monitor then raises `agent.silent` within a minute.
+monitor then raises `agent.silent` within a minute. The same way, it moves one Mac's key
+back 30 days so that the Mac can rotate it, since the server rotates only a key active
+for 24 hours. The demo's seed can't, so the demo has no rotated key.
 
 `make db-down` stops the development database. The Compose project is named `altiward`;
 the demo is `altiward-demo` and the production deployment `altiward-server`.
