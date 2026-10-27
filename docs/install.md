@@ -307,8 +307,10 @@ file only root can read.
 The agent replaces its own device key, so a copy of a file key goes stale and no file key
 stays in use for ever:
 
-- A file key on a Mac with a Secure Enclave moves into it, within an hour or so of the
-  daemon starting. This includes Macs that enrolled before agent 0.2.0 and Macs whose
+- A file key on a Mac with a Secure Enclave moves into it once the key has been active for
+  24 hours and has signed a request since the daemon started. The daemon checks after each
+  long poll and at least hourly, so a Mac that enrolled today moves tomorrow. This
+  includes Macs that enrolled before agent 0.2.0 and Macs whose
   Secure Enclave failed at enrolment. You no longer revoke a file key to move it; **Enrollments** says the
   agent does it by itself.
 - A file key on a Mac without a Secure Enclave is replaced every 30 days.
@@ -545,8 +547,9 @@ meanwhile raise the limit or set it to `0`.
 To retire a Mac, revoke its enrollment in **Enrollments**. It then stops being able to
 report and never raises a "not checking in" alert. A key that rotation replaced shows as
 **Rotated**, not **Revoked**, and offers no actions: revoke the Mac's key in use, which
-its inspector links to. A key in a file shows a note that the agent moves it into the
-Secure Enclave by itself; there is nothing to revoke.
+its inspector links to. A key in a file shows a note that, with agent 1.0 or later, the
+agent moves it into the Secure Enclave by itself or, on a Mac without one, replaces it
+every 30 days, so there is no need to revoke it.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/install/enrollments-dark.png">
@@ -983,16 +986,29 @@ one, which (`revoked_device_id`).
    that current key. Neither holder keeps a working key. It does this only when the
    replaced key was replaced in the last 30 days. For an older key, or a Mac that has
    enrolled afresh since, it only raises the alert, at most once a day per key, and the
-   Mac keeps reporting. In **Enrollments** the replaced key shows as **Rotated** and the
-   revoked one as **Revoked**.
+   key in use keeps working. In **Enrollments** the replaced key shows as **Rotated** and
+   the revoked one as **Revoked**. An alert without `revoked_device_id` usually means an
+   old copy was used, and the key in use is the Mac's. But if a key for that Mac then
+   waits in **Enrollments**, check which key the Mac holds (step 2). If it is the pending
+   one, the Mac itself used the old key: a copy rotated first, more than 30 days before
+   the Mac came back, and the active key is the copy's. Revoke the active key, then
+   approve the pending one.
 2. **The Mac enrols again by itself.** Its next request is refused, so it makes a new key
    and enrols, and with **Approve Macs that enrol again** on (the default) it waits in
-   **Enrollments**. Before you approve it, confirm in your MDM that the pending key is from
-   that Mac: **Enrollments** shows its serial and hardware UUID to compare. Reject a key
-   that isn't, and the genuine Mac enrols again. With approval off, the first key that
-   enrols is active at once, which is a reason to leave approval on. The new key starts a
-   lineage of its own: old copies of earlier keys can raise this alert, at most once a day,
-   but can't revoke anything again.
+   **Enrollments**. A copy can enrol too, and a copy of the agent's store carries the
+   Mac's serial and hardware UUID, so those don't tell the keys apart. Instead, run the
+   agent's status on the Mac through your MDM, as root:
+
+   ```sh
+   "/Library/Application Support/Altiward/Altiward.app/Contents/MacOS/altiward-agent" status
+   ```
+
+   Approve only the pending key whose **Key fingerprint** in **Enrollments** matches its
+   `key fingerprint:` line (an agent older than 1.0 shows only `device id:`, which matches
+   the key's **Device ID**), and reject every other pending key for that serial. With
+   approval off, the first key that enrols is active at once, which is a reason to leave
+   approval on. The new key starts a lineage of its own: old copies of earlier keys can
+   raise this alert, at most once a day, but can't revoke anything again.
 3. **Find where the copy came from.** A file key is readable by root, so look for it in
    backups of the Mac (Time Machine, a backup agent), disk images and clones, a Mac set
    up with Migration Assistant, and anyone with admin rights on it. It is the Mac's earlier
@@ -1002,8 +1018,8 @@ one, which (`revoked_device_id`).
    before its last rotation signs with the key it had then, which the server replaced
    since. It raises this alert, and the server revokes the key that replaced it, but the key
    it enrols with afterwards is genuine. The same happens when an agent is downgraded to
-   0.9 while the server had committed a rotation. When the Mac was restored on purpose
-   and the serial and hardware UUID match, approve it.
+   0.9 while the server had committed a rotation. When the Mac was restored on purpose,
+   approve the key whose fingerprint its status shows, as in step 2.
 
 Anyone holding a copy of a key replaced in the last 30 days can cause this once per
 lineage, and revoke the Mac's working key, whether or not they have the enrolment token:

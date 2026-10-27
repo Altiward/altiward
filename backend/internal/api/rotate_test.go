@@ -60,6 +60,10 @@ func (c *testClock) set(t time.Time) {
 type flakyStore struct {
 	store.Store
 	failRotate, failCredential, failIngest, failStaleKeyUsed bool
+	// cancelledStaleKeyUsed fails a StaleKeyUsed whose context is cancelled, as a real
+	// store does, and staleKeyDeadline is the deadline of the last one's context.
+	cancelledStaleKeyUsed bool
+	staleKeyDeadline      time.Time
 	// held, when set, is sent the context of each Ingest of a rotated event, which then
 	// waits until release is closed.
 	held    chan<- context.Context
@@ -80,6 +84,10 @@ func (f *flakyStore) Ingest(ctx context.Context, tenantID string, events []event
 func (f *flakyStore) StaleKeyUsed(ctx context.Context, deviceID string, signedAt, now time.Time) (*store.ContestResult, error) {
 	if f.failStaleKeyUsed {
 		return nil, errors.New("database unavailable")
+	}
+	f.staleKeyDeadline, _ = ctx.Deadline()
+	if err := ctx.Err(); f.cancelledStaleKeyUsed && err != nil {
+		return nil, err
 	}
 	return f.Store.StaleKeyUsed(ctx, deviceID, signedAt, now)
 }
@@ -953,6 +961,39 @@ func TestStaleKeyUseWhenTheContestFails(t *testing.T) {
 	}
 	if got := rh.polls(successor); got != http.StatusOK {
 		t.Fatalf("the successor polls with %d, want 200", got)
+	}
+}
+
+// A client that gives up mid-request doesn't stop the contest its stale key started, but a
+// database that never answers still can't hold the handler: the contest gets ten seconds.
+func TestStaleKeyContestOutlivesTheRequest(t *testing.T) {
+	rh := newRotationServer(t)
+	stale := rh.agent
+	successor := rh.rotated()
+	rh.clock.advance(2 * time.Minute)
+	rh.flaky.cancelledStaleKeyUsed = true
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	body := batch(t, "agent-health")
+	started := time.Now()
+	rec, out := stale.send(t, httptest.NewRequest("POST", "/v1/agent/events", bytes.NewReader(body)).WithContext(ctx), body)
+	wantCode(t, rec, out, http.StatusUnauthorized, "credential_invalid")
+	if strings.Contains(rh.logs.String(), "stale key contest") {
+		t.Fatalf("log = %s", rh.logs.String())
+	}
+	if n := len(rh.enrollmentEvents(event.EnrollmentStateRotatedKeyUsed)); n != 1 {
+		t.Fatalf("%d rotated_key_used events, want 1", n)
+	}
+	if got := rh.polls(successor); got != http.StatusUnauthorized {
+		t.Fatalf("the successor polls with %d, want 401", got)
+	}
+	deadline := rh.flaky.staleKeyDeadline
+	if deadline.IsZero() {
+		t.Fatal("the contest ran without a deadline")
+	}
+	if latest := time.Now().Add(10 * time.Second); !deadline.After(started) || deadline.After(latest) {
+		t.Fatalf("deadline %v after the request started, want at most 10s", deadline.Sub(started))
 	}
 }
 

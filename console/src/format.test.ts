@@ -94,6 +94,12 @@ describe("shortFingerprint", () => {
     const key = btoa("abc");
     expect(await shortFingerprint(key)).toBe("BA78 16BF 8F01 CFEA");
   });
+
+  it("matches what altiward-agent status prints for a real key", async () => {
+    // public_key_spki in docs/schema/signature-vector.json; the agent's tests check the same pair.
+    const key = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE0ZtLYuPX1jNGoy9SD0mb7WtG6Bu0rronuDy+J3X9ua5nn3CxT6iUQOCwrbrvNgh828bzaNkyVvCHcGFl+r+leA==";
+    expect(await shortFingerprint(key)).toBe("1A93 E3D5 98CC 0F43");
+  });
 });
 
 describe("sessionState", () => {

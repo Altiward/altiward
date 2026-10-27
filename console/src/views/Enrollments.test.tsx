@@ -56,6 +56,26 @@ describe("Enrollments", () => {
     expect(api.approveEnrollment).toHaveBeenCalledWith("d-pending");
     expect(await screen.findByRole("status")).toHaveTextContent("Approved");
   });
+
+  it("says what rejecting a pending key leaves the Mac with", async () => {
+    const active: Enrollment = { ...pending, device_id: "d-active", status: "active", activated_at: "2026-10-01T00:00:00Z" };
+    const reject = async () => {
+      await userEvent.click(within(screen.getByRole("complementary", { name: "Enrollment details" })).getByRole("button", { name: "Reject…" }));
+      return screen.getByRole("dialog");
+    };
+    renderView(fakeApi({ enrollments: vi.fn(async () => [pending, active]) }), <EnrollmentsView />);
+    await userEvent.click((await screen.findAllByText("C02XK0AAJGH5")).find((r) => r.closest("tr")?.textContent?.includes("Waiting"))!);
+    expect(await reject()).toHaveTextContent("The Mac keeps reporting with its previous key.");
+  });
+
+  it("doesn't promise a previous key when the Mac has none", async () => {
+    renderView(fakeApi({ enrollments: vi.fn(async () => [pending]) }), <EnrollmentsView />);
+    await userEvent.click(await screen.findByText("C02XK0AAJGH5"));
+    await userEvent.click(within(screen.getByRole("complementary", { name: "Enrollment details" })).getByRole("button", { name: "Reject…" }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("This Mac has no active key, so it can’t report until it enrols again with a new key.");
+    expect(dialog).not.toHaveTextContent("previous key");
+  });
 });
 
 describe("Enrollments, the token that enrolled a key", () => {
@@ -327,19 +347,72 @@ describe("Enrollments, rotated keys", () => {
     expect(rotated.querySelector(".badge svg")!.innerHTML).not.toEqual(revoked.querySelector(".badge svg")!.innerHTML);
   });
 
+  it("lists rotated keys under Rotated, not Revoked", async () => {
+    renderView(fakeApi({ enrollments: vi.fn(async () => [stale, current, plainRevoked]) }), <EnrollmentsView />);
+    await screen.findAllByText("ROTATED-MAC");
+    await userEvent.click(screen.getByRole("button", { name: "Revoked" }));
+    expect(listed("ROTATED-MAC")).toBe(0);
+    expect(listed("LOST-MAC")).toBe(1);
+    await userEvent.click(screen.getByRole("button", { name: "Rotated" }));
+    expect(listed("ROTATED-MAC")).toBe(1);
+    expect(listed("LOST-MAC")).toBe(0);
+    expect(row("ROTATED-MAC", "Rotated")).toBeDefined();
+  });
+
   it("the inspector links the key in use", async () => {
     renderView(fakeApi({ enrollments: vi.fn(async () => [stale, current]) }), <EnrollmentsView />);
     await screen.findAllByText("ROTATED-MAC");
-    await userEvent.click(screen.getByRole("button", { name: "Revoked" }));
+    await userEvent.click(screen.getByRole("button", { name: "Rotated" }));
     expect(listed("ROTATED-MAC")).toBe(1);
     await userEvent.click(within(screen.getByRole("grid")).getByText("ROTATED-MAC"));
     expect(inspector()).toHaveTextContent("Replaced by rotation on");
+    // The date is in that note, not in a Revoked row.
+    expect(within(inspector()).queryByText("Revoked")).toBeNull();
+    expect(inspector()).toHaveTextContent("The key in use is");
     const link = within(inspector()).getByRole("button", { name: await shortFingerprint(current.public_key) });
     await userEvent.click(link);
     expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
     expect(listed("ROTATED-MAC")).toBe(2);
     expect(inspector()).toHaveTextContent("Rotated from");
     expect(inspector()).toHaveTextContent("Active");
+  });
+
+  it("links the key in use after several rotations, not the one in between", async () => {
+    const middle = enrollment({
+      device_id: "d-current", serial: "ROTATED-MAC", public_key: btoa("second key"), key_storage: "software",
+      status: "revoked", revoked_at: "2026-10-22T08:00:00Z", rotated_from: "d-stale", rotated_to: "d-latest",
+    });
+    const latest = enrollment({
+      device_id: "d-latest", serial: "ROTATED-MAC", public_key: btoa("third key"), key_storage: "secure_enclave",
+      created_at: "2026-10-22T08:00:00Z", activated_at: "2026-10-22T08:00:00Z", rotated_from: "d-current",
+    });
+    renderView(fakeApi({ enrollments: vi.fn(async () => [stale, middle, latest]) }), <EnrollmentsView />);
+    const first = await within(screen.getByRole("grid")).findByText(await shortFingerprint(stale.public_key));
+    await userEvent.click(first.closest("tr")!);
+    expect(inspector()).toHaveTextContent("d-stale");
+    expect(inspector()).toHaveTextContent("The key in use is");
+    expect(within(inspector()).getByRole("button", { name: await shortFingerprint(latest.public_key) })).toBeInTheDocument();
+    expect(within(inspector()).queryByRole("button", { name: await shortFingerprint(middle.public_key) })).toBeNull();
+  });
+
+  it("links the key that replaced a rotated key when none of its successors is active", async () => {
+    const revokedSuccessor = enrollment({
+      device_id: "d-current", serial: "ROTATED-MAC", public_key: btoa("second key"), key_storage: "software",
+      status: "revoked", revoked_at: "2026-10-22T08:00:00Z", rotated_from: "d-stale",
+    });
+    renderView(fakeApi({ enrollments: vi.fn(async () => [stale, revokedSuccessor]) }), <EnrollmentsView />);
+    await screen.findAllByText("ROTATED-MAC");
+    await userEvent.click(row("ROTATED-MAC", "Rotated"));
+    expect(inspector()).toHaveTextContent("The key that replaced it is");
+    expect(within(inspector()).getByRole("button", { name: await shortFingerprint(revokedSuccessor.public_key) })).toBeInTheDocument();
+  });
+
+  it("shows the device ID, which the Mac's status prints", async () => {
+    renderView(fakeApi({ enrollments: vi.fn(async () => [stale, current]) }), <EnrollmentsView />);
+    await screen.findAllByText("ROTATED-MAC");
+    await userEvent.click(row("ROTATED-MAC", "Active"));
+    expect(within(inspector()).getByText("Device ID")).toBeInTheDocument();
+    expect(within(inspector()).getByText("d-current")).toBeInTheDocument();
   });
 
   it("a key made by rotation says where it came from", async () => {
@@ -386,7 +459,9 @@ describe("Enrollments, rotated keys", () => {
     renderView(fakeApi({ enrollments: vi.fn(async () => [current]) }), <EnrollmentsView />);
     await userEvent.click(await screen.findByText("ROTATED-MAC"));
     expect(inspector()).toHaveTextContent("This key is in a file, so someone with admin rights on the Mac could copy it");
-    expect(inspector()).toHaveTextContent("The agent moves this key into the Secure Enclave by itself.");
+    expect(inspector()).toHaveTextContent(
+      "With agent 1.0 or later, the agent moves this key into the Secure Enclave by itself, or, on a Mac without one, " +
+      "replaces it every 30 days.");
     expect(inspector()).not.toHaveTextContent(/revoke it/i);
   });
 

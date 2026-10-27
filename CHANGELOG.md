@@ -27,8 +27,10 @@ None.
   by the new key, in a request signed by the old one. Until the server's answer is known,
   it keeps both keys in `agent.sqlite` and sends nothing else signed by the old key, in
   the daemon or in a command run beside it, so a lost answer, a restart, sleep or a busy
-  store never makes a Mac look like a second holder of its own key. A command run while
-  the daemon is rotating says so and changes nothing.
+  store never makes a Mac look like a second holder of its own key. Only the server's
+  refusal, with its code, makes the agent give up a rotation, so a proxy's block page or
+  throttle can't either. A command run while the daemon is rotating says so and changes
+  nothing.
 
 ### Changes
 
@@ -42,6 +44,8 @@ None.
   5 to 65 minutes after it starts, and `altiward-agent status` shows a rotation still in
   progress. A process counts as the daemon only when launchd started it or it has its own
   data directory, so a `run` typed in a Terminal on a managed Mac is a command.
+- `altiward-agent status` shows the device key's fingerprint, as **Enrollments** shows it,
+  so you can tell which pending key is the Mac's.
 
 ## Server 1.0.0 - 2026-10-27
 
@@ -86,10 +90,13 @@ None.
   most once a day for each key, unless that use revoked a key. A request signed just before the
   rotation and arriving within a minute of it raises nothing.
 - Enrollments shows a key that rotation replaced as Rotated, not Revoked, with the date and a
-  link to the key that replaced it, and a key made by rotation says which key it came from.
+  link to the key in use, and a key made by rotation says which key it came from. Rotated
+  keys have a filter of their own, and Revoked lists only keys that were revoked. The
+  inspector shows each key's device ID, which `altiward-agent status` prints on the Mac.
   Revoking a rotated key answers 409 `credential_rotated` and names the key in use
   (`current_device_id`), which is the one to revoke. For a key kept in a file, the console now
-  says the agent moves it into the Secure Enclave by itself, instead of suggesting a revoke.
+  says that agent 1.0 moves it into the Secure Enclave by itself or, on a Mac without one,
+  replaces it every 30 days, instead of suggesting a revoke.
 
 ## Agent 0.9.0 - 2026-10-27
 

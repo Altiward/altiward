@@ -171,8 +171,8 @@ final class Daemon: Sendable {
             KeyRotationSchedule(authenticator: $0, log: { log.notice("\($0, privacy: .public)") })
         }
         Task { [rotation] in
-            while true {
-                try? await Task.sleep(for: .seconds(KeyRotationSchedule.checkInterval))
+            // A cancelled sleep ends the loop rather than checking without a pause.
+            while (try? await Task.sleep(for: .seconds(KeyRotationSchedule.checkInterval))) != nil {
                 await rotation?.checkIfDue()
             }
         }
@@ -267,6 +267,9 @@ final class Daemon: Sendable {
         print("device id: \(deviceID ?? "(not enrolled)")")
         if deviceID != nil, let storage = await authenticator?.keyStorage {
             print("device key: \(storage == .secureEnclave ? "Secure Enclave" : "file")")
+            // As the console shows the key, so an admin can tell which pending key is this Mac's.
+            let fingerprint = await authenticator?.keyFingerprint
+            print("key fingerprint: \(fingerprint ?? "(not known until the agent next reports)")")
         }
         if let since = await authenticator?.rotationPendingSince {
             print("key rotation: in progress since \(AltiwardJSON.format(since))")

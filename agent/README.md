@@ -141,8 +141,9 @@ profile that arrives after the package, or a later change, applies within second
 The agent enrols with the `EnrollmentToken` on first delivery, then signs every request
 with its own P-256 key. On a Mac with a Secure Enclave the daemon makes the key there; on
 other Macs, and on Macs that enrolled before agent 0.2.0, the key starts in the agent store
-under the root-only data directory. `altiward-agent status` shows the device ID and where
-the key is kept. Only the daemon can use a Secure Enclave key, so on such a Mac
+under the root-only data directory. `altiward-agent status` shows the device ID, where
+the key is kept, and the key's fingerprint as the console's Enrollments view shows it.
+Only the daemon can use a Secure Enclave key, so on such a Mac
 `altiward-agent heartbeat`, `flush`, `commands` and `simulate-hook` do their local part
 and leave the sending to the daemon. When the server's enrolment limits refuse the Mac
 (HTTP 429), the agent doesn't try to enrol again until `Retry-After` says, an hour if it
@@ -164,7 +165,9 @@ never rotates, and while a rotation is unresolved it sends nothing and says the 
 rotating the key. `altiward-agent status` shows "key rotation: in progress since
 <date>" while one is. A server that doesn't know rotation (HTTP 404 or 405), or refuses
 it, leaves the Mac's key in place and the agent tries again a day later (after
-`Retry-After` for HTTP 429). If the server says the old key is dead, or this Mac's Secure
+`Retry-After` for HTTP 429). Only the server's refusal, with its code, counts: an HTTP
+400, 403, 409 or 429 without one, such as a proxy's block page, says nothing about an
+earlier attempt that may have gone through, so the agent keeps both keys and asks again. If the server says the old key is dead, or this Mac's Secure
 Enclave can't use the replacement it saved, the agent drops both keys and enrols again
 (and waits for approval when approval is on).
 
