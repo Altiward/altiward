@@ -328,7 +328,18 @@ Revoking a rotated key is refused: revoke the key in use, which the console link
 Rolling out agent 1.0 therefore adds a `rotated` event and a **Rotated** row for each Mac
 whose key moves. A new agent on an older server finds it doesn't support rotation, keeps
 its key, and asks again a day later. If the server doesn't answer a rotation, the Mac
-keeps both keys and holds its events, which queue on the Mac, until it does.
+keeps both keys and holds its events, which queue on the Mac, until it does. A firewall or
+proxy that answers the rotate request with a server error, or drops it, does the same, and
+the Mac shows as **Not checking in**. On the Mac, `altiward-agent status` then shows the
+rotation in progress and the last answer that kept it waiting:
+
+```
+key rotation: in progress since 2026-11-02T09:14:05.112Z; reports wait until the server answers
+  last logged 2026-11-02T10:14:20.384Z: HTTP 502: Bad Gateway. If this goes on, check that the whole of /v1/agent/ reaches the server
+```
+
+Once `/v1/agent/rotate` reaches the server, the Mac finishes the rotation at its next try
+and sends what it held.
 
 ## 3. Check it works
 
@@ -555,7 +566,7 @@ every 30 days, so there is no need to revoke it.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/install/enrollments-dark.png">
-  <img src="images/install/enrollments-light.png" width="720" alt="Enrollments in the console: each key shows its fingerprint and whether it is kept in the Secure Enclave, in a file, or not reported. A Mac waiting for approval is selected, with Approve and Reject buttons, its hardware UUID, a note that it enrolled again with a new key and when it last checked in with its current key.">
+  <img src="images/install/enrollments-light.png" width="720" alt="Enrollments in the console, with filters for All, Waiting, Active, Revoked and Rotated: each key shows its fingerprint and whether it is kept in the Secure Enclave, in a file, or not reported. One Mac's earlier file key shows as Rotated. That Mac's key in use is selected, with a Revoke button, its device ID, the key it was rotated from, and a note that the agent moves a file key into the Secure Enclave or, on a Mac without one, replaces it every 30 days.">
 </picture>
 
 **Activity** keeps every change made in the console forever, and sends each one to your
@@ -952,6 +963,7 @@ Logs aren't included. If a maintainer asks for them:
 | `upgrade.sh` stopped and left `compose.yaml.new` | You changed `compose.yaml` and so did the release: merge, then run it again with `--merged` ([Releases and updates](#releases-and-updates)) |
 | `upgrade.sh` couldn't download a file | The version doesn't exist, or the server can't reach GitHub: check the version and `HTTPS_PROXY`, or give a directory of release files ([Releases and updates](#releases-and-updates)) |
 | `upgrade.sh` says a file doesn't match `SHA256SUMS` | The download is incomplete or was changed: download the release again |
+| A Mac shows **Not checking in** while it's on and online | Something between the Mac and the server answers or drops its key rotation request, so it holds its reports. `altiward-agent status` shows `key rotation:` and the last answer ([Key rotation](#key-rotation)) |
 | A Mac shows **Not checking in** | It has been off, offline or unable to reach the agent hostname for longer than the limit. Its events wait on the Mac and arrive when it reconnects. If laptops show this when they're away from the office, the agent hostname isn't reachable from the internet ([Two hostnames](#what-youre-installing)). |
 | **Needs attention** on a Mac | An integrity check failed, for example the agent's files changed, or `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`, `OutOfBandEnforcement`, `OutOfBandGraceMinutes` or `HookCodeRequirement` was set outside MDM. The Mac's details say which. |
 

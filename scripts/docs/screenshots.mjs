@@ -120,9 +120,11 @@ try {
     await shot("settings-siem", "Up to date", '[role="group"][aria-labelledby="siem-title"]');
     await open("/settings/sign-ins");
     await shot("settings-signed-in", "Tom Berg", '[role="group"][aria-labelledby="signins-title"]');
+    // The key in use on the Mac that rotated its file key, with the key it replaced listed
+    // as Rotated.
     await open("/enrollments");
-    await select("Enrollments", "C02XK0AAJGH5");
-    await shot("enrollments", "This Mac enrolled again");
+    await select("Enrollments", /C02WQ3DDKL7M.*Active/);
+    await shot("enrollments", "replaces it every 30 days");
     await open("/fleet?show=attention");
     await select("Macs", "C02VJ4EEMD6R");
     await shot("fleet-hook-not-reporting", "PostChangeExecutableChecksum", '[role="group"][aria-labelledby="integrity-title"]');
