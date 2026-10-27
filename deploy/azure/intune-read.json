@@ -1,0 +1,51 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "languageVersion": "2.0",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.48.1.52935",
+      "templateHash": "15475470493122622439"
+    }
+  },
+  "parameters": {
+    "principalId": {
+      "type": "string",
+      "metadata": {
+        "description": "The object ID (principal ID) of the managed identity to give access: the Altiward server's user-assigned identity, or a VM's system-assigned one."
+      }
+    }
+  },
+  "variables": {
+    "permission": "DeviceManagementManagedDevices.Read.All"
+  },
+  "imports": {
+    "microsoftGraphV1": {
+      "provider": "MicrosoftGraph",
+      "version": "1.0.0"
+    }
+  },
+  "resources": {
+    "graph": {
+      "existing": true,
+      "import": "microsoftGraphV1",
+      "type": "Microsoft.Graph/servicePrincipals@v1.0",
+      "properties": {
+        "appId": "00000003-0000-0000-c000-000000000000"
+      }
+    },
+    "grant": {
+      "import": "microsoftGraphV1",
+      "type": "Microsoft.Graph/appRoleAssignedTo@v1.0",
+      "properties": {
+        "resourceId": "[reference('graph').id]",
+        "principalId": "[parameters('principalId')]",
+        "appRoleId": "[filter(reference('graph').appRoles, lambda('role', equals(lambdaVariables('role').value, variables('permission'))))[0].id]"
+      },
+      "dependsOn": [
+        "graph"
+      ]
+    }
+  }
+}

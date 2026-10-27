@@ -22,7 +22,7 @@ release's image. `main.bicep` is its source.
 | Azure Database for PostgreSQL `<prefix>-db-…` | Postgres 17, Burstable B1ms, 32 GB, with 7 days of point-in-time restore. On the network's `database` subnet, with no public endpoint |
 | Virtual network `<prefix>-network` and a private DNS zone | Keep the database private to the app |
 | Key vault `<prefix>-…` | The database URL and the agent and console tokens. The app reads them as its managed identity; whoever deployed can read and change them |
-| Managed identity `<prefix>-identity` | The app's identity, which Sentinel's export can sign in as too |
+| Managed identity `<prefix>-identity` | The app's identity, which Sentinel's export and the Intune connection can sign in as too |
 | Log Analytics workspace `<prefix>-logs` | The containers' logs, kept 30 days |
 
 **Cost:** roughly US$75–100 a month in UK South. Most of it is the container app, which
@@ -87,7 +87,7 @@ The deployment's **Outputs** list what you need next:
 | `consoleUrl` | The console, and the agent's `ServerURL` unless you add your own domain |
 | `tokensUrl` | The key vault's secrets in the portal |
 | `vaultName`, `appName` | For the commands below |
-| `identityClientId` | For Sentinel's export, below |
+| `identityClientId` | For Sentinel's export and the Intune connection, below |
 | `fqdn`, `customDomainVerificationId` | For [your own domain](#your-own-domain) |
 
 1. **Get the tokens.** `console-tokens` and `agent-tokens` each hold your organisation's
@@ -119,6 +119,15 @@ The deployment's **Outputs** list what you need next:
    run the Sentinel setup script with `--identity <identityClientId>`
    ([Sentinel's guide](../../integrations/sentinel/README.md#on-azure-container-apps-no-secret)).
    The single sign-on redirect URL is `<consoleUrl>/v1/auth/callback`.
+
+6. **Connect Intune** if you want it ([step 7](../../docs/install.md#7-connect-intune-optional)).
+   The app's managed identity reads Intune with no secret: grant it Microsoft Graph's
+   `DeviceManagementManagedDevices.Read.All` permission with
+   [`intune-read.bicep`](intune-read.bicep) or `integrations/intune/setup.sh --identity
+   <identityClientId>`, then set `ALTIWARD_INTUNE_AUTH=managed-identity` and
+   `ALTIWARD_INTUNE_CLIENT_ID=<identityClientId>` on the app. The template wants the
+   identity's object ID, which `az identity show --name <appName>-identity --resource-group
+   <group> --query principalId -o tsv` prints.
 
 ## Your own domain
 

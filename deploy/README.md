@@ -6,13 +6,14 @@
 | [`azure/`](azure/) | The Deploy to Azure template: the server on Azure Container Apps, with Postgres on a private network and its tokens in Key Vault |
 | [`mdm/`](mdm/) | Mac configuration templates for the Altiward agent and SAP Privileges |
 | [`sentinel/`](sentinel/) | Azure resource provisioning for the Sentinel export |
+| [`intune/`](intune/) | The script that grants the server read access to Intune; its Deploy to Azure template is [`azure/intune-read.bicep`](azure/intune-read.bicep) |
 
 Start with the [install guide](../docs/install.md). Development services live in
 [`dev/`](../dev/).
 
 The server release bundle preserves its installation layout: server files are in
-`deploy/compose/`, the agent's Mac templates in `profiles/`, and the Sentinel script in
-`integrations/sentinel/setup.sh`. [`scripts/server-bundle.sh`](../scripts/server-bundle.sh)
+`deploy/compose/`, the agent's Mac templates in `profiles/`, and the Sentinel and Intune scripts in
+`integrations/sentinel/setup.sh` and `integrations/intune/setup.sh`. [`scripts/server-bundle.sh`](../scripts/server-bundle.sh)
 assembles that layout from these sources. The signed agent release supplies the
 Privileges profile whose checksum matches its package; the server bundle doesn't
 include it.

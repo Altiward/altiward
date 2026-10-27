@@ -1,6 +1,7 @@
 #!/bin/bash
 # Moves the Deploy to Azure template to a server release: sets the version in
-# deploy/azure/main.bicep and rebuilds azuredeploy.json. For a release, not a candidate,
+# deploy/azure/main.bicep and rebuilds azuredeploy.json (and intune-read.json, which has no
+# version, so it only follows the tag through its button). For a release, not a candidate,
 # it also points every Deploy to Azure button at the release's tag, so the buttons only
 # ever deploy a release. Run it for the release commit (docs/releasing.md); the release
 # workflow refuses a tag the template doesn't match.
