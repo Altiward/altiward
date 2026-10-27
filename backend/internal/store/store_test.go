@@ -467,8 +467,10 @@ func randomHex(t *testing.T) string {
 }
 
 func TestMemory(t *testing.T) {
-	suite(t, func(t *testing.T, sink string) Store { return NewMemory([]string{sink}) })
+	withSink := func(t *testing.T, sink string) Store { return NewMemory([]string{sink}) }
+	suite(t, withSink)
 	credentialSuite(t, func(t *testing.T) Store { return NewMemory(nil) })
+	contestAlertSuite(t, withSink)
 	commandSuite(t, func(t *testing.T) Store { return NewMemory(nil) })
 	auditSuite(t, func(t *testing.T) Store { return NewMemory(nil) })
 }
@@ -479,14 +481,15 @@ func TestPostgres(t *testing.T) {
 	if url == "" {
 		t.Skip("ALTIWARD_TEST_DATABASE_URL not set")
 	}
-	suite(t, func(t *testing.T, sink string) Store {
+	withSink := func(t *testing.T, sink string) Store {
 		s, err := OpenPostgres(context.Background(), url, []string{sink})
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(s.Close)
 		return s
-	})
+	}
+	suite(t, withSink)
 	openPlain := func(t *testing.T) Store {
 		s, err := OpenPostgres(context.Background(), url, nil)
 		if err != nil {
@@ -496,6 +499,7 @@ func TestPostgres(t *testing.T) {
 		return s
 	}
 	credentialSuite(t, openPlain)
+	contestAlertSuite(t, withSink)
 	commandSuite(t, openPlain)
 	auditSuite(t, openPlain)
 }

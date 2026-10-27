@@ -10,6 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/Altiward/altiward/backend/internal/event"
 )
 
 const credentialColumns = `device_id::text, tenant_id, serial, hardware_uuid, public_key, key_storage, token, status, created_at, activated_at, revoked_at, rotated_from::text, rotation_signed_at`
@@ -394,7 +396,7 @@ func (p *Postgres) Rotate(ctx context.Context, r RotateRequest) (RotateResult, e
 				return nil
 			}
 			// Someone else holds this stale key.
-			c, err := contest(ctx, tx, cur, next, r.Now)
+			c, err := p.contest(ctx, tx, cur, next, r.Now, r.Alert)
 			if err != nil {
 				return err
 			}
@@ -457,8 +459,9 @@ func (p *Postgres) Rotate(ctx context.Context, r RotateRequest) (RotateResult, e
 
 // contest resolves a use of stale, whose direct successor is next, in tx under the Mac's
 // lock. It revokes the Mac's active key if that descends from stale and next is within
-// ContestWindow, and moves stale's report marker on if it is NULL or a day old.
-func contest(ctx context.Context, tx pgx.Tx, stale, next DeviceCredential, now time.Time) (ContestResult, error) {
+// ContestWindow, and moves stale's report marker on if it is NULL or a day old. When that
+// calls for a report, it stores alert's event in tx too.
+func (p *Postgres) contest(ctx context.Context, tx pgx.Tx, stale, next DeviceCredential, now time.Time, alert ContestAlert) (ContestResult, error) {
 	res := ContestResult{Stale: stale}
 	if withinContestWindow(next, now) {
 		active, err := lineageActive(ctx, tx, stale.DeviceID)
@@ -484,10 +487,15 @@ func contest(ctx context.Context, tx pgx.Tx, stale, next DeviceCredential, now t
 		return res, err
 	}
 	res.Report = res.Revoked != nil || tag.RowsAffected() == 1
+	if res.Report && alert != nil {
+		if _, err := p.ingest(ctx, tx, stale.TenantID, []event.Event{alert(res)}, now); err != nil {
+			return res, fmt.Errorf("store the rotated key's use: %w", err)
+		}
+	}
 	return res, nil
 }
 
-func (p *Postgres) StaleKeyUsed(ctx context.Context, deviceID string, signedAt, now time.Time) (*ContestResult, error) {
+func (p *Postgres) StaleKeyUsed(ctx context.Context, deviceID string, signedAt, now time.Time, alert ContestAlert) (*ContestResult, error) {
 	if !isUUID(deviceID) {
 		return nil, ErrNotFound
 	}
@@ -514,7 +522,7 @@ func (p *Postgres) StaleKeyUsed(ctx context.Context, deviceID string, signedAt, 
 		if inFlight(next, signedAt, now) {
 			return nil
 		}
-		c, err := contest(ctx, tx, stale, next, now)
+		c, err := p.contest(ctx, tx, stale, next, now, alert)
 		if err != nil {
 			return err
 		}

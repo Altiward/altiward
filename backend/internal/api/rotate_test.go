@@ -60,10 +60,12 @@ func (c *testClock) set(t time.Time) {
 type flakyStore struct {
 	store.Store
 	failRotate, failCredential, failIngest, failStaleKeyUsed bool
-	// cancelledStaleKeyUsed fails a StaleKeyUsed whose context is cancelled, as a real
-	// store does, and staleKeyDeadline is the deadline of the last one's context.
-	cancelledStaleKeyUsed bool
-	staleKeyDeadline      time.Time
+	// cancelledStaleKeyUsed and cancelledRotate fail a StaleKeyUsed or Rotate whose context is
+	// cancelled, as a real store does; staleKeyDeadline and rotateDeadline are the deadlines
+	// of the last one's context.
+	cancelledStaleKeyUsed, cancelledRotate bool
+	deadlines                              sync.Mutex // guards the two below: requests may run at once
+	staleKeyDeadline, rotateDeadline       time.Time
 	// held, when set, is sent the context of each Ingest of a rotated event, which then
 	// waits until release is closed.
 	held    chan<- context.Context
@@ -81,20 +83,28 @@ func (f *flakyStore) Ingest(ctx context.Context, tenantID string, events []event
 	return f.Store.Ingest(ctx, tenantID, events, receivedAt)
 }
 
-func (f *flakyStore) StaleKeyUsed(ctx context.Context, deviceID string, signedAt, now time.Time) (*store.ContestResult, error) {
+func (f *flakyStore) StaleKeyUsed(ctx context.Context, deviceID string, signedAt, now time.Time, alert store.ContestAlert) (*store.ContestResult, error) {
 	if f.failStaleKeyUsed {
 		return nil, errors.New("database unavailable")
 	}
+	f.deadlines.Lock()
 	f.staleKeyDeadline, _ = ctx.Deadline()
+	f.deadlines.Unlock()
 	if err := ctx.Err(); f.cancelledStaleKeyUsed && err != nil {
 		return nil, err
 	}
-	return f.Store.StaleKeyUsed(ctx, deviceID, signedAt, now)
+	return f.Store.StaleKeyUsed(ctx, deviceID, signedAt, now, alert)
 }
 
 func (f *flakyStore) Rotate(ctx context.Context, r store.RotateRequest) (store.RotateResult, error) {
 	if f.failRotate {
 		return store.RotateResult{}, errors.New("database unavailable")
+	}
+	f.deadlines.Lock()
+	f.rotateDeadline, _ = ctx.Deadline()
+	f.deadlines.Unlock()
+	if err := ctx.Err(); f.cancelledRotate && err != nil {
+		return store.RotateResult{}, err
 	}
 	return f.Store.Rotate(ctx, r)
 }
@@ -991,6 +1001,35 @@ func TestStaleKeyContestOutlivesTheRequest(t *testing.T) {
 	deadline := rh.flaky.staleKeyDeadline
 	if deadline.IsZero() {
 		t.Fatal("the contest ran without a deadline")
+	}
+	if latest := time.Now().Add(10 * time.Second); !deadline.After(started) || deadline.After(latest) {
+		t.Fatalf("deadline %v after the request started, want at most 10s", deadline.Sub(started))
+	}
+}
+
+// The same for a stale key's rotate request: its contest is the store's Rotate.
+func TestStaleKeyRotationContestOutlivesTheRequest(t *testing.T) {
+	rh := newRotationServer(t)
+	stale := rh.agent
+	successor := rh.rotated()
+	rh.clock.advance(2 * time.Minute)
+	rh.flaky.cancelledRotate = true
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	body := rh.body(stale, newKey(t), "software")
+	started := time.Now()
+	rec, out := stale.send(t, httptest.NewRequest("POST", rotatePath, bytes.NewReader(body)).WithContext(ctx), body)
+	wantCode(t, rec, out, http.StatusUnauthorized, "credential_invalid")
+	if n := len(rh.enrollmentEvents(event.EnrollmentStateRotatedKeyUsed)); n != 1 {
+		t.Fatalf("%d rotated_key_used events, want 1", n)
+	}
+	if got := rh.polls(successor); got != http.StatusUnauthorized {
+		t.Fatalf("the successor polls with %d, want 401", got)
+	}
+	deadline := rh.flaky.rotateDeadline
+	if deadline.IsZero() {
+		t.Fatal("the rotation ran without a deadline")
 	}
 	if latest := time.Now().Add(10 * time.Second); !deadline.After(started) || deadline.After(latest) {
 		t.Fatalf("deadline %v after the request started, want at most 10s", deadline.Sub(started))

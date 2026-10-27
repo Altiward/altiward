@@ -1,4 +1,4 @@
-import { type ReactNode, useId, useState } from "react";
+import { type ReactNode, useId, useLayoutEffect, useRef, useState } from "react";
 import { RefreshIcon, SearchIcon } from "./Icons";
 
 export function Toolbar({ title, subtitle, children, onRefresh }: {
@@ -70,20 +70,58 @@ export function RoleNote({ children }: { children: ReactNode }) {
   return <p className="role-note">{children} Ask an Altiward admin if you need to.</p>;
 }
 
+type Box = { left: number; right: number; top: number; bottom: number };
+
+/** Where a help tag of `size` goes for a term at `term`, in a window of `view`: below the
+ *  term, from its left edge (its right edge for `end`), moved to stay `margin` inside the
+ *  window, and above the term when there's no room below. */
+export function tipPosition(term: Box, size: { width: number; height: number }, align: "start" | "end",
+  view: { width: number; height: number }, gap = 6, margin = 8): { left: number; top: number } {
+  const wanted = align === "end" ? term.right - size.width : term.left;
+  const left = Math.max(margin, Math.min(wanted, view.width - margin - size.width));
+  const below = term.bottom + gap;
+  const above = term.top - gap - size.height;
+  const top = below + size.height > view.height - margin && above >= margin ? above : below;
+  return { left, top };
+}
+
 /** A term with a short explanation, shown on hover and on keyboard focus like a macOS help
- *  tag. Escape hides it. `align="end"` anchors it to the term's right edge, for terms near
- *  the right of the page; `bare` drops the dotted underline, for badges and tags. */
+ *  tag. Escape hides it. The tag is placed on the window, not in the term's pane, so a pane
+ *  never cuts it off or scrolls sideways for it. `align="end"` lines it up with the term's
+ *  right edge, for terms near the right of the page; `bare` drops the dotted underline, for
+ *  badges and tags. */
 export function Explain({ tip, children, align = "start", bare }: {
   tip: string; children: ReactNode; align?: "start" | "end"; bare?: boolean;
 }) {
   const id = useId();
+  const term = useRef<HTMLSpanElement>(null);
+  const tag = useRef<HTMLSpanElement>(null);
   const [hidden, setHidden] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [at, setAt] = useState<{ left: number; top: number }>();
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      if (!term.current || !tag.current) return;
+      setAt(tipPosition(term.current.getBoundingClientRect(), tag.current.getBoundingClientRect(), align,
+        { width: window.innerWidth, height: window.innerHeight }));
+    };
+    place();
+    // A pane scrolled under the pointer moves the term, and the tag goes with it.
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open, align]);
+  const close = () => { setOpen(false); setHidden(false); };
   return (
-    <span className={`explain${align === "end" ? " end" : ""}${bare ? " bare" : ""}${hidden ? " dismissed" : ""}`} tabIndex={0}
+    <span ref={term} className={`explain${bare ? " bare" : ""}${hidden ? " dismissed" : ""}`} tabIndex={0}
       aria-describedby={id} onKeyDown={(e) => { if (e.key === "Escape") setHidden(true); }}
-      onBlur={() => setHidden(false)} onMouseLeave={() => setHidden(false)}>
+      onMouseEnter={() => setOpen(true)} onFocus={() => setOpen(true)} onBlur={close} onMouseLeave={close}>
       {children}
-      <span role="tooltip" id={id} className="explain-tip">{tip}</span>
+      <span ref={tag} role="tooltip" id={id} className="explain-tip" style={at}>{tip}</span>
     </span>
   );
 }

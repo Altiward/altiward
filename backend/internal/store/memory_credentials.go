@@ -5,6 +5,8 @@ import (
 	"context"
 	"sort"
 	"time"
+
+	"github.com/Altiward/altiward/backend/internal/event"
 )
 
 func (m *Memory) Enroll(_ context.Context, c DeviceCredential, limits EnrollLimits) (EnrollResult, error) {
@@ -239,7 +241,7 @@ func (m *Memory) Rotate(_ context.Context, r RotateRequest) (RotateResult, error
 			res.Credential, res.Retry = next, true
 			return res, nil
 		}
-		c := m.contest(cur, next, r.Now)
+		c := m.contest(cur, next, r.Now, r.Alert)
 		res.Contest = &c
 		return res, ErrRotatedElsewhere
 	}
@@ -270,7 +272,7 @@ func (m *Memory) Rotate(_ context.Context, r RotateRequest) (RotateResult, error
 }
 
 // contest expects m.mu held. It mirrors the Postgres store's contest.
-func (m *Memory) contest(stale, next DeviceCredential, now time.Time) ContestResult {
+func (m *Memory) contest(stale, next DeviceCredential, now time.Time, alert ContestAlert) ContestResult {
 	res := ContestResult{Stale: stale}
 	if withinContestWindow(next, now) {
 		if active, ok := m.lineageActive(stale.DeviceID); ok {
@@ -284,10 +286,14 @@ func (m *Memory) contest(stale, next DeviceCredential, now time.Time) ContestRes
 		marked = true
 	}
 	res.Report = res.Revoked != nil || marked
+	if res.Report && alert != nil {
+		// Only a session's events can be refused, and an alert has no session.
+		_, _ = m.ingest(stale.TenantID, []event.Event{alert(res)}, now)
+	}
 	return res
 }
 
-func (m *Memory) StaleKeyUsed(_ context.Context, deviceID string, signedAt, now time.Time) (*ContestResult, error) {
+func (m *Memory) StaleKeyUsed(_ context.Context, deviceID string, signedAt, now time.Time, alert ContestAlert) (*ContestResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	stale, ok := m.creds[deviceID]
@@ -302,7 +308,7 @@ func (m *Memory) StaleKeyUsed(_ context.Context, deviceID string, signedAt, now 
 	if inFlight(next, signedAt, now) {
 		return nil, nil
 	}
-	c := m.contest(stale, next, now)
+	c := m.contest(stale, next, now, alert)
 	return &c, nil
 }
 
