@@ -9,7 +9,7 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 ships: the release workflows refuse a version whose section is missing or unreleased.
 Every section has the four headings below, with "None." under any that don't apply.
 
-## Agent 1.0.0 - unreleased
+## Agent 1.0.0 - 2026-10-27
 
 ### Upgrade order
 
@@ -43,7 +43,7 @@ None.
   progress. A process counts as the daemon only when launchd started it or it has its own
   data directory, so a `run` typed in a Terminal on a managed Mac is a command.
 
-## Server 1.0.0 - unreleased
+## Server 1.0.0 - 2026-10-27
 
 ### Upgrade order
 
