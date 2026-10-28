@@ -34,6 +34,11 @@
 //	                              A rotation is Update (3), Informational; a key used after it was
 //	                              replaced by rotation is Other (99, "Stale key used"), Failure,
 //	                              High (an alert). Both have api.operation "rotate"
+//	agent.admin_group           → Group Management (3006), Informational: Add User (3) for each person
+//	                              added to the admin group and Remove User (4) for each removed;
+//	                              each member in a snapshot is Other (99, "Admin group member");
+//	                              then one Other (99, "Admin group") record for the Mac with the
+//	                              lists. See admin_group.go
 //	agent.health, activity      → not exported (inventory and v2 telemetry)
 //	console actions             → API Activity (6003); see audit.go
 //
@@ -98,6 +103,8 @@ func Map(e store.StoredEvent, tenantID string) []Record {
 		return []Record{permanentUse(e, tenantID)}
 	case event.AgentEnrollment:
 		return []Record{enrollment(e, tenantID)}
+	case event.AgentAdminGroup:
+		return adminGroup(e, tenantID)
 	}
 	return nil
 }
@@ -109,7 +116,7 @@ func Known(t event.Type) bool {
 	switch t {
 	case event.ElevationGranted, event.ElevationRevoked, event.ElevationExpiredEnforced, event.AdminOutOfBandRemoved,
 		event.AdminOutOfBand, event.ElevationOverdue, event.PersistenceDetected, event.AgentTamper,
-		event.AgentSilent, event.AdminPermanentUse, event.AgentEnrollment,
+		event.AgentSilent, event.AdminPermanentUse, event.AgentEnrollment, event.AgentAdminGroup,
 		event.AgentHealth, event.Activity:
 		return true
 	}

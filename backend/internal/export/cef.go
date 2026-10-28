@@ -118,6 +118,8 @@ func CEF(r Record) string {
 			user = *e.User.UPN
 		}
 		add("duser", user)
+	} else {
+		add("duser", recordUserName(r))
 	}
 	add("msg", str(o["message"]))
 	custom(1, "tenant", r.TenantID)

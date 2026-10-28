@@ -101,6 +101,26 @@ func TestCEFForPermanentAdminUseOnAnotherSession(t *testing.T) {
 	}
 }
 
+// Each person of an admin group event is the destination user of their own record; the
+// Mac's record has none.
+func TestCEFNamesAdminGroupPeople(t *testing.T) {
+	e := testfixture.Event(t, "agent-admin-group-changed")
+	se := store.StoredEvent{Event: e, ReceivedAt: e.Timestamp}
+	records := ocsf.Map(se, "acme")
+	if len(records) != 3 {
+		t.Fatalf("%d records", len(records))
+	}
+	for i, want := range []string{"duser=jdoe", "duser=asmith"} {
+		got := export.CEF(export.Record{TenantID: "acme", Event: se, OCSF: records[i]})
+		if !strings.Contains(got, want) || !strings.Contains(got, "cat=Group Management") {
+			t.Errorf("record %d: missing %q in\n%s", i, want, got)
+		}
+	}
+	if got := export.CEF(export.Record{TenantID: "acme", Event: se, OCSF: records[2]}); strings.Contains(got, "duser=") {
+		t.Errorf("the Mac's record names a user:\n%s", got)
+	}
+}
+
 func TestCEFForAConsoleAction(t *testing.T) {
 	a := store.AuditEntry{ID: "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d", TenantID: "acme", Actor: "token:3f2a9c1b",
 		At: testfixture.Time(t, "2026-10-17T09:00:00Z"), Action: store.AuditRevokeSession, Target: "s1",
