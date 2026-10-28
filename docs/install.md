@@ -591,8 +591,9 @@ In the console, under **Settings › General**:
   good** removes nothing. The setting shows the period in force and why. Altiward removes
   what is older once a day. Shortening the period asks you to confirm, and your SIEM keeps
   what it was sent. It never removes an event a SIEM is waiting for, anything from the last
-  90 days, or, under the default, anything received before your SIEM's coverage date (on a server that already had a SIEM,
-  the upgrade) until you replay it to the SIEM ([Connect your SIEM](#4-connect-your-siem)).
+  90 days, or, under the default, anything received before your SIEM's coverage date (on a
+  server that already had a SIEM, the upgrade) until you replay it to the SIEM
+  ([Connect your SIEM](#4-connect-your-siem)).
   Removal doesn't start until the server has sent each Mac's admin group to your SIEM from
   the readings it already holds, which happens once, when the server first starts after an
   upgrade. What is removed and what stays is in [Data handling](data-handling.md#how-long-history-is-kept).
