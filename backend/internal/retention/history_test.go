@@ -28,6 +28,21 @@ var (
 	runAt    = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC) // a year back is 2025-06-01
 )
 
+// coveredFrom is s with its SIEMs covered from at, as a replay from that date leaves them:
+// a store records coverage by its own clock, which these tests don't set.
+type coveredFrom struct {
+	store.Store
+	at time.Time
+}
+
+func (c coveredFrom) SinkCoverage(_ context.Context, sinks []string) (*time.Time, error) {
+	if len(sinks) == 0 {
+		return nil, nil
+	}
+	at := c.at
+	return &at, nil
+}
+
 func newHistory(s store.Store, sinks ...string) *retention.History {
 	return &retention.History{Store: s, Sinks: sinks, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Now: func() time.Time { return runAt }, BatchSize: 2}
@@ -154,16 +169,12 @@ func TestHistoryIsKeptWhenTheSIEMCoverageIsUnknown(t *testing.T) {
 func TestHistoryExpiryIsRecordedOncePerOrganisation(t *testing.T) {
 	ctx := context.Background()
 	s := store.NewMemory([]string{"siem"})
-	covered := time.Date(2024, 12, 1, 0, 0, 0, 0, time.UTC)
-	if err := s.RecordSinks(ctx, []string{"siem"}, covered); err != nil {
-		t.Fatal(err)
-	}
 	setHistory(t, s, "keeps", store.HistoryKeptForGood)
 	oldSession(t, s, "acme", "siem")
 	oldSession(t, s, "keeps", "siem")
 	backfilled(t, s)
 
-	h := newHistory(s, "siem")
+	h := newHistory(coveredFrom{s, time.Date(2024, 12, 1, 0, 0, 0, 0, time.UTC)}, "siem")
 	// The session, and its Mac, which hasn't checked in since.
 	n, err := h.Purge(ctx)
 	if err != nil || n != (store.ExpiryCounts{Events: 2, Sessions: 1, Macs: 1}) {
@@ -304,9 +315,6 @@ func quietMac(t *testing.T, s store.Store, tenant, serial string) store.DeviceCr
 func TestHistoryRemovesMacsThatStoppedCheckingIn(t *testing.T) {
 	ctx := context.Background()
 	s := store.NewMemory([]string{"siem"})
-	if err := s.RecordSinks(ctx, []string{"siem"}, time.Date(2024, 12, 1, 0, 0, 0, 0, time.UTC)); err != nil {
-		t.Fatal(err)
-	}
 	quiet := quietMac(t, s, "acme", "C02QUIET0001")
 	// As quiet, but someone may still hold admin rights there.
 	quietMac(t, s, "acme", "C02BUSY00001")
@@ -318,7 +326,7 @@ func TestHistoryRemovesMacsThatStoppedCheckingIn(t *testing.T) {
 	deliver(t, s, "siem")
 	backfilled(t, s)
 	logged := &bytes.Buffer{}
-	h := newHistory(s, "siem")
+	h := newHistory(coveredFrom{s, time.Date(2024, 12, 1, 0, 0, 0, 0, time.UTC)}, "siem")
 	h.Log = slog.New(slog.NewTextHandler(logged, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	// Expiry takes both readings and the admin groups they raised, then the quiet Mac goes.

@@ -2,8 +2,11 @@ package monitor_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,15 +17,48 @@ import (
 	"github.com/Altiward/altiward/backend/internal/testfixture"
 )
 
-// sweeps counts the sweeps that reach the store.
+// sweeps counts the sweeps and backfills that reach the store, and records which came
+// first. A backfill fails while failing is set.
 type sweeps struct {
 	store.Store
-	n atomic.Int32
+	n          atomic.Int32
+	backfills  atomic.Int32
+	order      []string
+	mu         sync.Mutex
+	failing    atomic.Bool
+	firstSweep chan struct{}
+	once       sync.Once
 }
 
 func (s *sweeps) AdminGroupSnapshotCandidates(ctx context.Context, since time.Time) ([]store.DeviceRef, error) {
 	s.n.Add(1)
+	s.note("sweep")
+	if s.firstSweep != nil {
+		s.once.Do(func() { close(s.firstSweep) })
+	}
 	return s.Store.AdminGroupSnapshotCandidates(ctx, since)
+}
+
+func (s *sweeps) BackfillAdminGroups(ctx context.Context, now time.Time) (int, error) {
+	s.backfills.Add(1)
+	if s.failing.Load() {
+		s.note("failed backfill")
+		return 0, errors.New("database unavailable")
+	}
+	s.note("backfill")
+	return s.Store.BackfillAdminGroups(ctx, now)
+}
+
+func (s *sweeps) note(what string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.order = append(s.order, what)
+}
+
+func (s *sweeps) seen() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.order)
 }
 
 func TestAdminGroupsSweepRaisesOneSnapshotADay(t *testing.T) {
@@ -70,6 +106,10 @@ func TestAdminGroupsRunWaitsBeforeTheFirstSweep(t *testing.T) {
 	if n := counting.n.Load(); n != 0 {
 		t.Fatalf("swept %d times before the first delay was up", n)
 	}
+	// Nor is the backfill run: an older revision may still be draining new event types.
+	if n := counting.backfills.Load(); n != 0 {
+		t.Fatalf("backfilled %d times before the first delay was up", n)
+	}
 
 	// Left alone, it sweeps once the delay has passed.
 	ctx, cancel = context.WithCancel(context.Background())
@@ -81,5 +121,45 @@ func TestAdminGroupsRunWaitsBeforeTheFirstSweep(t *testing.T) {
 			t.Fatal("never swept")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// The backfill of readings stored before the upgrade waits for the first sweep's delay, as
+// the snapshots do, runs before that sweep, and is tried again before the next sweep until
+// it succeeds.
+func TestAdminGroupsRunBackfillsBeforeTheFirstSweep(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := store.NewMemory(nil)
+	counting := &sweeps{Store: st, firstSweep: make(chan struct{})}
+	counting.failing.Store(true)
+	w := &monitor.AdminGroups{Store: counting, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: time.Now}
+	go w.Run(ctx, 20*time.Millisecond, 50*time.Millisecond)
+	select {
+	case <-counting.firstSweep:
+	case <-time.After(5 * time.Second):
+		t.Fatal("never swept")
+	}
+	counting.failing.Store(false)
+	deadline := time.Now().Add(5 * time.Second)
+	for counting.n.Load() < 4 {
+		if time.Now().After(deadline) {
+			t.Fatalf("swept %d times", counting.n.Load())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	got := counting.seen()
+	// A failed backfill, then each sweep; the first sweep after the store recovers is
+	// preceded by the backfill that succeeds, and none follows it.
+	if len(got) < 2 || got[0] != "failed backfill" || got[1] != "sweep" {
+		t.Fatalf("order = %v", got)
+	}
+	done := slices.Index(got, "backfill")
+	if done < 0 || got[done+1] != "sweep" || slices.Contains(got[done+1:], "backfill") || slices.Contains(got[done+1:], "failed backfill") {
+		t.Fatalf("order = %v", got)
+	}
+	if in, err := st.Installation(ctx); err != nil || in.AdminGroupBackfilledAt == nil {
+		t.Fatalf("installation = %+v, %v", in, err)
 	}
 }

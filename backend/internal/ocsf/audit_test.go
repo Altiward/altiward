@@ -192,3 +192,17 @@ func TestMacRemovalIsADeleteByTheServer(t *testing.T) {
 		t.Errorf("resources = %v", res)
 	}
 }
+
+// Counts in the millions read as whole numbers, not in exponent form.
+func TestHistoryExpiryCountsLargeNumbersInFull(t *testing.T) {
+	a := auditEntry(store.AuditExpireHistory, "history", map[string]any{
+		"before": "2025-06-01T00:00:00Z", "days": 365.0, "reason": store.HistoryReasonSet,
+		"counts": map[string]any{"events": 10512000.0, "sessions": 1.0, "commands": 2500000.0, "macs": 1000000.0},
+	})
+	a.Actor = store.ServerActor
+	want := "Altiward removed history received before 2025-06-01T00:00:00Z, past the 365 days it keeps " +
+		"(the period an admin set): 10512000 events, 1 session, 2500000 commands, 1000000 Macs"
+	if got := get(auditJSON(t, a), "message"); got != want {
+		t.Errorf("message = %v, want %v", got, want)
+	}
+}

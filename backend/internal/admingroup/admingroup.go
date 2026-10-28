@@ -104,6 +104,32 @@ func OnHealth(prev *Report, health event.Event, tenantID string, secret []byte, 
 	return raise(secret, tenantID, "changed/"+health.EventID, health.Device, now, d), next, true
 }
 
+// KeepHeldSessions drops, from a changed event's added people, each session link that held
+// doesn't confirm, leaving the person. The links come from the reading's open_sessions,
+// which whoever has root on the Mac can write, so a link stays only when the store holds
+// that session, open, for the same Mac and person; held says so. An error from held stops
+// it and is returned.
+func KeepHeldSessions(e event.Event, held func(user, sessionID string) (bool, error)) error {
+	added, _ := e.Detail["added"].([]any)
+	for _, item := range added {
+		a, _ := item.(map[string]any)
+		id, linked := a["session_id"].(string)
+		if !linked {
+			continue
+		}
+		name, _ := a["name"].(string)
+		ok, err := held(name, id)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			delete(a, "session_id")
+			delete(a, "source")
+		}
+	}
+	return nil
+}
+
 // Refreshed is the group last reported, prev, updated with a newer reading whose members
 // are the same (OnHealth raised nothing for it): the reading's standing admins, event ID,
 // time and truncated count, with the members as they were compared. The stores keep it, so

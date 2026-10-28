@@ -165,6 +165,50 @@ func TestIngestLogsARaisedIDAlreadyTaken(t *testing.T) {
 	}
 }
 
+// raisesInvalid is a store whose ingest reports a raised event that failed validation.
+type raisesInvalid struct {
+	store.Store
+	id string
+}
+
+func (s raisesInvalid) Ingest(ctx context.Context, tenantID string, events []event.Event, receivedAt time.Time) (store.IngestResult, error) {
+	res, err := s.Store.Ingest(ctx, tenantID, events, receivedAt)
+	res.RaisedInvalid = append(res.RaisedInvalid, s.id)
+	return res, err
+}
+
+// A raised event the server couldn't make valid is a bug in the server: it says so in its
+// log, and the Mac's reading is stored and acknowledged all the same.
+func TestIngestLogsAnInvalidRaisedEvent(t *testing.T) {
+	tokens, err := auth.Parse("acme="+agentToken, "acme="+consoleToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	now := serverNow(t)
+	const id = "0b9f5f2e-4c1d-5e6f-8a7b-9c0d1e2f3a4b"
+	h := api.New(raisesInvalid{store.NewMemory(nil), id}, tokens, slog.New(slog.NewTextHandler(&logs, nil)),
+		func() time.Time { return now })
+	health := testfixture.Event(t, "agent-health")
+	rec, out := enrollAgent(t, h, fixtureSerial).post(t, batch(t, "agent-health"))
+	if accepted, _ := out["accepted"].([]any); rec.Code != 200 || len(accepted) != 1 || accepted[0] != health.EventID {
+		t.Fatalf("ingest: %d %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), id) {
+		t.Fatalf("the agent was told of the server's event: %s", rec.Body)
+	}
+	line := ""
+	for l := range strings.Lines(logs.String()) {
+		if strings.Contains(l, "raised event invalid") {
+			line = l
+		}
+	}
+	if !strings.Contains(line, "level=ERROR") || !strings.Contains(line, "event_id="+id) ||
+		!strings.Contains(line, "device="+fixtureSerial) {
+		t.Fatalf("log = %s", logs.String())
+	}
+}
+
 func TestAuth(t *testing.T) {
 	h := newServer(t)
 	cases := []struct {
@@ -312,6 +356,21 @@ func TestPutSettingsWithoutHistoryKeepsIt(t *testing.T) {
 	}
 }
 
+// coveredFrom is a store whose SIEMs count as covered from at: a store records coverage by
+// its own clock, which this test doesn't set.
+type coveredFrom struct {
+	store.Store
+	at time.Time
+}
+
+func (c coveredFrom) SinkCoverage(_ context.Context, sinks []string) (*time.Time, error) {
+	if len(sinks) == 0 {
+		return nil, nil
+	}
+	at := c.at
+	return &at, nil
+}
+
 func TestRetentionReportsThePolicy(t *testing.T) {
 	history := func(t *testing.T, h http.Handler) map[string]any {
 		t.Helper()
@@ -336,10 +395,7 @@ func TestRetentionReportsThePolicy(t *testing.T) {
 	})
 
 	t.Run("with a SIEM", func(t *testing.T) {
-		st := store.NewMemory([]string{"splunk"})
-		if err := st.RecordSinks(context.Background(), []string{"splunk"}, now.Add(-time.Hour)); err != nil {
-			t.Fatal(err)
-		}
+		st := coveredFrom{store.NewMemory([]string{"splunk"}), now.Add(-time.Hour)}
 		h := api.New(st, tokens, log, func() time.Time { return now }, api.WithSinks([]string{"splunk"}))
 		got := history(t, h)
 		if got["reason"] != "default_siem" || got["kept_for_good"] != false || got["days"] != 365.0 ||

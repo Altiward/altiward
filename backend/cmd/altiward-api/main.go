@@ -150,7 +150,7 @@ func dropExports(ctx context.Context, sink string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Dropped %d queued exports for %s. The events stay in the database.\n", n, sink)
+	fmt.Printf("Dropped %d queued exports for %s, and its coverage date. The events stay in the database.\n", n, sink)
 	return nil
 }
 
@@ -270,23 +270,12 @@ func run(log *slog.Logger) error {
 	}
 	defer st.Close()
 
-	// Notes when each configured SIEM was connected, so history expiry never removes what
-	// a SIEM added to an old database was not sent. A sink already noted keeps its time.
-	if err := st.RecordSinks(ctx, cfg.SinkNames(), time.Now()); err != nil {
+	// Notes when each configured SIEM was connected, by the database's clock and an hour on,
+	// so history expiry never removes what a SIEM added to an old database was not sent. A
+	// sink already noted keeps its time, unless the last start didn't have it.
+	if err := st.RecordSinks(ctx, cfg.SinkNames()); err != nil {
 		return err
 	}
-
-	// Sends the admin group from readings stored before this version. It does nothing once
-	// it has finished, and a failure is tried again at the next start.
-	go func() {
-		raised, err := st.BackfillAdminGroups(ctx, time.Now())
-		switch {
-		case err != nil && ctx.Err() == nil:
-			log.Error("admin group backfill failed; it will try again at the next start", "err", err)
-		case err == nil && raised > 0:
-			log.Info("raised the admin group from stored readings", "events", raised)
-		}
-	}()
 
 	// Shared by the SIEMs, the identity provider and Intune.
 	httpClient := &http.Client{Timeout: 30 * time.Second}
@@ -346,7 +335,8 @@ func run(log *slog.Logger) error {
 	go silence.Run(ctx, time.Minute)
 
 	// The first sweep waits an hour: during an update, an older revision still running
-	// beside this one would mark the snapshots exported without sending them.
+	// beside this one would mark the snapshots exported without sending them. Before it,
+	// the admin group is sent from readings stored before this version, once.
 	groups := &monitor.AdminGroups{Store: st, Log: log, Now: time.Now}
 	go groups.Run(ctx, time.Hour, time.Hour)
 

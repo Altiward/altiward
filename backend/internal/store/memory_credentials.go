@@ -315,6 +315,8 @@ func (m *Memory) contest(stale, next DeviceCredential, now time.Time, alert Cont
 	if res.Report && alert != nil {
 		// Only a session's events can be refused, and an alert has no session.
 		_, _ = m.ingest(stale.TenantID, []event.Event{alert(res)}, now)
+		// Someone holds a key the Mac had, so it comes back into view with its alert.
+		delete(m.retired, key{stale.TenantID, stale.Serial})
 	}
 	return res
 }

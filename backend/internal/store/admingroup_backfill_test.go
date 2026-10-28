@@ -61,10 +61,10 @@ func backfillSuite(t *testing.T, h backfillHarness) {
 			}
 		}
 	}
-	// raised is the admin group events queued, oldest first, by state.
-	raised := func(t *testing.T, s Store, sink string) []event.Event {
+	// raisedBy is the admin group events due for the sink at at, oldest first.
+	raisedBy := func(t *testing.T, s Store, sink string, at time.Time) []event.Event {
 		t.Helper()
-		items, err := s.ClaimExports(ctx, sink, 100, time.Minute, now.Add(time.Hour))
+		items, err := s.ClaimExports(ctx, sink, 100, time.Minute, at)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -78,6 +78,12 @@ func backfillSuite(t *testing.T, h backfillHarness) {
 			}
 		}
 		return out
+	}
+	// raised is the admin group events queued, oldest first, once everything is due: the
+	// backfill below runs at most three hours on, and holds what it stores for an hour.
+	raised := func(t *testing.T, s Store, sink string) []event.Event {
+		t.Helper()
+		return raisedBy(t, s, sink, now.Add(5*time.Hour))
 	}
 	states := func(es []event.Event) []string {
 		out := []string{}
@@ -148,6 +154,23 @@ func backfillSuite(t *testing.T, h backfillHarness) {
 		}
 	})
 
+	t.Run("holds what it stores for an hour", func(t *testing.T) {
+		s, sink := upgraded(t)
+		h.startAt(t, s, now.Add(time.Hour))
+		at := now.Add(2 * time.Hour)
+		if n, err := s.BackfillAdminGroups(ctx, at); err != nil || n != 3 {
+			t.Fatalf("raised %d, %v", n, err)
+		}
+		// An older revision still running during an update claims only what is due, so it
+		// can't mark these sent without sending them.
+		if got := raisedBy(t, s, sink, at.Add(59*time.Minute)); len(got) != 0 {
+			t.Fatalf("due within the hour: %+v", got)
+		}
+		if got := raisedBy(t, s, sink, at.Add(time.Hour)); len(got) != 3 {
+			t.Fatalf("due once the hour was up: %+v", got)
+		}
+	})
+
 	t.Run("leaves out readings received after the start", func(t *testing.T) {
 		s, sink := upgraded(t)
 		// The third reading came 10 minutes after the first, so it is the live path's.
@@ -215,6 +238,11 @@ func TestPostgresAdminGroupBackfill(t *testing.T) {
 	if url == "" {
 		t.Skip("ALTIWARD_TEST_DATABASE_URL not set")
 	}
+	// Pages of two readings, so the three each case stores take two pages and the walk
+	// carries the group across them.
+	page := backfillPage
+	backfillPage = 2
+	t.Cleanup(func() { backfillPage = page })
 	backfillSuite(t, backfillHarness{
 		open: func(t *testing.T, sink string) Store {
 			s, err := OpenPostgres(context.Background(), inSchema(t, url, "backfill_"+randomHex(t)), []string{sink})

@@ -3,6 +3,7 @@ package ocsf
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/Altiward/altiward/backend/internal/store"
@@ -229,11 +230,15 @@ func macRemoval(serial string, detail map[string]any) string {
 		serial, detailString(detail, "last_check_in"), detail["days"], strings.Join(removed, ", "))
 }
 
-// plural is n with the noun for its number. n is a JSON number, or nil for none.
+// plural is n with the noun for its number. n is a JSON number, or nil for none. A float64
+// is written out in full: fmt would put a count in the millions in exponent form.
 func plural(n any, one, many string) string {
 	s := fmt.Sprint(n)
-	if n == nil {
+	switch v := n.(type) {
+	case nil:
 		s = "0"
+	case float64:
+		s = strconv.FormatFloat(v, 'f', -1, 64)
 	}
 	if s == "1" {
 		return "1 " + one

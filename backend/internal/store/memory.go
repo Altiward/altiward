@@ -45,7 +45,7 @@ type Memory struct {
 
 	consoleSessions map[string]ConsoleSession // by token hash
 	// coverage is each SIEM sink's covered-from time (export_sinks in Postgres).
-	coverage map[string]time.Time
+	coverage map[string]memCoverage
 	// installation starts when the store does: a memory store is a new server each run.
 	installation Installation
 
@@ -80,7 +80,7 @@ func NewMemory(exportSinks []string) *Memory {
 
 		adminGroups:     map[key]admingroup.Report{},
 		consoleSessions: map[string]ConsoleSession{},
-		coverage:        map[string]time.Time{},
+		coverage:        map[string]memCoverage{},
 		installation:    newMemoryInstallation(),
 
 		mdm: map[key]*memMDM{},
@@ -160,6 +160,11 @@ func (m *Memory) ingest(tenantID string, events []event.Event, receivedAt time.T
 
 // store keeps e and queues it for every sink. It expects m.mu held.
 func (m *Memory) store(tenantID string, e event.Event, receivedAt time.Time) {
+	m.storeDue(tenantID, e, receivedAt, receivedAt)
+}
+
+// storeDue is store with the exports not due before due.
+func (m *Memory) storeDue(tenantID string, e event.Event, receivedAt, due time.Time) {
 	k := key{tenantID, e.EventID}
 	stored := StoredEvent{Event: e, ReceivedAt: receivedAt}
 	m.events[k] = stored
@@ -169,7 +174,7 @@ func (m *Memory) store(tenantID string, e event.Event, receivedAt time.Time) {
 		m.exports = append(m.exports, &memExport{
 			ExportItem:  ExportItem{ID: m.nextID, TenantID: tenantID, Sink: sink, Event: stored},
 			queuedAt:    receivedAt,
-			nextAttempt: receivedAt,
+			nextAttempt: due,
 		})
 	}
 }
@@ -187,11 +192,18 @@ func (m *Memory) raiseAdminGroup(tenantID string, health event.Event, receivedAt
 		prev = &r
 	}
 	raised, next, ok := admingroup.OnHealth(prev, health, tenantID, m.installation.RaisedIDSecret, receivedAt)
+	if ok {
+		_ = admingroup.KeepHeldSessions(raised, func(user, sessionID string) (bool, error) {
+			s, held := m.sessions[key{tenantID, sessionID}]
+			return held && s.Open() && s.DeviceSerial == health.Device.Serial && s.LocalUser == user, nil
+		})
+	}
 	if !ok {
 		// Nothing to raise, but the report still takes the reading's details, so a daily
 		// snapshot says which reading it comes from.
 		next = admingroup.Refreshed(*prev, health)
 	} else if raised.Validate(receivedAt) != nil {
+		res.RaisedInvalid = append(res.RaisedInvalid, raised.EventID)
 		return
 	} else if had, taken := m.events[key{tenantID, raised.EventID}]; !taken {
 		m.store(tenantID, raised, receivedAt)

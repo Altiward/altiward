@@ -29,6 +29,10 @@ type IngestResult struct {
 	// event of another type or for another Mac already had the ID. The IDs derive from the
 	// installation's secret, so only tampering does this. Never sent to the agent.
 	RaisedIDTaken []string
+	// RaisedInvalid lists the IDs of events the server raised but didn't store, because the
+	// event failed event.Validate. The Mac's events are stored all the same; this is a bug
+	// in the server, never the Mac's doing. Never sent to the agent.
+	RaisedInvalid []string
 }
 
 // StoredEvent is an event as received.
@@ -99,9 +103,12 @@ type Store interface {
 	// time, then event ID) with the rules ingest uses, so it stores what ingest would have.
 	// Each event's ID derives from its reading, so one already stored (a repeat, or a Mac
 	// that ingest has covered since) is left alone and not counted. It never changes the
-	// admin group a Mac last reported, which ingest owns. It records now as
-	// Installation().AdminGroupBackfilledAt once every Mac is done, and returns 0 at once
-	// when that is set. After an error nothing is recorded, so a later call walks again.
+	// admin group a Mac last reported, which ingest owns. What it stores is queued for every
+	// sink but not due until BackfillHold after now: an older revision still running during
+	// an update claims only due items, and would mark these sent without sending them. It
+	// records now as Installation().AdminGroupBackfilledAt once every Mac is done, and
+	// returns 0 at once when that is set. After an error nothing is recorded, so a later
+	// call walks again.
 	BackfillAdminGroups(ctx context.Context, now time.Time) (raised int, err error)
 
 	// Tenants lists every tenant with a device or settings, in name order.
@@ -149,6 +156,11 @@ type Store interface {
 	// a revoke_enrollment entry for each key it revoked and a remove_device entry for the
 	// Mac, queued for every sink. A Mac already gone, as when another replica removed it
 	// first, changes and records nothing.
+	//
+	// A batch whose request was authenticated just before the removal, with a key it then
+	// revokes, waits for the locks and is stored after it: it makes the Mac's row again,
+	// not retired and with no live key. That heals itself: the Mac's next request is
+	// refused, and it enrols again like any Mac removed this way.
 	RemoveDevice(ctx context.Context, tenantID, serial string, c HistoryCutoff, now time.Time) (RemovedDevice, error)
 
 	// ClaimExports leases up to limit due items for sink so concurrent workers don't double-send.

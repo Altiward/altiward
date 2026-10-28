@@ -347,6 +347,8 @@ type Credentials interface {
 	// revokes the Mac's active key if that descends from the stale key and the stale key's
 	// successor was activated less than ContestWindow ago, and reports the use at most once
 	// in 24 hours unless it revoked, storing alert's event with the contest when it does.
+	// A report also clears the Mac's retirement (as a contest in Rotate does): someone still
+	// holds one of its keys, so its alert mustn't be hidden with it.
 	StaleKeyUsed(ctx context.Context, deviceID string, signedAt, now time.Time, alert ContestAlert) (*ContestResult, error)
 	// LineageActive returns the active key among deviceID's key and its successors, or
 	// ErrNotFound if none is.

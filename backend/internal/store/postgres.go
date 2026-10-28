@@ -209,12 +209,14 @@ func (p *Postgres) queueExports(ctx context.Context, tx pgx.Tx, tenantID, eventI
 // raiseAdminGroup stores the agent.admin_group event that a newly stored health reading
 // raises (admingroup.OnHealth), compared with lastReported, the Mac's devices.admin_group as
 // applyDevice read it under the row's lock: so readings are compared in the order they
-// arrive. The event is stored and queued for every sink, with no session and no change to
-// the device's state, and the column then records the group. A reading that raises nothing
-// still refreshes the column with its own details (admingroup.Refreshed). Nothing about the reading
-// fails the batch: an event that doesn't validate is left out, and an ID already stored as
-// another type or Mac goes in res.RaisedIDTaken and isn't recorded. A database error is
-// returned like any other in the transaction, which can't go on after one.
+// arrive. A person added keeps a link to a session only when this transaction holds that
+// session open for the same Mac and person (admingroup.KeepHeldSessions). The event is
+// stored and queued for every sink, with no session and no change to the device's state,
+// and the column then records the group. A reading that raises nothing still refreshes the
+// column with its own details (admingroup.Refreshed). Nothing about the reading fails the
+// batch: an event that doesn't validate goes in res.RaisedInvalid and an ID already stored
+// as another type or Mac in res.RaisedIDTaken, and neither is stored or recorded. A database
+// error is returned like any other in the transaction, which can't go on after one.
 func (p *Postgres) raiseAdminGroup(ctx context.Context, tx pgx.Tx, tenantID string, health event.Event, lastReported []byte,
 	receivedAt time.Time, res *IngestResult) error {
 	if len(p.raisedIDSecret) == 0 {
@@ -226,9 +228,24 @@ func (p *Postgres) raiseAdminGroup(ctx context.Context, tx pgx.Tx, tenantID stri
 		// Nothing to raise, but the column still takes the reading's details, so a daily
 		// snapshot says which reading it comes from.
 		next = admingroup.Refreshed(*prev, health)
-	} else if raised.Validate(receivedAt) != nil {
-		return nil
 	} else {
+		if err := admingroup.KeepHeldSessions(raised, func(user, sessionID string) (bool, error) {
+			var held bool
+			err := tx.QueryRow(ctx, `
+				SELECT EXISTS (SELECT 1 FROM sessions
+				WHERE tenant_id = $1 AND session_id = $2 AND device_serial = $3 AND local_user = $4 AND ended_at IS NULL)`,
+				tenantID, sessionID, health.Device.Serial, user).Scan(&held)
+			if err != nil {
+				return false, fmt.Errorf("check session link: %w", err)
+			}
+			return held, nil
+		}); err != nil {
+			return err
+		}
+		if raised.Validate(receivedAt) != nil {
+			res.RaisedInvalid = append(res.RaisedInvalid, raised.EventID)
+			return nil
+		}
 		stored, err := p.insertEvent(ctx, tx, tenantID, raised, receivedAt)
 		if err != nil {
 			return err
@@ -547,13 +564,23 @@ func (p *Postgres) RetryExportsNow(ctx context.Context, tenantID, sink string, n
 
 // DropExports removes everything queued for sink and returns how many items it removed.
 // It is for a sink taken out of the configuration, whose queue nothing drains any more;
-// the events themselves stay. The caller checks the sink isn't configured.
+// the events themselves stay. It also forgets the sink's coverage, so a sink configured
+// again under the name later counts as new. The caller checks the sink isn't configured.
 func (p *Postgres) DropExports(ctx context.Context, sink string) (int64, error) {
-	tag, err := p.pool.Exec(ctx, `DELETE FROM export_outbox WHERE sink = $1`, sink)
+	var n int64
+	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `DELETE FROM export_outbox WHERE sink = $1`, sink)
+		if err != nil {
+			return err
+		}
+		n = tag.RowsAffected()
+		_, err = tx.Exec(ctx, `DELETE FROM export_sinks WHERE sink = $1`, sink)
+		return err
+	})
 	if err != nil {
 		return 0, err
 	}
-	return tag.RowsAffected(), nil
+	return n, nil
 }
 
 // ReplayExports queues for sink the events received, and the console actions recorded,
@@ -640,7 +667,7 @@ func (p *Postgres) ExpireHistory(ctx context.Context, tenantID string, c History
 				SELECT 1 FROM events e
 				WHERE e.tenant_id = s.tenant_id AND e.session_id = s.session_id
 				  AND (e.received_at >= $2 OR e.received_at >= now() - interval '90 days'
-				       OR ($3::timestamptz IS NOT NULL AND e.received_at < $3)
+				       OR e.received_at < COALESCE($3::timestamptz, '-infinity')
 				       OR EXISTS (SELECT 1 FROM export_outbox o WHERE o.tenant_id = e.tenant_id AND o.event_id = e.event_id)))
 			ORDER BY s.updated_at
 			LIMIT $4
@@ -658,12 +685,14 @@ func (p *Postgres) ExpireHistory(ctx context.Context, tenantID string, c History
 		tenantID, c.Before, c.NotBefore, limit).Scan(&n.Sessions, &n.Events); err != nil {
 		return n, fmt.Errorf("expire sessions: %w", err)
 	}
-	// Events in no session, or in one that is gone.
+	// Events in no session, or in one that is gone. With no coverage the lower bound is
+	// -infinity rather than "$3 IS NULL OR": a cached generic plan keeps it as an index
+	// bound that way.
 	tag, err := p.pool.Exec(ctx, `
 		WITH doomed AS (
 			SELECT e.tenant_id, e.event_id FROM events e
 			WHERE e.tenant_id = $1 AND e.received_at < $2 AND e.received_at < now() - interval '90 days'
-			  AND ($3::timestamptz IS NULL OR e.received_at >= $3)
+			  AND e.received_at >= COALESCE($3::timestamptz, '-infinity')
 			  AND (e.session_id IS NULL OR NOT EXISTS (
 				SELECT 1 FROM sessions s WHERE s.tenant_id = e.tenant_id AND s.session_id = e.session_id))
 			  AND NOT EXISTS (SELECT 1 FROM export_outbox o WHERE o.tenant_id = e.tenant_id AND o.event_id = e.event_id)
@@ -707,10 +736,11 @@ func (p *Postgres) RemovalCandidates(ctx context.Context, tenantID string, befor
 // errGone rolls back a removal whose Mac was no longer there to delete.
 var errGone = errors.New("device gone")
 
-// RemoveDevice holds the Mac's row lock as well as the two locks, so ingest, enrolment,
-// approval, revocation and contests for the Mac wait for it, or it for them. Each delete
-// keeps to the database's floor by the cutoff it reads, so the delete triggers of migration
-// 0008 never fire.
+// RemoveDevice holds the Mac's row lock as well as the two locks, so enrolment, approval,
+// revocation and contests for the Mac wait for it, or it for them. The tenant's ingest lock
+// makes every Mac's ingest in the organisation wait while it runs, not just this Mac's.
+// Each delete keeps to the database's floor by the cutoff it reads, so the delete triggers
+// of migration 0008 never fire.
 func (p *Postgres) RemoveDevice(ctx context.Context, tenantID, serial string, c HistoryCutoff, now time.Time) (RemovedDevice, error) {
 	var res RemovedDevice
 	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
@@ -753,7 +783,7 @@ func (p *Postgres) RemoveDevice(ctx context.Context, tenantID, serial string, c 
 				THEN $5::text
 				WHEN EXISTS (
 					SELECT 1 FROM events e WHERE e.tenant_id = $1 AND e.device_serial = $2
-					  AND (e.received_at < $4::timestamptz
+					  AND (e.received_at < COALESCE($4::timestamptz, '-infinity')
 					       OR EXISTS (SELECT 1 FROM export_outbox o WHERE o.tenant_id = e.tenant_id AND o.event_id = e.event_id)))
 				THEN $6::text
 				WHEN EXISTS (SELECT 1 FROM sessions WHERE tenant_id = $1 AND device_serial = $2 AND ended_at IS NULL)

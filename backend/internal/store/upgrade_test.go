@@ -166,14 +166,19 @@ func TestPostgresUpgradesFromEveryMigration(t *testing.T) {
 				}
 			}
 			// Deleting history younger than 90 days is refused by the database itself, whatever
-			// the application does. The seeded event is dated by the test's clock, so make it
-			// fresh by the database's.
-			if _, err := s.pool.Exec(ctx, `UPDATE events SET received_at = now()`); err != nil {
+			// the application does. The seeded events are dated by the test's clock, so add one
+			// that is fresh by the database's; nor can the old ones be made fresh.
+			if _, err := s.pool.Exec(ctx, `INSERT INTO events (tenant_id, event_id, type, device_serial, occurred_at, received_at, body)
+				VALUES ('acme', $1, 'agent.health', 'C02OLD000001', now(), now(), '{}')`, newUUID(t)); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := s.pool.Exec(ctx, `DELETE FROM events WHERE tenant_id = 'acme'`); err == nil ||
 				!strings.Contains(err.Error(), "younger than 90 days") {
 				t.Fatalf("delete of a fresh event: %v", err)
+			}
+			if _, err := s.pool.Exec(ctx, `UPDATE events SET received_at = now()`); err == nil ||
+				!strings.Contains(err.Error(), "events.received_at cannot be changed") {
+				t.Fatalf("moving received_at: %v", err)
 			}
 			st, err := s.Stats(ctx, now)
 			if err != nil || len(st.MigrationsPending) != 0 || len(st.MigrationsApplied) != len(names) ||

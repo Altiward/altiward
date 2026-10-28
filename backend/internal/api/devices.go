@@ -267,10 +267,7 @@ func (s *Server) revokeEnrollment(w http.ResponseWriter, r *http.Request, p auth
 		return
 	}
 	// What the revoke may cut off, recorded with it: the admin was warned of both.
-	if err := s.noteWhatRevokeEnds(r.Context(), p.TenantID, &a); err != nil {
-		s.serverError(w, "revoke enrollment", err)
-		return
-	}
+	s.noteWhatRevokeEnds(r.Context(), p.TenantID, &a)
 	c, err := s.store.RevokeCredential(r.Context(), p.TenantID, r.PathValue("id"), s.now(), a)
 	if errors.Is(err, store.ErrRotated) {
 		// A rotated key is already revoked: the key to revoke is the lineage's active one,
@@ -299,29 +296,30 @@ func (s *Server) revokeEnrollment(w http.ResponseWriter, r *http.Request, p auth
 
 // noteWhatRevokeEnds adds to a's detail, for the Mac it names, how many sessions are open on
 // it (open_sessions) and whether any of its integrity checks fails (failing_checks). It adds
-// neither when there is nothing to say.
-func (s *Server) noteWhatRevokeEnds(ctx context.Context, tenantID string, a *store.AuditEntry) error {
+// neither when there is nothing to say. Both are extra detail, so a read that fails is
+// logged and the revoke goes ahead without what it would have added.
+func (s *Server) noteWhatRevokeEnds(ctx context.Context, tenantID string, a *store.AuditEntry) {
 	serial, _ := a.Detail["serial"].(string)
 	if serial == "" {
-		return nil
+		return
 	}
 	open, err := s.store.ListSessions(ctx, tenantID, store.SessionFilter{DeviceSerial: serial, OpenOnly: true, Limit: store.MaxSessionPage})
-	if err != nil {
-		return err
-	}
-	if len(open) > 0 {
+	switch {
+	case err != nil:
+		s.log.Warn("revoke: can't read the Mac's open sessions; revoking without them", "tenant", tenantID, "serial", serial, "err", err)
+	case len(open) > 0:
 		a.Detail["open_sessions"] = len(open)
 	}
 	devices, err := s.store.ListDevices(ctx, tenantID)
 	if err != nil {
-		return err
+		s.log.Warn("revoke: can't read the Mac's checks; revoking without them", "tenant", tenantID, "serial", serial, "err", err)
+		return
 	}
 	for _, d := range devices {
 		if d.Serial == serial && slices.Contains(slices.Collect(maps.Values(d.Integrity)), false) {
 			a.Detail["failing_checks"] = true
 		}
 	}
-	return nil
 }
 
 // enrollmentAudit starts the audit entry for a change to the credential in the path,

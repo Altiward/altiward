@@ -95,6 +95,11 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request, p auth.Principal
 	for _, id := range res.RaisedIDTaken {
 		s.log.Error("raised event ID already taken", "tenant", p.TenantID, "device", p.Serial, "event_id", id)
 	}
+	// An event the server raised that fails validation is the server's bug, not the Mac's.
+	// It wasn't stored; the Mac's events were.
+	for _, id := range res.RaisedInvalid {
+		s.log.Error("raised event invalid", "tenant", p.TenantID, "device", p.Serial, "event_id", id)
+	}
 	if len(resp.Rejected) > 0 {
 		s.log.Warn("rejected events", "tenant", p.TenantID, "device", p.Serial, "count", len(resp.Rejected), "first", resp.Rejected[0].Error)
 	}

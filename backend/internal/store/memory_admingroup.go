@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"iter"
 	"slices"
 	"strings"
 	"time"
@@ -72,13 +73,13 @@ func (m *Memory) BackfillAdminGroups(_ context.Context, now time.Time) (int, err
 			}
 			return strings.Compare(a.EventID, b.EventID)
 		})
-		n, _ := backfillMac(readings, mac.tenant, m.installation.RaisedIDSecret,
+		n, _ := backfillMac(each(readings), mac.tenant, m.installation.RaisedIDSecret,
 			func(e event.Event, at time.Time) (recorded, stored bool, err error) {
 				had, taken := m.events[key{mac.tenant, e.EventID}]
 				if taken {
 					return had.Type == e.Type && had.Device.Serial == e.Device.Serial, false, nil
 				}
-				m.store(mac.tenant, e, at)
+				m.storeDue(mac.tenant, e, at, now.Add(BackfillHold))
 				return true, true, nil
 			})
 		raised += n
@@ -86,4 +87,15 @@ func (m *Memory) BackfillAdminGroups(_ context.Context, now time.Time) (int, err
 	done := now
 	m.installation.AdminGroupBackfilledAt = &done
 	return raised, nil
+}
+
+// each yields the readings in order, with no error.
+func each(readings []StoredEvent) iter.Seq2[StoredEvent, error] {
+	return func(yield func(StoredEvent, error) bool) {
+		for _, r := range readings {
+			if !yield(r, nil) {
+				return
+			}
+		}
+	}
 }

@@ -918,6 +918,31 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 			wantAuditRetired(t, e, false)
 		})
 
+		t.Run("a stale key's use brings a retired Mac back", func(t *testing.T) {
+			s, tenant, serial := retiredMac(t)
+			old := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+			next := rotate(t, s, tenant, old.DeviceID, rotation)
+			revokeAudited(t, s, tenant, next.DeviceID, rotation.Add(time.Minute))
+			wantRetired(t, s, tenant, serial, rotation.Add(time.Minute))
+			// Someone still holds a key the Mac had: its alert must not stay hidden.
+			if c := staleKeyUsed(t, s, old.DeviceID, rotation.Add(2*time.Minute), rotation.Add(2*time.Minute)); c == nil || !c.Report {
+				t.Fatalf("contest = %+v", c)
+			}
+			wantNotRetired(t, s, tenant, serial)
+		})
+
+		t.Run("a stale key's rotation brings a retired Mac back", func(t *testing.T) {
+			s, tenant, serial := retiredMac(t)
+			old := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+			next := rotate(t, s, tenant, old.DeviceID, rotation)
+			revokeAudited(t, s, tenant, next.DeviceID, rotation.Add(time.Minute))
+			wantRetired(t, s, tenant, serial, rotation.Add(time.Minute))
+			if _, err := rotateAt(s, tenant, old.DeviceID, newKey(t), rotation.Add(2*time.Minute)); !errors.Is(err, ErrRotatedElsewhere) {
+				t.Fatalf("err = %v", err)
+			}
+			wantNotRetired(t, s, tenant, serial)
+		})
+
 		t.Run("a contest never retires", func(t *testing.T) {
 			s, tenant, serial := retiredMac(t)
 			old := enroll(t, s, tenant, serial, newKey(t), t0).Credential

@@ -487,7 +487,8 @@ func (p *Postgres) Rotate(ctx context.Context, r RotateRequest) (RotateResult, e
 // contest resolves a use of stale, whose direct successor is next, in tx under the Mac's
 // lock. It revokes the Mac's active key if that descends from stale and next is within
 // ContestWindow, and moves stale's report marker on if it is NULL or a day old. When that
-// calls for a report, it stores alert's event in tx too.
+// calls for a report, it stores alert's event in tx too, and the Mac is no longer retired:
+// someone still holds one of its keys, so its alert mustn't stay out of view.
 func (p *Postgres) contest(ctx context.Context, tx pgx.Tx, stale, next DeviceCredential, now time.Time, alert ContestAlert) (ContestResult, error) {
 	res := ContestResult{Stale: stale}
 	if withinContestWindow(next, now) {
@@ -517,6 +518,11 @@ func (p *Postgres) contest(ctx context.Context, tx pgx.Tx, stale, next DeviceCre
 	if res.Report && alert != nil {
 		if _, err := p.ingest(ctx, tx, stale.TenantID, []event.Event{alert(res)}, now); err != nil {
 			return res, fmt.Errorf("store the rotated key's use: %w", err)
+		}
+		// Someone holds a key the Mac had, so it comes back into view with its alert.
+		if _, err := tx.Exec(ctx, `UPDATE devices SET retired_at = NULL
+			WHERE tenant_id = $1 AND serial = $2 AND retired_at IS NOT NULL`, stale.TenantID, stale.Serial); err != nil {
+			return res, fmt.Errorf("bring the Mac back: %w", err)
 		}
 	}
 	return res, nil

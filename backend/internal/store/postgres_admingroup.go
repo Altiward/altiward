@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -124,7 +125,7 @@ func (p *Postgres) BackfillAdminGroups(ctx context.Context, now time.Time) (int,
 		// and adds events whose IDs are fixed, so a second server doing the same, or ingest
 		// raising one of them, leaves a single copy.
 		err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
-			n, err := p.backfillMac(ctx, tx, mac, in.AdminGroupStartedAt)
+			n, err := p.backfillMac(ctx, tx, mac, in.AdminGroupStartedAt, now.Add(BackfillHold))
 			raised += n
 			return err
 		})
@@ -139,41 +140,22 @@ func (p *Postgres) BackfillAdminGroups(ctx context.Context, now time.Time) (int,
 	return raised, nil
 }
 
-// backfillMac stores what the Mac's readings from before start would have raised. It
-// returns how many it stored; a transaction that fails stores none of them.
-func (p *Postgres) backfillMac(ctx context.Context, tx pgx.Tx, mac DeviceRef, start time.Time) (int, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT body, received_at FROM events
-		WHERE tenant_id = $1 AND device_serial = $2 AND type = $3 AND received_at < $4
-		ORDER BY received_at, event_id`, mac.TenantID, mac.Serial, string(event.AgentHealth), start)
-	if err != nil {
-		return 0, fmt.Errorf("load readings: %w", err)
-	}
-	readings := []StoredEvent{}
-	for rows.Next() {
-		var body []byte
-		var r StoredEvent
-		if err := rows.Scan(&body, &r.ReceivedAt); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		if json.Unmarshal(body, &r.Event) != nil {
-			continue // a reading that can't be read raised nothing at ingest either
-		}
-		readings = append(readings, r)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	return backfillMac(readings, mac.TenantID, p.raisedIDSecret,
+// backfillPage is how many readings the backfill reads at a time, so a Mac with years of
+// readings never has them all in memory. A variable so a test can make pages small.
+var backfillPage = 500
+
+// backfillMac stores what the Mac's readings from before start would have raised, queued
+// for every sink from due. It returns how many it stored; a transaction that fails stores
+// none of them.
+func (p *Postgres) backfillMac(ctx context.Context, tx pgx.Tx, mac DeviceRef, start, due time.Time) (int, error) {
+	return backfillMac(p.readingsBefore(ctx, tx, mac, start), mac.TenantID, p.raisedIDSecret,
 		func(e event.Event, at time.Time) (recorded, stored bool, err error) {
 			stored, err = p.insertEvent(ctx, tx, mac.TenantID, e, at)
 			if err != nil {
 				return false, false, err
 			}
 			if stored {
-				return true, true, p.queueExports(ctx, tx, mac.TenantID, e.EventID, at)
+				return true, true, p.queueExports(ctx, tx, mac.TenantID, e.EventID, due)
 			}
 			var typ, serial string
 			if err := tx.QueryRow(ctx, `SELECT type, device_serial FROM events WHERE tenant_id = $1 AND event_id = $2`,
@@ -182,4 +164,69 @@ func (p *Postgres) backfillMac(ctx context.Context, tx pgx.Tx, mac DeviceRef, st
 			}
 			return typ == string(e.Type) && serial == e.Device.Serial, false, nil
 		})
+}
+
+// readingsBefore yields the Mac's health readings received before start in arrival order
+// (received time, then event ID), a page at a time: the transaction can't run the walk's
+// inserts while a query's rows are open, so each page is read and closed before it is
+// walked. Each reading carries only what admingroup.OnHealth reads: its ID, time, device and
+// the three lists of its detail. A reading that can't be read is skipped, as it raised
+// nothing at ingest either.
+func (p *Postgres) readingsBefore(ctx context.Context, tx pgx.Tx, mac DeviceRef, start time.Time) iter.Seq2[StoredEvent, error] {
+	return func(yield func(StoredEvent, error) bool) {
+		var afterAt *time.Time // the last reading read, nil before the first page
+		var afterID *string
+		for {
+			rows, err := tx.Query(ctx, `
+				SELECT event_id::text, received_at, jsonb_build_object(
+					'event_id', body->'event_id', 'timestamp', body->'timestamp', 'device', body->'device',
+					'detail', jsonb_build_object(
+						'admin_members', body->'detail'->'admin_members',
+						'permanent_admins', body->'detail'->'permanent_admins',
+						'open_sessions', body->'detail'->'open_sessions'))
+				FROM events
+				WHERE tenant_id = $1 AND device_serial = $2 AND type = $3 AND received_at < $4
+				  AND (received_at, event_id) > (COALESCE($5::timestamptz, '-infinity'),
+				                                 COALESCE($6::uuid, '00000000-0000-0000-0000-000000000000'))
+				ORDER BY received_at, event_id
+				LIMIT $7`, mac.TenantID, mac.Serial, string(event.AgentHealth), start, afterAt, afterID, backfillPage)
+			if err != nil {
+				yield(StoredEvent{}, fmt.Errorf("load readings: %w", err))
+				return
+			}
+			page := make([]StoredEvent, 0, backfillPage)
+			read := 0
+			for rows.Next() {
+				var id string
+				var at time.Time
+				var body []byte
+				if err := rows.Scan(&id, &at, &body); err != nil {
+					rows.Close()
+					yield(StoredEvent{}, err)
+					return
+				}
+				read++
+				afterAt, afterID = &at, &id
+				r := StoredEvent{ReceivedAt: at}
+				if json.Unmarshal(body, &r.Event) != nil {
+					continue
+				}
+				r.Type = event.AgentHealth
+				page = append(page, r)
+			}
+			rows.Close()
+			if err := rows.Err(); err != nil {
+				yield(StoredEvent{}, err)
+				return
+			}
+			for _, r := range page {
+				if !yield(r, nil) {
+					return
+				}
+			}
+			if read < backfillPage {
+				return
+			}
+		}
+	}
 }

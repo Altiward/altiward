@@ -40,20 +40,11 @@ func suite(t *testing.T, newStore func(t *testing.T, sink string) Store) {
 	t.Run("coverage", func(t *testing.T) {
 		s, _, _ := setup(t)
 		first, second := "sink-a-"+randomHex(t), "sink-b-"+randomHex(t)
-		t1 := now
-		t2 := now.Add(time.Hour)
 		if got, err := s.SinkCoverage(ctx, []string{first, second}); err != nil || got != nil {
 			t.Fatalf("coverage before anything is recorded = %v, %v", got, err)
 		}
 		if got, err := s.SinkCoverage(ctx, nil); err != nil || got != nil {
 			t.Fatalf("coverage of no sinks = %v, %v", got, err)
-		}
-		if err := s.RecordSinks(ctx, []string{first}, t1); err != nil {
-			t.Fatal(err)
-		}
-		// A second start keeps the first time, and a new sink gets its own.
-		if err := s.RecordSinks(ctx, []string{first, second}, t2); err != nil {
-			t.Fatal(err)
 		}
 		coverage := func(sinks ...string) time.Time {
 			t.Helper()
@@ -63,8 +54,34 @@ func suite(t *testing.T, newStore func(t *testing.T, sink string) Store) {
 			}
 			return *got
 		}
+		// record starts a server with sinks, and checks that each new one counts as covered
+		// from an hour after the start, by the store's clock (the database's for Postgres,
+		// which may be a little off this process's), not from the start itself.
+		record := func(t *testing.T, sinks []string, fresh ...string) {
+			t.Helper()
+			before := time.Now()
+			if err := s.RecordSinks(ctx, sinks); err != nil {
+				t.Fatal(err)
+			}
+			after := time.Now()
+			const skew = 2 * time.Minute
+			for _, sink := range fresh {
+				if got := coverage(sink); got.Before(before.Add(time.Hour-skew)) || got.After(after.Add(time.Hour+skew)) {
+					t.Fatalf("%s covered from %v, want an hour after %v", sink, got, before)
+				}
+			}
+		}
+		record(t, []string{first}, first)
+		t1 := coverage(first)
+		// A second start keeps the first time, and a new sink gets its own.
+		time.Sleep(2 * time.Millisecond)
+		record(t, []string{first, second}, second)
 		if got := coverage(first); !got.Equal(t1) {
-			t.Fatalf("coverage after a second RecordSinks = %v, want %v", got, t1)
+			t.Fatalf("coverage after a second start = %v, want %v", got, t1)
+		}
+		t2 := coverage(second)
+		if !t2.After(t1) {
+			t.Fatalf("the later sink covered from %v, the first from %v", t2, t1)
 		}
 		if got := coverage(first, second); !got.Equal(t2) {
 			t.Fatalf("coverage of two sinks = %v, want the later %v", got, t2)
@@ -73,21 +90,52 @@ func suite(t *testing.T, newStore func(t *testing.T, sink string) Store) {
 		if r, ok := s.(interface {
 			ReplayExports(ctx context.Context, sink string, since, now time.Time) (int64, error)
 		}); ok {
-			if _, err := r.ReplayExports(ctx, second, t1.Add(-24*time.Hour), t2); err != nil {
+			replayed := t1.Add(-24 * time.Hour)
+			if _, err := r.ReplayExports(ctx, second, replayed, now); err != nil {
 				t.Fatal(err)
 			}
-			if got := coverage(second); !got.Equal(t1.Add(-24 * time.Hour)) {
+			if got := coverage(second); !got.Equal(replayed) {
 				t.Fatalf("coverage after replaying from earlier = %v", got)
 			}
 			if got := coverage(first, second); !got.Equal(t1) {
 				t.Fatalf("coverage of two sinks after the replay = %v, want %v", got, t1)
 			}
-			if _, err := r.ReplayExports(ctx, second, t2, t2); err != nil {
+			if _, err := r.ReplayExports(ctx, second, t2, now); err != nil {
 				t.Fatal(err)
 			}
-			if got := coverage(second); !got.Equal(t1.Add(-24 * time.Hour)) {
+			if got := coverage(second); !got.Equal(replayed) {
 				t.Fatalf("replaying from later moved the coverage to %v", got)
 			}
+		}
+		was := coverage(second)
+
+		// A start without the second sink leaves its time as it was, but nothing is queued
+		// for it until it is back, so when it is, it counts as covered only from then.
+		record(t, []string{first})
+		if got := coverage(second); !got.Equal(was) {
+			t.Fatalf("a start without the sink moved its coverage to %v", got)
+		}
+		time.Sleep(2 * time.Millisecond)
+		record(t, []string{first, second}, second)
+		back := coverage(second)
+		if !back.After(t2) {
+			t.Fatalf("a sink back after a start without it covered from %v, before %v", back, t2)
+		}
+		if got := coverage(first); !got.Equal(t1) {
+			t.Fatalf("the sink configured all along moved to %v", got)
+		}
+		// Back for good: the next start keeps the new time.
+		time.Sleep(2 * time.Millisecond)
+		record(t, []string{first, second})
+		if got := coverage(second); !got.Equal(back) {
+			t.Fatalf("a start with the sink still there moved it to %v, want %v", got, back)
+		}
+		// A start with no sinks at all counts as every sink missing.
+		record(t, nil)
+		time.Sleep(2 * time.Millisecond)
+		record(t, []string{first}, first)
+		if got := coverage(first); !got.After(back) {
+			t.Fatalf("after a start with no sinks, the sink covered from %v", got)
 		}
 	})
 
@@ -365,18 +413,19 @@ func suite(t *testing.T, newStore func(t *testing.T, sink string) Store) {
 
 		t.Run("raises the admin group when it changes", func(t *testing.T) {
 			s, tenant, sink := setup(t)
-			_, _, _, health := fixtures(t)
+			granted, _, _, health := fixtures(t)
 			res, err := s.Ingest(ctx, tenant, []event.Event{health}, now)
 			if err != nil || !slices.Equal(res.Accepted, []string{health.EventID}) || len(res.RaisedIDTaken) != 0 {
 				t.Fatalf("res = %+v err = %v", res, err)
 			}
+			// jdoe's grant, then the reading that shows him in the group with it.
 			added := reading(t, "3e9c9d85-9d3b-4a6b-8c8b-000000000001", health.Timestamp.Add(5*time.Minute),
 				"backdoor", "itadmin", "jdoe")
 			added.Detail["open_sessions"] = []any{map[string]any{
-				"user": "jdoe", "session_id": "5d1c2b7a-8e4f-4a6b-9c3d-2e1f0a9b8c7d", "source": "privileges"}}
+				"user": "jdoe", "session_id": *granted.SessionID, "source": "privileges"}}
 			later := now.Add(5 * time.Minute)
-			if res, err = s.Ingest(ctx, tenant, []event.Event{added}, later); err != nil ||
-				!slices.Equal(res.Accepted, []string{added.EventID}) || len(res.Duplicate) != 0 {
+			if res, err = s.Ingest(ctx, tenant, []event.Event{granted, added}, later); err != nil ||
+				!slices.Equal(res.Accepted, []string{granted.EventID, added.EventID}) || len(res.Duplicate) != 0 {
 				t.Fatalf("res = %+v err = %v", res, err)
 			}
 
@@ -403,12 +452,69 @@ func suite(t *testing.T, newStore func(t *testing.T, sink string) Store) {
 				}
 			}
 			// The raised events aren't sessions, and aren't a check-in.
-			if open, _ := s.ListSessions(ctx, tenant, SessionFilter{}); len(open) != 0 {
+			if open, _ := s.ListSessions(ctx, tenant, SessionFilter{}); len(open) != 1 || open[0].SessionID != *granted.SessionID {
 				t.Fatalf("sessions = %v", ids(open))
 			}
 			devices, _ := s.ListDevices(ctx, tenant)
 			if len(devices) != 1 || !devices[0].LastReceivedAt.Equal(later) || len(devices[0].AdminMembers) != 3 {
 				t.Fatalf("devices = %+v", devices)
+			}
+		})
+
+		t.Run("links an added person only to their own open session on the Mac", func(t *testing.T) {
+			s, tenant, sink := setup(t)
+			granted, revoked, _, health := fixtures(t)
+			if _, err := s.Ingest(ctx, tenant, []event.Event{health}, now); err != nil {
+				t.Fatal(err)
+			}
+			// as is the fixture's grant or revoke with another ID, session, user or Mac.
+			as := func(e event.Event, id, sessionID, user, serial string) event.Event {
+				e.EventID, e.SessionID, e.Device.Serial = id, &sessionID, serial
+				u := *e.User
+				u.LocalName = user
+				e.User = &u
+				return e
+			}
+			const (
+				otherMac = "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b"
+				ended    = "6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c"
+			)
+			setupBatch := []event.Event{
+				granted, // jdoe's open session on this Mac
+				as(granted, "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d", otherMac, "kim", "C02OTHERMAC1"), // kim's, on another Mac
+				as(granted, "8b9c0d1e-2f3a-4b4c-8d5e-6f7a8b9c0d1e", ended, "pat", "C02XK0AAJGH5"),
+				as(revoked, "9c0d1e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f", ended, "pat", "C02XK0AAJGH5"), // pat's, ended
+			}
+			if _, err := s.Ingest(ctx, tenant, setupBatch, now.Add(time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			// A reading, which root on the Mac can write, that links each person it adds to a
+			// session: only jdoe's is his own, open, on this Mac.
+			forged := reading(t, "3e9c9d85-9d3b-4a6b-8c8b-000000000009", health.Timestamp.Add(5*time.Minute),
+				"alex", "backdoor", "itadmin", "jdoe", "kim", "lee", "pat")
+			link := func(user, sessionID string) any {
+				return map[string]any{"user": user, "session_id": sessionID, "source": "privileges"}
+			}
+			forged.Detail["open_sessions"] = []any{
+				link("jdoe", *granted.SessionID),
+				link("alex", *granted.SessionID),                    // jdoe's session
+				link("kim", otherMac),                               // another Mac's
+				link("pat", ended),                                  // ended
+				link("lee", "0d1e2f3a-4b5c-4d6e-8f7a-8b9c0d1e2f3a"), // none the store holds
+			}
+			res, err := s.Ingest(ctx, tenant, []event.Event{forged}, now.Add(5*time.Minute))
+			if err != nil || !slices.Equal(res.Accepted, []string{forged.EventID}) {
+				t.Fatalf("res = %+v err = %v", res, err)
+			}
+			got := queued(t, s, sink)
+			if len(got) != 2 || state(got[1]) != event.AdminGroupChanged {
+				t.Fatalf("queued %+v, want a snapshot and a change", got)
+			}
+			added, _ := json.Marshal(got[1].Detail["added"])
+			want := `[{"name":"alex"},{"name":"jdoe","session_id":"` + *granted.SessionID + `","source":"privileges"},` +
+				`{"name":"kim"},{"name":"lee"},{"name":"pat"}]`
+			if string(added) != want {
+				t.Fatalf("added %s, want %s", added, want)
 			}
 		})
 
@@ -513,6 +619,23 @@ func suite(t *testing.T, newStore func(t *testing.T, sink string) Store) {
 			got := queued(t, s, sink)
 			if len(got) != 1 || state(got[0]) != event.AdminGroupSnapshot || got[0].EventID != idFor(t, s, tenant, "first/"+next.EventID) {
 				t.Fatalf("queued %+v, want a snapshot of the next reading", got)
+			}
+		})
+
+		t.Run("a raised event that fails validation is reported, and the reading still stored", func(t *testing.T) {
+			s, tenant, sink := setup(t)
+			_, _, _, health := fixtures(t)
+			// The API would refuse this reading; the store doesn't check, so it stands for
+			// any reading whose admin group event the server can't make valid.
+			health.Device.HardwareUUID = ""
+			res, err := s.Ingest(ctx, tenant, []event.Event{health}, now)
+			want := idFor(t, s, tenant, "first/"+health.EventID)
+			if err != nil || !slices.Equal(res.Accepted, []string{health.EventID}) ||
+				!slices.Equal(res.RaisedInvalid, []string{want}) || len(res.RaisedIDTaken) != 0 {
+				t.Fatalf("res = %+v err = %v", res, err)
+			}
+			if got := queued(t, s, sink); len(got) != 0 {
+				t.Fatalf("queued %+v", got)
 			}
 		})
 
@@ -1528,9 +1651,19 @@ func TestPostgresStats(t *testing.T) {
 		t.Fatalf("export backlog = %+v", mine)
 	}
 
-	// Dropping a removed sink's queue leaves the events and other sinks' queues alone.
+	// Dropping a removed sink's queue leaves the events and other sinks' queues alone, and
+	// forgets the sink's coverage, so the name configured again later is a new SIEM.
+	if err := s.RecordSinks(ctx, []string{sink}); err != nil {
+		t.Fatal(err)
+	}
+	if covered, err := s.SinkCoverage(ctx, []string{sink}); err != nil || covered == nil {
+		t.Fatalf("coverage before the drop = %v, %v", covered, err)
+	}
 	if n, err := ro.DropExports(ctx, sink); err != nil || n != 3 {
 		t.Fatalf("DropExports = %d, %v", n, err)
+	}
+	if covered, err := s.SinkCoverage(ctx, []string{sink}); err != nil || covered != nil {
+		t.Fatalf("coverage after the drop = %v, %v", covered, err)
 	}
 	if items, err := s.ClaimExports(ctx, sink, 10, time.Minute, now.Add(time.Hour)); err != nil || len(items) != 0 {
 		t.Fatalf("after drop, claimed %d, %v", len(items), err)

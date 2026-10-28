@@ -10,6 +10,8 @@ CREATE INDEX sessions_updated_ended_idx ON sessions (tenant_id, updated_at) WHER
 -- still waiting to be sent with NOT EXISTS. The unique index on the outbox leads with the
 -- sink, which neither of those has.
 CREATE INDEX export_outbox_event_idx ON export_outbox (tenant_id, event_id);
+-- Removing a Mac, and the backfill of the admin group, read one Mac's events by time.
+CREATE INDEX events_device_received_idx ON events (tenant_id, device_serial, received_at);
 
 -- A retired Mac: NULL means not retired. admin_group is what the Mac last reported as its
 -- admin group; NULL means nothing reported yet.
@@ -52,10 +54,13 @@ ALTER TABLE installation
     ADD COLUMN admin_group_backfilled_at timestamptz;
 
 -- From when each SIEM sink has been sent everything. A sink added later is replayed from
--- the events still held, so history expiry must not outrun it.
+-- the events still held, so history expiry must not outrun it. absent_since is when a server
+-- first started without the sink configured; NULL means it was configured at the last start
+-- that recorded sinks. A sink that comes back after that has its coverage start again.
 CREATE TABLE export_sinks (
     sink         text        PRIMARY KEY,
-    covered_from timestamptz NOT NULL
+    covered_from timestamptz NOT NULL,
+    absent_since timestamptz
 );
 
 -- Floors that don't trust the application: a DELETE of a row is refused until the row is
@@ -103,3 +108,28 @@ BEGIN
 END $$;
 CREATE TRIGGER agent_commands_retention_floor BEFORE DELETE ON agent_commands
     FOR EACH ROW EXECUTE FUNCTION agent_commands_retention_floor();
+
+-- The floors above trust these two times, which the application never changes after the
+-- insert, so an UPDATE that moves them is refused too. sessions.updated_at and
+-- devices.last_seen_at are left alone: they follow the replica that received the latest
+-- event, whose clock can be behind another's. Like the floors, this guards against the
+-- server's own mistakes, not against whoever owns the tables.
+CREATE FUNCTION events_received_at_fixed() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.received_at IS DISTINCT FROM OLD.received_at THEN
+        RAISE EXCEPTION 'events.received_at cannot be changed';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER events_received_at_fixed BEFORE UPDATE OF received_at ON events
+    FOR EACH ROW EXECUTE FUNCTION events_received_at_fixed();
+
+CREATE FUNCTION agent_commands_created_at_fixed() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+        RAISE EXCEPTION 'agent_commands.created_at cannot be changed';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER agent_commands_created_at_fixed BEFORE UPDATE OF created_at ON agent_commands
+    FOR EACH ROW EXECUTE FUNCTION agent_commands_created_at_fixed();
