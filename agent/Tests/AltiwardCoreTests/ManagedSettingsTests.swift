@@ -307,15 +307,15 @@ struct ManagedSettingsTests {
     @Test func theDaemonWaitsForSettingsAndACommandDoesnt() async throws {
         // Nothing stored yet: a command gives up.
         let command = settings([Self.broken])
-        await #expect(throws: SettingsUnavailable.self) {
-            try await ManagedSettings.startupState(command, mayWait: false, sleep: { _ in }, log: { _ in })
+        #expect(throws: SettingsUnavailable.self) {
+            try ManagedSettings.startupState(command, mayWait: false, sleep: { _ in }, log: { _ in })
         }
 
         let fixture = try fixturePayloads()
         let m = settings([Self.broken, Self.broken, Self.broken, Self.broken, enrolled(fixture)])
         let slept = OSAllocatedUnfairLock(initialState: [TimeInterval]())
         var logged: [String] = []
-        let state = try await ManagedSettings.startupState(
+        let state = try ManagedSettings.startupState(
             m, mayWait: true, retry: 30, sleep: { s in slept.withLock { $0.append(s) } }, log: { logged.append($0) })
         #expect(!state.mustWait)
         #expect(slept.withLock { $0 } == [30, 30])

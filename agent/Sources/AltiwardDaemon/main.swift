@@ -104,7 +104,7 @@ do {
         let settings = ManagedSettings(store: opened, enrolment: DeviceAuthenticator.enrolment(in: opened))
         // Nothing to take settings from that an admin couldn't write: starting would hand the
         // agent, its key and its reports to whatever settings are in the preferences. Wait.
-        let state = try await ManagedSettings.startupState(
+        let state = try ManagedSettings.startupState(
             settings, mayWait: command == "run", log: { log.error("\($0, privacy: .public)") })
         configuration = ManagedSettings.configuration(state)!
         (store, managed) = (opened, settings)

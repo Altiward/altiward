@@ -320,16 +320,20 @@ public final class ManagedSettings: Sendable {
 
     /// Reads the profiles until there is something to take settings from. Only the daemon
     /// (`mayWait`) waits, reading again every `retry` seconds; a command throws instead.
+    ///
+    /// Synchronous on purpose: the daemon calls it before `Daemon.run()`, which calls
+    /// `dispatchMain()`. An `await` on that path would resume the rest of `main.swift` in a
+    /// block on the main queue, where `dispatchMain()` traps.
     public static func startupState(
         _ settings: ManagedSettings, mayWait: Bool, retry: TimeInterval = 30,
-        sleep: @Sendable (TimeInterval) async -> Void = { try? await Task.sleep(for: .seconds($0)) },
+        sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
         log: (String) -> Void
-    ) async throws -> ManagedSettingsState {
+    ) throws -> ManagedSettingsState {
         var state = settings.refresh()
         while state.mustWait {
             guard mayWait else { throw SettingsUnavailable(state: state) }
             log("\(SettingsUnavailable(state: state).description); trying again in \(Int(retry)) s")
-            await sleep(retry)
+            sleep(retry)
             state = settings.refresh()
         }
         return state
