@@ -9,6 +9,114 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 don't apply. Changes that haven't shipped wait in [`changelog.d/`](changelog.d/), one
 file each, and the release adds them here: don't edit this file in a pull request.
 
+## Agent 1.1.0 - 2026-10-28
+
+### Upgrade order
+
+Deploy this release's Privileges hook checksum with its package, as for every agent
+upgrade.
+
+### Breaking changes
+
+None.
+
+### Security
+
+None.
+
+### Changes
+
+- The agent release carries the SAP Privileges keys as a ready-made profile too,
+  `corp.sap.privileges.mobileconfig`, pinned to that release's hook like
+  `corp.sap.privileges.plist` and in its `SHA256SUMS`. Intune takes it as a Custom
+  profile. The example `com.altiward.agent.plist` gains `MDMDeviceID`, the MDM's own ID
+  for the Mac (`{{deviceid}}` for Intune); the agent ignores it for now.
+- When a key rotation's outcome stays unknown, `altiward-agent status` says that the Mac's
+  reports wait for it, and shows the last answer that kept it waiting and when. An answer
+  that may come from something between the Mac and the server, such as an HTTP 5xx, a
+  timeout or a dropped connection, now says to check that the whole of `/v1/agent/`
+  reaches the server, in the log and in `status`, as a refused first request already did.
+  The agent keeps that answer in `agent.sqlite` only until the rotation settles
+  (`docs/data-handling.md`).
+
+## Server 1.1.0 - 2026-10-28
+
+### Upgrade order
+
+Upgrade to this release from a directory of its files, as before: the `upgrade.sh` of
+1.0.0 can't download a release. From this release on, it can.
+
+### Breaking changes
+
+None.
+
+### Security
+
+- If storing a `rotated_key_used` alert failed, the server had already revoked the Mac's
+  current key and marked the use as reported, so an admin saw a revoked key with no alert,
+  and the key's other uses that day raised none. The alert is now stored in the same step:
+  if it can't be, nothing changes, and the key's next use is checked again.
+- The Caddy proxy is rebuilt with `golang.org/x/net` 0.62.0, which fixes GO-2026-6866
+  and GO-2026-6860 in its HTML parser and renderer. The new image is
+  `ghcr.io/altiward/caddy:2.11.7-altiward.2`.
+
+### Changes
+
+- The server can read the Macs Microsoft Intune manages, through Microsoft Graph, with the
+  `DeviceManagementManagedDevices.Read.All` application permission and nothing more. Set
+  `ALTIWARD_INTUNE_AUTH` to `secret`, `certificate` or `managed-identity`, with
+  `ALTIWARD_INTUNE_TENANT_ID`, `_CLIENT_ID`, `_CLIENT_SECRET` or `_CERTIFICATE_FILE` as
+  for the Sentinel export. It needs a server whose tokens name one tenant.
+- With Intune connected, the server keeps a copy of its Macs, refreshed every 15 minutes:
+  each Mac's serial number, name, primary user, last check-in, and Intune and Entra ID
+  device IDs. A sync that fails keeps the last good copy. Turning Intune off deletes the
+  copy at the server's next start. `GET /v1/mdm` shows the sync, and
+  `GET /v1/mdm/devices` lists the Macs for every console role, without their device IDs.
+  `altiward-api diagnose` checks the connection, and reports a sync that is failing or
+  hasn't succeeded for an hour.
+- `integrations/intune/setup.sh` gives the server the Microsoft Graph permission it needs
+  to read Intune, `DeviceManagementManagedDevices.Read.All`, and nothing more: to a VM's
+  managed identity (`--vm`), a user-assigned one (`--identity`, including the Deploy to
+  Azure app's), or a new app registration with a one-year secret (`--app`). It prints the
+  `ALTIWARD_INTUNE_*` lines to add to `.env`. A Deploy to Azure template,
+  `deploy/azure/intune-read.bicep`, grants the same permission to a managed identity.
+- The server bundle's `profiles/` has `com.altiward.agent.mobileconfig`, the agent
+  settings as a ready-made profile with the same keys and values as the example plist.
+  Intune takes it, and `altiward-login-items.mobileconfig`, as Custom profiles with no
+  editing of the file beforehand.
+- `integrations/intune/Push-AltiwardProfiles.ps1` creates the agent settings, login items
+  and (with the agent release's `corp.sap.privileges.mobileconfig`) SAP Privileges
+  profiles in Intune and assigns them to a group, signed in as you rather than as the
+  server, which never writes to Intune. It checks the files before it signs in, updates
+  profiles of the same name on a second run, keeps each profile's existing assignments,
+  and with `-WhatIf` writes nothing.
+- Signing out of the console can also sign people out of Entra ID. Set
+  `ALTIWARD_OIDC_PROVIDER_SIGN_OUT=true` and register
+  `https://<console hostname>/signed-out` as a redirect URI in the app registration. The
+  setting is off by default, and the server refuses it unless the single sign-on issuer is
+  Entra ID's. `POST /v1/auth/logout` then answers 200 with the provider's sign-out address
+  instead of 204.
+- The console's sign-in page has a **Use a different account** link, which asks your
+  identity provider for its account picker. The first sign-in after **Sign out** shows
+  the picker too. Before, single sign-on always went straight in as the account the
+  browser was already signed in to.
+- `upgrade.sh` downloads the release when you give it a version: `./upgrade.sh <version>`
+  fetches the five files it needs from GitHub into `releases/<version>/` in the deployment
+  directory, using `curl`, which goes through `HTTPS_PROXY` if it's set, then checks and
+  installs them as before. A failed download stops before anything changes and names the
+  file. A directory of release files still works, for servers without internet access.
+  The console's upgrade notice shows the one-line command.
+- The oldest supported agent is now 1.0, so the console tags a Mac with an older agent as
+  outdated, and the server no longer promises to accept older agents' events. The frozen
+  compatibility fixtures start at agent 1.0.
+- The console's help tags stay inside the window. Near the right edge of a page or in the
+  inspector, they used to run off the screen or be cut off, and the inspector could scroll
+  sideways because of them.
+- With the inspector open on a laptop screen, the Sessions, Admins now and Fleet lists fit
+  their pane instead of scrolling sideways. As the pane narrows, the time-used bar shows
+  only its text, then the columns the inspector also shows give way: Started and Time
+  used, or Queued, macOS and Privileges.
+
 ## Agent 1.0.0 - 2026-10-27
 
 ### Upgrade order
