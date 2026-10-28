@@ -34,8 +34,8 @@ func TestOldestSupportedAgentMatchesTheFrozenFixtures(t *testing.T) {
 
 func TestAgentSupported(t *testing.T) {
 	for v, want := range map[string]bool{
-		"1.0.0": true, "1.0.7": true, "1.1.0": true, "2.0.4": true, "1.0": true,
-		"0.9.9": false, "0.9": false, "0.10.0": false, "0.0": false,
+		"1.1.0": true, "1.1.7": true, "1.2.0": true, "2.0.4": true, "1.1": true,
+		"1.0.9": false, "1.0": false, "0.11.0": false, "0.0": false,
 		"": true, "dev": true, "1.x": true, "1.2.3.4": true, // unreadable: not flagged
 	} {
 		if got := release.AgentSupported(v); got != want {
@@ -46,9 +46,9 @@ func TestAgentSupported(t *testing.T) {
 
 func TestAgentSupportedReadsPreReleases(t *testing.T) {
 	for v, want := range map[string]bool{
-		"1.0.0-rc.1": true, "0.9.0-rc.4": false, "1.1.0+build.7": true,
-		"0.9-rc.1": false, // a pre-release of 0.9: read, and too old
-		"0.9.x":    true,  // unreadable: not flagged
+		"1.1.0-rc.1": true, "1.0.0-rc.4": false, "1.2.0+build.7": true,
+		"1.0-rc.1": false, // a pre-release of 1.0: read, and too old
+		"1.0.x":    true,  // unreadable: not flagged
 	} {
 		if got := release.AgentSupported(v); got != want {
 			t.Errorf("AgentSupported(%q) = %v, want %v", v, got, want)
