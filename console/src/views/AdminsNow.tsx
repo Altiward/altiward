@@ -62,7 +62,8 @@ export function AdminsNowView() {
               columns={[stateColumn, userColumn, mac, usedColumn, startedColumn, flagsColumn]} />
           )}
         </div>
-        {current && <SessionInspector session={current} onClose={() => setSelected(null)} onChanged={reload} />}
+        {current && <SessionInspector session={current} macRetired={retired.has(current.device_serial)}
+          onClose={() => setSelected(null)} onChanged={reload} />}
       </div>
     </>
   );

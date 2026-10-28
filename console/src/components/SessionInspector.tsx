@@ -73,8 +73,11 @@ export function displayName(s: Pick<Session, "upn" | "local_user">) {
   return s.upn ?? s.local_user;
 }
 
-export function SessionInspector({ session, onClose, onChanged }: {
-  session: Session; onClose: () => void; onChanged?: () => void;
+export function SessionInspector({ session, macRetired = false, onClose, onChanged }: {
+  session: Session;
+  /** The session's Mac is retired: with no active key, a revoke could never reach it. */
+  macRetired?: boolean;
+  onClose: () => void; onChanged?: () => void;
 }) {
   const api = useApi();
   const { data } = useLoad(() => api.session(session.session_id), [session.session_id]);
@@ -90,6 +93,8 @@ export function SessionInspector({ session, onClose, onChanged }: {
   });
 
   const canRevoke = useCan("operator");
+  // As in Fleet, a retired Mac is offered no revoke.
+  const revocable = session.open && !session.permanent_admin && !macRetired;
   async function revoke() {
     setBusy(true);
     try {
@@ -122,12 +127,15 @@ export function SessionInspector({ session, onClose, onChanged }: {
       {session.open && session.permanent_admin && (
         <p className="role-note">{session.local_user} is a permanent admin on this Mac, so Altiward doesn’t remove their rights.</p>
       )}
-      {session.open && !session.permanent_admin && canRevoke && (
+      {revocable && canRevoke && (
         <div className="actions">
           <button type="button" className="button destructive" onClick={() => setConfirming(true)}>Revoke admin rights…</button>
         </div>
       )}
-      {session.open && !session.permanent_admin && !canRevoke && <RoleNote>Revoking admin rights needs the operator role.</RoleNote>}
+      {revocable && !canRevoke && <RoleNote>Revoking admin rights needs the operator role.</RoleNote>}
+      {session.open && !session.permanent_admin && macRetired && (
+        <p className="role-note">This Mac is retired, so nothing reaches it to end this session.</p>
+      )}
       {session.open && !session.permanent_admin && session.source === "out_of_band" && (
         <p className="role-note">
           If {session.local_user} is this Mac’s managed admin account (LAPS) or another standing IT account, add it

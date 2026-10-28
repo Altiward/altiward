@@ -272,9 +272,11 @@ function RevokeSheet({ enrollment: e, active, retiresMac, busy, onConfirm, onCan
   onConfirm: () => void; onCancel: () => void;
 }) {
   const api = useApi();
-  // Asked only when the revoke retires the Mac; a failed ask leaves the warnings out.
+  // Asked only when the revoke retires the Mac; a failed ask leaves the warnings out. Revoke
+  // waits until both have answered or failed, so nobody confirms before reading them.
   const sessions = useLoad(async () => (retiresMac ? api.sessions({ open: true, device: e.serial }) : []), [e.serial, retiresMac]);
   const devices = useLoad(async () => (retiresMac ? api.devices() : []), [e.serial, retiresMac]);
+  const warningsLoading = sessions.loading || devices.loading;
   const pending = e.status === "pending";
   const message = pending
     ? active
@@ -290,7 +292,7 @@ function RevokeSheet({ enrollment: e, active, retiresMac, busy, onConfirm, onCan
     ].filter(Boolean).join(" ");
   return (
     <ConfirmSheet title={pending ? `Reject the new key for ${e.serial}?` : `Revoke the key for ${e.serial}?`}
-      message={message} confirm={pending ? "Reject" : "Revoke"} destructive busy={busy}
+      message={message} confirm={pending ? "Reject" : "Revoke"} destructive busy={busy || warningsLoading}
       onConfirm={onConfirm} onCancel={onCancel} />
   );
 }

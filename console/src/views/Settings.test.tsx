@@ -300,6 +300,55 @@ describe("Settings", () => {
       expect(api.putSettings).not.toHaveBeenCalled();
     });
 
+    it("leaves the period out when another setting saves, and keeps an unsaved choice", async () => {
+      const api = history({}, 400);
+      renderView(api);
+      await screen.findByText("1 year, the default with a SIEM connected");
+      // A choice not saved yet...
+      const field = await screen.findByLabelText("Days of history");
+      await waitFor(() => expect(field).toHaveValue(400));
+      await userEvent.clear(field);
+      await userEvent.type(field, "120");
+      // ...then another setting saves: the period goes as it was neither changed nor sent.
+      await userEvent.click(screen.getByRole("switch", { name: /Approve Macs that enrol again/ }));
+      await waitFor(() => expect(api.putSettings).toHaveBeenCalledTimes(1));
+      expect(api.putSettings).toHaveBeenCalledWith({
+        reenrollment_requires_approval: false, silent_after_hours: 48, silent_alerts_off: false,
+      });
+      await waitFor(() => expect(api.settings).toHaveBeenCalledTimes(2));
+      expect(screen.getByRole("combobox", { name: "Keep history for" })).toHaveValue("days");
+      expect(screen.getByLabelText("Days of history")).toHaveValue(120);
+    });
+
+    it("asks before a period set while history is held for the SIEM, even a longer one", async () => {
+      const held = "2026-10-01T00:00:00Z";
+      const api = history({ held_before: held });
+      renderView(api);
+      const warning = `A period you set also removes history from before ${dateOnly(held)}, which your SIEM may not have.`;
+      expect(await screen.findByText(warning)).toBeInTheDocument();
+      await choose("Days");
+      const field = screen.getByLabelText("Days of history");
+      await userEvent.clear(field);
+      await userEvent.type(field, "1000");
+      await userEvent.click(saveHistory());
+      const sheet = screen.getByRole("dialog");
+      expect(sheet).toHaveTextContent("History older than 1000 days will be removed at the next daily run.");
+      expect(sheet).toHaveTextContent(warning);
+      expect(api.putSettings).not.toHaveBeenCalled();
+      await userEvent.click(within(sheet).getByRole("button", { name: "Remove" }));
+      expect(api.putSettings).toHaveBeenCalledWith(expect.objectContaining({ history_days: 1000 }));
+    });
+
+    it("keeps for good without asking while history is held for the SIEM", async () => {
+      const api = history({ held_before: "2026-10-01T00:00:00Z" });
+      renderView(api);
+      await screen.findByText("1 year, the default with a SIEM connected");
+      await choose("Keep for good");
+      await userEvent.click(saveHistory());
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(api.putSettings).toHaveBeenCalledWith(expect.objectContaining({ history_days: -1 }));
+    });
+
     it("shows a viewer the choice, disabled", async () => {
       render(<ApiContext.Provider value={history()}><MeContext.Provider value={signedIn("viewer")}>
         {settingsAt("/settings")}

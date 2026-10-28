@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import type { JSX } from "react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, type Device, type Enrollment } from "../api";
+import { ApiError, type Device, type Enrollment, type Session } from "../api";
 import { ApiContext } from "../context";
 import { shortFingerprint } from "../format";
 import { enrollment, fakeApi, session } from "../test/fixtures";
@@ -503,6 +503,26 @@ describe("Revoking a Mac's only key", () => {
     expect(api.sessions).toHaveBeenCalledWith({ open: true, device: "ONLY-MAC" });
   });
 
+  it("can't revoke until the warnings have loaded, or failed to", async () => {
+    let answer!: (s: Session[]) => void;
+    let fail!: (e: Error) => void;
+    const api = fakeApi({
+      enrollments: vi.fn(async () => [active]),
+      sessions: vi.fn(() => new Promise<Session[]>((resolve) => { answer = resolve; })),
+      devices: vi.fn(() => new Promise<Device[]>((_, reject) => { fail = reject; })),
+    });
+    renderView(api, <EnrollmentsView />);
+    const sheet = await openSheet("ONLY-MAC");
+    const revoke = within(sheet).getByRole("button", { name: "Revoke" });
+    expect(revoke).toBeDisabled();
+    answer([session({ device_serial: "ONLY-MAC" })]);
+    await waitFor(() => expect(sheet).toHaveTextContent("Someone still has admin rights on this Mac."));
+    expect(revoke).toBeDisabled();
+    fail(new Error("unavailable"));
+    await waitFor(() => expect(revoke).toBeEnabled());
+    expect(sheet).not.toHaveTextContent("failing an integrity check");
+  });
+
   it("doesn't say so when the Mac has another key waiting for approval", async () => {
     const waiting = enrollment({ device_id: "d-waiting", serial: "ONLY-MAC", status: "pending", activated_at: null });
     const api = fakeApi({ enrollments: vi.fn(async () => [active, waiting]) });
@@ -574,5 +594,28 @@ describe("Admins Now", () => {
     const gone = (await screen.findByText("asmith")).closest("tr")!;
     await waitFor(() => expect(within(gone).getByText("Mac retired")).toBeInTheDocument());
     expect(within(screen.getByText("bjones").closest("tr")!).queryByText("Mac retired")).toBeNull();
+  });
+
+  it("offers no revoke for a session on a retired Mac, as nothing reaches it", async () => {
+    const api = fakeApi({
+      sessions: vi.fn(async () => [
+        session({ session_id: "s-gone", device_serial: "GONE-MAC", local_user: "asmith", upn: null }),
+        session({ session_id: "s-here", device_serial: "HERE-MAC", local_user: "bjones", upn: null }),
+      ]),
+      devices: vi.fn(async () => [
+        { serial: "GONE-MAC", retired_at: "2026-10-20T10:00:00Z" } as unknown as Device,
+        { serial: "HERE-MAC" } as unknown as Device,
+      ]),
+    });
+    renderView(api, <AdminsNowView />);
+    const gone = (await screen.findByText("asmith")).closest("tr")!;
+    await waitFor(() => expect(within(gone).getByText("Mac retired")).toBeInTheDocument());
+    await userEvent.click(gone);
+    let inspector = screen.getByRole("complementary", { name: "Session details" });
+    expect(within(inspector).queryByRole("button", { name: /Revoke/ })).toBeNull();
+    expect(inspector).toHaveTextContent("This Mac is retired, so nothing reaches it to end this session.");
+    await userEvent.click(screen.getByText("bjones").closest("tr")!);
+    inspector = screen.getByRole("complementary", { name: "Session details" });
+    expect(within(inspector).getByRole("button", { name: "Revoke admin rights…" })).toBeInTheDocument();
   });
 });

@@ -187,10 +187,19 @@ function RetiredNote({ device: d }: { device: Device }) {
   const removal = policy && policy.days > 0 && !policy.kept_for_good
     ? new Date(new Date(lastCheckIn(d)).getTime() + policy.days * 86_400_000).toISOString()
     : null;
+  // While the SIEM's coverage or the admin group backfill holds expiry back, the Mac may be
+  // kept past that date, so it is the earliest, not the day.
+  const held = !!policy && (!!policy.held_before || policy.waiting_for_backfill);
   return (
     <>
       <p className="lede" title={dateTime(d.retired_at)}><span className="tag ended"><EndedGlyph /> Retired</span> {dateOnly(d.retired_at)}</p>
-      {policy && <p className="lede">{removal ? `History is removed ${dateOnly(removal)}.` : "History is kept for good."}</p>}
+      {policy && (
+        <p className="lede">
+          {!removal ? "History is kept for good."
+            : held ? `History is removed no earlier than ${dateOnly(removal)}.`
+            : `History is removed ${dateOnly(removal)}.`}
+        </p>
+      )}
     </>
   );
 }

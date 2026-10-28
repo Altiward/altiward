@@ -40,6 +40,11 @@ function policySentence(p: HistoryPolicy): string {
   }
 }
 
+/** What a period set by hand does to the history the default holds back for the SIEM. */
+function heldWarning(heldBefore: string): string {
+  return `A period you set also removes history from before ${dateOnly(heldBefore)}, which your SIEM may not have.`;
+}
+
 /** Days of history kept; Infinity when nothing is removed. */
 function keptDays(p: HistoryPolicy): number {
   return p.kept_for_good || p.days <= 0 ? Infinity : p.days;
@@ -93,25 +98,32 @@ function GeneralSettings() {
   const sinks = useLoad(() => api.exports().catch(() => null), []);
   const [historyChoice, setHistoryChoice] = useState<HistoryChoice>("default");
   const [historyDays, setHistoryDays] = useState(String(DEFAULT_HISTORY_DAYS));
-  const [removing, setRemoving] = useState<{ value: number; days: number } | null>(null);
+  const [removing, setRemoving] = useState<{ value: number; days: number; heldBefore: string | null } | null>(null);
 
   useEffect(() => {
     if (data) setHours(String(data.silent_after_hours || DEFAULT_SILENT_HOURS));
   }, [data]);
 
+  // The history choice follows the stored period, and only that: a choice not saved yet stays
+  // when another setting saves and the settings load again.
+  const storedHistory = data?.history_days;
+  const loaded = !!data;
   useEffect(() => {
-    if (!data) return;
-    const c = choiceOf(data.history_days);
+    if (!loaded) return;
+    const c = choiceOf(storedHistory);
     setHistoryChoice(c.choice);
     setHistoryDays(c.days);
-  }, [data]);
+  }, [loaded, storedHistory]);
 
-  // PUT replaces every setting, so each change sends the rest as loaded.
+  // PUT replaces every setting, so each change sends the rest as loaded, apart from the
+  // history period: the server keeps the stored one when it is left out, so only a change to
+  // it sends it, and a stale page can't put back a period changed elsewhere.
   async function save(change: Partial<Settings>) {
     if (!data) return;
     setSaving(true);
     try {
-      await api.putSettings({ ...data, ...change });
+      const { history_days: _stored, ...rest } = data;
+      await api.putSettings({ ...rest, ...change });
       setSaveError(null);
       await reload();
       await policy.reload();
@@ -140,10 +152,14 @@ function GeneralSettings() {
     : siem === false ? Infinity : DEFAULT_HISTORY_DAYS;
   // Without the policy in force, any finite period might remove history, so it asks.
   const shortens = newDays < (policy.data ? keptDays(policy.data) : Infinity);
+  // While the default holds back history from before the SIEM was connected, a number of days
+  // releases it whatever the number, so that asks too. Keeping for good removes nothing.
+  const heldBefore = policy.data?.held_before ?? null;
+  const releasesHold = !!heldBefore && historyChoice === "days";
 
   function saveHistory() {
     if (!historyChanged) return;
-    if (shortens) setRemoving({ value: newHistory, days: newDays });
+    if (shortens || releasesHold) setRemoving({ value: newHistory, days: newDays, heldBefore: releasesHold ? heldBefore : null });
     else void save({ history_days: newHistory });
   }
 
@@ -153,7 +169,8 @@ function GeneralSettings() {
       {!canChange && <RoleNote>Changing settings needs the admin role.</RoleNote>}
       {removing && (
         <ConfirmSheet title="Remove older history?" confirm="Remove" destructive busy={saving}
-          message={`History older than ${removing.days} days will be removed at the next daily run. Your SIEM keeps what it was sent.`}
+          message={`History older than ${removing.days} days will be removed at the next daily run. Your SIEM keeps what it was sent.`
+            + (removing.heldBefore ? ` ${heldWarning(removing.heldBefore)}` : "")}
           onConfirm={() => { const value = removing.value; setRemoving(null); void save({ history_days: value }); }}
           onCancel={() => setRemoving(null)} />
       )}
@@ -235,10 +252,13 @@ function GeneralSettings() {
                 <>
                   <p className="hint">{policySentence(policy.data)}</p>
                   {policy.data.held_before && (
-                    <p className="hint">
-                      History from before {dateOnly(policy.data.held_before)}, when your SIEM was connected, is kept until you
-                      replay it to the SIEM.
-                    </p>
+                    <>
+                      <p className="hint">
+                        History from before {dateOnly(policy.data.held_before)}, when your SIEM was connected, is kept until you
+                        replay it to the SIEM.
+                      </p>
+                      <p className="hint">{heldWarning(policy.data.held_before)}</p>
+                    </>
                   )}
                   {policy.data.waiting_for_backfill && (
                     <p className="hint">Nothing is removed until the admin group has been sent to your SIEM.</p>

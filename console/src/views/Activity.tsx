@@ -54,16 +54,38 @@ export function auditSummary(a: AuditEntry): string {
       return sinkName(a.target);
     case "remove_device":
       return str(d.serial) ?? a.target;
+    case "expire_history":
+      return removedCounts(d.counts);
     case "end_console_session":
       return str(d.name) ? `${str(d.name)} (${a.target})` : a.target;
   }
   return a.target;
 }
 
+/** How much an expire_history run removed: Macs only when it removed any, as the SIEM's
+ *  message says it. */
+function removedCounts(counts: unknown): string {
+  const c = (counts ?? {}) as Record<string, unknown>;
+  const n = (k: string) => (typeof c[k] === "number" ? c[k] as number : 0);
+  const count = (k: string, one: string, many: string) => `${n(k).toLocaleString()} ${n(k) === 1 ? one : many}`;
+  return [
+    count("events", "event", "events"),
+    count("sessions", "session", "sessions"),
+    count("commands", "command", "commands"),
+    ...(n("macs") ? [count("macs", "Mac", "Macs")] : []),
+  ].join(", ");
+}
+
 const settingNames: Record<string, string> = {
   reenrollment_requires_approval: "Approve Macs that enrol again",
   new_mac_requires_approval: "Approve every new Mac",
   silent_after_hours: "Alert after hours without a check-in",
+  history_days: "Keep history for",
+};
+
+/** A setting's value in words, where its number alone would read wrong. */
+const settingValues: Record<string, (v: unknown) => string | null> = {
+  history_days: (v) => (v === 0 ? "default" : v === -1 ? "for good" : typeof v === "number" ? `${v.toLocaleString()} days` : null),
 };
 
 /** Switches stored the other way round from how the console shows them. */
@@ -74,14 +96,15 @@ const invertedSettings: Record<string, string> = {
 function settingsChange(before: unknown, after: unknown): string {
   const b = (before ?? {}) as Record<string, unknown>;
   const a = (after ?? {}) as Record<string, unknown>;
-  const show = (v: unknown) => (v === true ? "on" : v === false ? "off" : v === 0 ? "default" : String(v));
+  const show = (v: unknown, k?: string) => (k && settingValues[k]?.(v))
+    ?? (v === true ? "on" : v === false ? "off" : v === 0 ? "default" : String(v));
   // A setting added later is missing from older entries' previous values: its default then.
   const was = (k: string) => b[k] ?? (typeof a[k] === "number" ? 0 : false);
   const changes = Object.keys(a)
     .filter((k) => was(k) !== a[k])
     .map((k) => invertedSettings[k]
       ? `${invertedSettings[k]}: ${show(!was(k))} → ${show(!a[k])}`
-      : `${settingNames[k] ?? k}: ${show(was(k))} → ${show(a[k])}`);
+      : `${settingNames[k] ?? k}: ${show(was(k), k)} → ${show(a[k], k)}`);
   return changes.join("; ") || "No change";
 }
 

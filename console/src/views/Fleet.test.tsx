@@ -341,6 +341,23 @@ describe("Fleet", () => {
       expect(within(inspector).queryByRole("button", { name: /Revoke/ })).toBeNull();
     });
 
+    it.each([
+      [{ held_before: "2026-10-01T00:00:00Z" }],
+      [{ waiting_for_backfill: true }],
+    ])("says history goes no earlier than the date while expiry is held back (%j)", async (over) => {
+      const api = fakeApi({
+        devices: vi.fn(async () => [retired]),
+        retention: vi.fn(async () => ({
+          history: { days: 365, kept_for_good: false, reason: "default_siem" as const, held_before: null, waiting_for_backfill: false, ...over },
+        })),
+      });
+      renderFleet(api);
+      await userEvent.click(await screen.findByRole("button", { name: "Retired" }));
+      await userEvent.click(await screen.findByText("C02RETIRED01"));
+      const inspector = screen.getByRole("complementary", { name: "Mac details" });
+      expect(await within(inspector).findByText(/History is removed no earlier than .*2027\./)).toBeInTheDocument();
+    });
+
     it("says when history is kept for good", async () => {
       const api = fakeApi({
         devices: vi.fn(async () => [retired]),
