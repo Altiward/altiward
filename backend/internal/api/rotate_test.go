@@ -1123,8 +1123,9 @@ func TestRevokeARotatedKeyNamesTheKeyInUse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(after) != len(before) {
-		t.Errorf("%d audit entries, want %d: a refused revoke changes nothing", len(after), len(before))
+	// The token's sign-in is recorded whatever the request does.
+	if got, want := len(withoutSignIns(after)), len(withoutSignIns(before)); got != want {
+		t.Errorf("%d audit entries, want %d: a refused revoke changes nothing", got, want)
 	}
 
 	// Once the key in use is revoked, the stale key is already revoked: 200, as for any revoke.

@@ -66,6 +66,8 @@ type Server struct {
 	enrollLimits  store.EnrollLimits
 	enrollLogMu   sync.Mutex
 	enrollLog     map[enrollLogKey]enrollLogWindow
+	tokenUseMu    sync.Mutex
+	tokenUse      map[string]*tokenUseEntry // one per console token, by tenant and actor (token_use.go)
 
 	mdm           *mdm.Checker  // nil: Intune is off
 	sso           *sso.Provider // nil: console tokens only
@@ -100,7 +102,7 @@ func WithAzureContainerApp(name string) Option {
 
 func New(s store.Store, tokens *auth.Tokens, log *slog.Logger, now func() time.Time, opts ...Option) http.Handler {
 	srv := &Server{store: s, tokens: tokens, log: log, now: now, version: "dev", updateCheck: true,
-		enrollLimits: store.DefaultEnrollLimits()}
+		enrollLimits: store.DefaultEnrollLimits(), tokenUse: map[string]*tokenUseEntry{}}
 	for _, o := range opts {
 		o(srv)
 	}

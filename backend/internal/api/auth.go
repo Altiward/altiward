@@ -31,9 +31,10 @@ import (
 )
 
 const (
-	SessionLifetime = 12 * time.Hour   // however busy
-	SessionIdle     = time.Hour        // unused
-	loginLifetime   = 10 * time.Minute // from leaving for the identity provider to coming back
+	SessionLifetime  = 12 * time.Hour   // however busy
+	SessionIdle      = time.Hour        // unused
+	TokenSignInEvery = time.Hour        // how long a console token's sign-in covers its use (token_use.go)
+	loginLifetime    = 10 * time.Minute // from leaving for the identity provider to coming back
 	// sessionTouch is how stale a session's expiry may get before a request extends it, so
 	// a busy console doesn't write on every call.
 	sessionTouch = time.Minute
@@ -87,6 +88,10 @@ func (s *Server) consolePrincipal(w http.ResponseWriter, r *http.Request) (auth.
 		}
 		if p.Role != auth.RoleConsole {
 			writeError(w, http.StatusForbidden, "token not valid for this endpoint")
+			return p, nil, false
+		}
+		if err := s.recordTokenUse(r, p); err != nil {
+			s.serverError(w, "record console token sign-in", err)
 			return p, nil, false
 		}
 		return p, nil, true
@@ -211,6 +216,13 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		s.log.Warn("sign-in failed", "err", err)
+		signInFailed(w, r, "failed")
+		return
+	}
+	// Some identity providers let people choose their names, and one like a console
+	// token's would pass for the token in the audit log.
+	if strings.HasPrefix(id.Email, "token:") || strings.HasPrefix(id.Email, "break-glass:") {
+		s.log.Warn("sign-in refused: the name looks like a console token", "actor", id.Email)
 		signInFailed(w, r, "failed")
 		return
 	}
