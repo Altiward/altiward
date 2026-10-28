@@ -72,6 +72,36 @@ func TestNowCountsOpenSessionsBySourceAndAlerts(t *testing.T) {
 	}
 }
 
+// A retired Mac is out of service, so it isn't a Mac to chase. Its sessions are history
+// and stay in the counts.
+func TestRetiredMacsLeaveTheOverviewCounts(t *testing.T) {
+	retiredAt := now.Add(-day)
+	retired := session.NewDevice("acme", "OLD")
+	retired.AgentVersion = "0.0.4"
+	retired.Integrity = map[string]bool{"code_signature": false}
+	retired.Silence = &session.Silence{State: event.SilentStateSilent, At: now}
+	live := session.NewDevice("acme", "LIVE")
+	live.AgentVersion = "1.9.2"
+	sessions := []session.Session{
+		elevation("a", "jdoe", "", "OLD", event.SourcePrivileges, 10*time.Minute, 20*time.Minute, 0),
+	}
+
+	o := build(t, report.Input{
+		Sessions: sessions,
+		Devices:  []store.Device{{Device: retired, RetiredAt: &retiredAt}, {Device: live}},
+	})
+	want := report.Now{Admins: 1, Privileges: 1}
+	if o.Now != want {
+		t.Fatalf("now = %+v, want %+v", o.Now, want)
+	}
+	if o.Health.Macs != 1 || o.Health.AgentsOutdated != 0 {
+		t.Fatalf("macs %d, outdated %d", o.Health.Macs, o.Health.AgentsOutdated)
+	}
+	if len(o.Health.AgentVersions) != 1 || o.Health.AgentVersions[0].Version != "1.9.2" {
+		t.Fatalf("versions = %+v", o.Health.AgentVersions)
+	}
+}
+
 func TestPeriodBucketsElevationsBySource(t *testing.T) {
 	sessions := []session.Session{
 		elevation("a", "jdoe", "", "MAC1", event.SourcePrivileges, 10*time.Minute, 20*time.Minute, 0),

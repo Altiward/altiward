@@ -129,13 +129,8 @@ func (w *Silence) Sweep(ctx context.Context) (raised int, err error) {
 			if settings.SilentAlertsOff {
 				continue // only a new silence; a resume still closes an earlier alert
 			}
-			retired, err := w.retired(ctx, d.Device)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("device %s/%s credentials: %w", d.TenantID, d.Serial, err))
-				continue
-			}
-			if retired {
-				continue
+			if d.RetiredAt != nil {
+				continue // an admin took the Mac out of service: it is expected to go quiet
 			}
 		}
 		if err := e.Validate(now); err != nil {
@@ -154,19 +149,4 @@ func (w *Silence) Sweep(ctx context.Context) (raised int, err error) {
 		}
 	}
 	return raised, errors.Join(errs...)
-}
-
-// retired reports whether every credential the Mac enrolled with was revoked, which is how
-// a Mac is taken out of service: it is expected to go quiet.
-func (w *Silence) retired(ctx context.Context, d session.Device) (bool, error) {
-	creds, err := w.Store.ListCredentials(ctx, d.TenantID, store.CredentialFilter{Serial: d.Serial})
-	if err != nil || len(creds) == 0 {
-		return false, err
-	}
-	for _, c := range creds {
-		if c.Status != store.CredentialRevoked {
-			return false, nil
-		}
-	}
-	return true, nil
 }
