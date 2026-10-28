@@ -118,7 +118,7 @@ ownership checks over concurrent ingestion writes within one tenant.
 | | `mdm_last_check_in` | With Intune connected, Intune's last check-in from the Mac, from the server's copy of Intune's Macs, and no later than the event's `timestamp`; left out when Intune doesn't list the Mac or hasn't heard from it (`silent` only, either basis). With `no_contact`, a check-in no later than `last_seen_at` says Intune hasn't heard from the Mac either, such as a closed laptop |
 | | `admin_members` | The Mac's admin group at its newest health reading (macOS short names), so the alert says who was admin when it went quiet: sorted, without duplicates, empty names or names over 255 bytes, and at most 50; empty when nobody was (`silent` only) |
 | | `admin_members_truncated` | How many names the cut to 50 left out; absent when none (`silent` only) |
-| | `pending_device_id` | With Intune connected, the device ID of a key enrolled for the Mac since its last check-in that has waited for approval for more than a day; left out when there is none (`silent` only) |
+| | `pending_device_id` | With Intune connected, the device ID of a key enrolled for the Mac since its last check-in that has waited for approval for 4 hours or more; left out when there is none (`silent` only) |
 | | `silent_after_seconds` | The tenant's limit when it was raised (`silent` only) |
 | | `silent_since`, `alert_event_id` | The `last_seen_at` and event ID of the `silent` event this ends (`resumed` only) |
 | `agent.enrollment` | `state` | `enrolled` (the Mac's first key, or its first after earlier ones were revoked with approval off if the Mac is not retired), `pending` (a new key waiting for an admin to approve it, always required for a retired Mac), `replaced` (a new key took the place of the previous one without approval), `rotated` (the Mac replaced its own key by proving it held the old one, so nothing waits for approval) or `rotated_key_used` (a key that rotation had already replaced signed a request: a copy of the old key may exist) |
@@ -186,9 +186,10 @@ reports it (a serial with spaces around it or in lower case never matches). It a
 only while the Mac has been quiet for less than a day; a longer silence waits for the
 tenant's limit. It waits 2 hours and 10 minutes after the server starts, so that Intune's
 check-ins from during an outage don't trip every Mac. A Mac with a key enrolled since its
-last check-in and waiting for approval isn't raised on it, since a pending key can't check
-in: the wait lasts a day from the oldest such key, longer than the basis applies. It is
-reported at the tenant's limit, naming that key once it has waited a day. If more than the larger of 5 and a fifth of the
+last check-in and waiting for approval isn't raised on it for 4 hours from the oldest such
+key (a newer key doesn't extend this), since a pending key can't check in. After that it is
+raised with `pending_device_id`, if still within the first day of its silence: a key made
+in the last 4 hours of that day means the Mac waits for the tenant's limit. If more than the larger of 5 and a fifth of the
 Macs Intune lists meet the rule at once, counting those already raised on it, none is
 raised on it: Altiward is then probably what the Macs can't reach. The server logs a
 warning, and `GET /v1/mdm` shows when this last happened (`silence_held_at`) and for how

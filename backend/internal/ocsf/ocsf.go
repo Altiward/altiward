@@ -381,7 +381,7 @@ func silent(e store.StoredEvent, tenantID string) Record {
 			desc += ". Admins at its last check-in: " + admins
 		}
 		if id := detailString(e.Detail, "pending_device_id"); id != "" {
-			desc += ". A new key, " + id + ", waits for approval"
+			desc += ". A new key for it, " + id + ", is waiting for approval: the agent can't report with it until it is approved"
 		}
 		r = base(e, tenantID, 2004, "Detection Finding", 2, "Findings", 1, "Create", severity)
 		r["is_alert"] = true

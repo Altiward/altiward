@@ -653,21 +653,40 @@ func TestMDMSilenceSkipsPendingKeys(t *testing.T) {
 	w, st = intuneWorker(t, seen.Add(4*time.Hour), fleet)
 	pending := "7b2e3f4a-5c6d-4e7f-8a9b-9c0d1e2f3a4b"
 	enroll("5f0c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f", seen.Add(-time.Hour))
-	enroll(pending, seen.Add(30*time.Minute))
+	created := seen.Add(30 * time.Minute)
+	enroll(pending, created)
 	sweep(t, w, 0)
-	// The wait outlasts the early basis, so the Mac waits for the tenant's limit, which names
-	// the oldest waiting key.
-	enroll("8c3f4a5b-6d7e-4f80-9b0c-0d1e2f3a4b5c", seen.Add(20*time.Hour))
-	if err := st.PutTenantSettings(ctx, tenant, store.TenantSettings{ReenrollmentRequiresApproval: true, SilentAfterHours: 25}, audit(tenant)); err != nil {
-		t.Fatal(err)
-	}
-	w.Now = func() time.Time { return seen.Add(30*time.Minute + 24*time.Hour - time.Minute) }
+	// A newer key doesn't extend the wait.
+	enroll("8c3f4a5b-6d7e-4f80-9b0c-0d1e2f3a4b5c", seen.Add(2*time.Hour))
+	w.Now = func() time.Time { return created.Add(monitor.MDMPendingGrace - time.Minute) }
 	sweep(t, w, 0)
-	w.Now = func() time.Time { return seen.Add(25 * time.Hour) }
+	w.Now = func() time.Time { return created.Add(monitor.MDMPendingGrace) }
 	sweep(t, w, 1)
 	items, _ := st.ClaimExports(ctx, "splunk", 100, time.Minute, w.Now())
-	if e := items[len(items)-1].Event; e.Detail["basis"] != "no_contact" || e.Detail["pending_device_id"] != pending {
+	if e := items[len(items)-1].Event; e.Detail["basis"] != "mdm_check_in" || e.Detail["pending_device_id"] != pending {
 		t.Fatalf("event = %+v", e)
+	}
+}
+
+// A key made late in a silence keeps the Mac waiting past the first day, when the early
+// basis ends: the Mac waits for the tenant's limit.
+func TestMDMSilenceLatePendingKeyOutlastsTheEarlyBasis(t *testing.T) {
+	ctx := context.Background()
+	seen := testfixture.Time(t, "2026-10-16T09:00:00Z")
+	fleet := macs(1, "1.2.0", seen, seen.Add(21*time.Hour))
+	w, st := intuneWorker(t, seen.Add(22*time.Hour), fleet)
+	for _, k := range []struct {
+		id string
+		at time.Time
+	}{{"5f0c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f", seen.Add(-time.Hour)}, {"7b2e3f4a-5c6d-4e7f-8a9b-9c0d1e2f3a4b", seen.Add(22 * time.Hour)}} {
+		if _, err := st.Enroll(ctx, store.DeviceCredential{DeviceID: k.id, TenantID: tenant, Serial: fleet[0].serial,
+			HardwareUUID: "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D", PublicKey: []byte(k.id), CreatedAt: k.at}, store.EnrollLimits{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, at := range []time.Duration{22 * time.Hour, 24 * time.Hour, 26 * time.Hour} {
+		w.Now = func() time.Time { return seen.Add(at) }
+		sweep(t, w, 0)
 	}
 }
 

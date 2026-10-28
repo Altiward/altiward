@@ -956,7 +956,9 @@ what the errors mean.
   Each silence is raised once. This applies to Macs whose agent has reported version 1.2.0
   or later, which checks in at least hourly, during the first day of a silence, from 2
   hours and 10 minutes after the server starts. A Mac with a new key waiting for approval
-  in **Enrollments** isn't raised early. When many Macs meet this rule at once (more than
+  in **Enrollments** is raised early only once the key has waited 4 hours, and the alert
+  names it; a key made in the last 4 hours of that first day means the Mac waits for the
+  alert limit. When many Macs meet this rule at once (more than
   the larger of 5 and a fifth of the Macs in Intune, counting those already raised), none
   is raised early: Altiward itself is then probably unreachable (the agent hostname, its
   certificate or a proxy), not every agent removed. Those Macs are reported when they

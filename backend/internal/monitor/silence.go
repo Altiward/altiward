@@ -37,8 +37,9 @@ const MDMMinAgent = "1.2"
 
 // MDMPendingGrace is how long a key waiting for approval keeps its Mac from the early basis.
 // A pending key can't check in, but anyone with the enrolment token can make one, so it
-// mustn't hold the alert back for longer.
-const MDMPendingGrace = 24 * time.Hour
+// mustn't hold the alert back for longer. A key made late in a silence still outlasts
+// mdmWindow, and its Mac waits for the tenant's limit.
+const MDMPendingGrace = 4 * time.Hour
 
 // The early basis is for silences shorter than mdmWindow: a longer one waits for the
 // tenant's limit, and doesn't count towards a hold.

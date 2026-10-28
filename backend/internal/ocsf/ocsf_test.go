@@ -731,7 +731,7 @@ func TestSilentWhileIntuneHearsFromTheMacIsHigh(t *testing.T) {
 	early.Detail["admin_members"] = []any{}
 	early.Detail["pending_device_id"] = "6a1d2e3f-4b5c-4d6e-8f7a-8b9c0d1e2f3a"
 	if msg := mapJSON(t, early)["message"].(string); !strings.HasSuffix(msg,
-		"Admins at its last check-in: none. A new key, 6a1d2e3f-4b5c-4d6e-8f7a-8b9c0d1e2f3a, waits for approval") {
+		"Admins at its last check-in: none. A new key for it, 6a1d2e3f-4b5c-4d6e-8f7a-8b9c0d1e2f3a, is waiting for approval: the agent can't report with it until it is approved") {
 		t.Fatalf("message = %q", msg)
 	}
 	// Each name is quoted, so none can read as part of the sentence or break the line, and

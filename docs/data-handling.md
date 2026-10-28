@@ -182,8 +182,8 @@ Intune has heard from the Mac at least 2 hours after its last check-in with Alti
 carries the Mac's serial, hardware UUID and versions, its last check-in, the limit, why it
 was raised, and the Mac's admin group at its newest health reading (up to 50 macOS short
 names, and how many more there were). With Intune connected, it also carries the time Intune last heard from the
-Mac, and the device ID of a key enrolled since the Mac's last check-in that has waited a
-day or more for approval. When the Mac checks in again, a second event says so. None of
+Mac, and the device ID of a key enrolled since the Mac's last check-in that has waited 4
+hours or more for approval. When the Mac checks in again, a second event says so. None of
 this is new data on the server, which already keeps the Mac's latest state and the copy of
 Intune's Macs; the admins and Intune's check-in are new to the SIEM. The server also keeps,
 in each Mac's latest state, the highest agent version the Mac has reported, and records in
