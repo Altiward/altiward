@@ -1149,9 +1149,10 @@ a shared document.
 - A console tab left open keeps reloading its lists while it's on screen, so it records a
   sign-in every hour until you close it or sign out. Sign out when you're done.
 - If the server can't record the sign-in, for example while it can't reach the database,
-  it refuses the request with a server error, so a token is never used unrecorded. The
-  console then says it couldn't sign you in just now: the token wasn't rejected, so try
-  again shortly.
+  it refuses the request with a server error, so a token is never used unrecorded. If
+  that happens as you sign in, the console says it couldn't sign you in just now: the
+  token wasn't rejected, so try again shortly. Later in a session, the page shows an error
+  and you stay signed in.
 - Single sign-on refuses anyone whose name starts with `token:` or `break-glass:`, in any
   case, so those names in Activity are always tokens.
 
@@ -1196,8 +1197,12 @@ brought back ([The console token](../deploy/azure/README.md#the-console-token) o
 
    - **In your SIEM.** A sign-in has the fingerprint in `user.name` and a change has it in
      `actor.user.name` (`suser` in CEF), so search both, or search for the fingerprint as
-     text. In Splunk, `sourcetype=altiward:ocsf host=altiward "break-glass:3f2a9c1b"`; in
-     Sentinel, `AltiwardOCSF_CL | where UserName == "break-glass:3f2a9c1b"`.
+     text. Splunk and Sentinel search the last 24 hours unless you say otherwise, so set
+     the time range back to when the token may have leaked, as these searches do for 90
+     days. In Splunk,
+     `sourcetype=altiward:ocsf host=altiward earliest=-90d "break-glass:3f2a9c1b"`; in
+     Sentinel,
+     `AltiwardOCSF_CL | where TimeGenerated > ago(90d) and UserName == "break-glass:3f2a9c1b"`.
    - **From the API**, from an allowed network, with a token you're keeping (which records
      a sign-in of its own). This covers the newest 500 entries:
 
@@ -1216,10 +1221,23 @@ brought back ([The console token](../deploy/azure/README.md#the-console-token) o
        target, detail FROM audit_log WHERE actor = 'break-glass:3f2a9c1b' ORDER BY at"
      ```
 
-3. **Undo what it changed.** For each **Approved an enrollment**, find the key in
-   **Enrollments** and revoke it if you don't recognise the Mac. For **Changed settings**,
-   turn back on any approval it turned off, such as **Approve Macs that enrol again**.
-   Check that each **Ended someone's console sign-in** and each revoke was expected.
+3. **Undo what it changed**, entry by entry:
+
+   - **Approved an enrollment:** find the key in **Enrollments**, and revoke it if you
+     don't recognise the Mac.
+   - **Changed settings:** the entry's details show each setting it changed, before and
+     after. In **Settings › General**, put back anything you didn't change yourself:
+     **Approve Macs that enrol again**, **Approve every new Mac**, **Alert when a Mac stops
+     checking in**, and its **Raise it after** hours (in Activity, **Alert after hours
+     without a check-in**). With that alert off or its hours raised, someone could stop
+     the agent on Macs without an alert.
+   - **Revoked an enrollment:** that Mac stops reporting, and its agent enrols a new key by
+     itself, which waits in **Enrollments** while **Approve Macs that enrol again** is on.
+     Before you approve it, run `altiward-agent status` on the Mac through your MDM and
+     check that its `key fingerprint:` matches the waiting key, as after a
+     [restore](#backups). Then find out why it was revoked.
+   - **Ended someone's console sign-in**, **Revoked a session** and **Revoked admin rights
+     on a Mac:** check each was expected.
 4. **Assume it read everything the console shows** since it may have leaked: the fleet,
    people's names and the reasons they typed, sessions, Activity and, with Intune
    connected, the copy of Intune's Macs. Reads aren't recorded one by one, so an hourly
@@ -1307,7 +1325,7 @@ Logs aren't included. If a maintainer asks for them:
 | Caddy logs certificate errors | A hostname doesn't resolve to this server, or port 80 is blocked ([Caddy certificate errors](#caddy-certificate-errors)) |
 | The console shows "403" | You're outside `ALTIWARD_CONSOLE_ALLOW`, or behind a proxy Caddy doesn't trust |
 | Sign-in says the token is wrong | Use the part after `yourcompany=` in `ALTIWARD_CONSOLE_TOKENS`. A token removed from it no longer works ([Console token and break-glass](#console-token-and-break-glass)) |
-| Sign-in says Altiward couldn't sign you in just now | The server couldn't record the token's sign-in, usually because it can't reach the database, so it refused the request. The token is fine: look for `record console token sign-in` in `docker compose logs altiward`, and try again |
+| Sign-in says Altiward couldn't sign you in just now | The token wasn't rejected. The server isn't answering (check `docker compose ps`), or it couldn't record the token's sign-in, usually because it can't reach the database, and so refused the request (look for `record console token sign-in` in `docker compose logs altiward`). Fix that, then try again |
 | Single sign-on says your account isn't in a group that can use Altiward | The groups claim doesn't carry any group in `ALTIWARD_OIDC_*_GROUPS`. Check the IDs (Entra) or names (Okta), and that the group is assigned to the application. |
 | Single sign-on says your identity provider didn't send your groups | Entra ID: limit the groups claim to groups assigned to the application. |
 | Single sign-on can't reach your identity provider | The server can't fetch `<issuer>/.well-known/openid-configuration`. Diagnostics checks the connection as `sso`. Use the break-glass token meanwhile. |

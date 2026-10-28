@@ -101,8 +101,9 @@ on every platform. None of it is sent to your SIEM.
 macOS version, the person's short name and UPN, the reason they typed, and the event's
 details. That includes every permanent admin use event the agent sends: sign-in
 times, terminals and SSH addresses, who approved prompts, and screen sharing viewers' addresses, as listed above. Console
-sign-ins and changes go there too, naming the person who made them or, for a console
-token, its fingerprint (`token:` or `break-glass:` and 8 hex digits, never the token).
+actions go there too, sign-ins and sign-outs included, naming the person who made them
+or, for a console token, its fingerprint (`token:` or `break-glass:` and 8 hex digits,
+never the token).
 
 The server also raises an `agent.enrollment` event of its own each time a key enrols, a
 Mac replaces its key by rotation, or a key that rotation replaced is used again. Its state

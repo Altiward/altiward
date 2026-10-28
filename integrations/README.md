@@ -22,16 +22,17 @@ detection rules and searches are in [altiward-siem](https://github.com/Altiward/
 [the architecture guide](../docs/architecture.md#siem-boundaries).
 
 The server maps events to OCSF in `backend/internal/ocsf`. Console audit actions also
-export, with event type `console.<action>`: console sign-ins and sign-outs (through single
-sign-on, and each hour a console token is used) as OCSF Authentication (`class_uid` 3002),
-and the other actions as API Activity (`class_uid` 6003). `agent.enrollment`, which the
-server raises when a Mac enrols a key, is API Activity as well, as activity Create. Its
-severity says which state it is: Informational for `enrolled`, Medium (an alert) for
-`pending` and High (an alert) for `replaced`. Key rotation is API Activity too,
-with `api.operation` `rotate` and the Mac as the actor: `rotated` is Update and Informational,
-and `rotated_key_used` (a key that rotation had already replaced signed a request) is
-"Stale key used", status Failure, High and an alert. In CEF, rules key on the
-signature `agent.enrollment` and the severity ([syslog](syslog/README.md#starter-rules)).
+export, with event type `console.<action>`: sign-ins and sign-outs through single sign-on,
+and console token sign-ins (one each hour a token is used), as OCSF Authentication
+(`class_uid` 3002), and the other actions as API Activity (`class_uid` 6003).
+`agent.enrollment`, which the server raises when a Mac enrols a key, is API Activity as
+well, as activity Create. Its severity says which state it is: Informational for
+`enrolled`, Medium (an alert) for `pending` and High (an alert) for `replaced`. Key
+rotation is API Activity too, with `api.operation` `rotate` and the Mac as the actor:
+`rotated` is Update and Informational, and `rotated_key_used` (a key that rotation had
+already replaced signed a request) is "Stale key used", status Failure, High and an
+alert. In CEF, rules key on the signature `agent.enrollment` and the severity
+([syslog](syslog/README.md#starter-rules)).
 `ocsf-examples/`: the server's OCSF output for sample events (and altiward-siem's
 fixtures), kept current by
 `TestGoldenExamples` (`go test ./backend/internal/ocsf -run Golden -update` rewrites it).

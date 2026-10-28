@@ -302,6 +302,8 @@ az containerapp revision restart --name <appName> --resource-group <group> \
 token in its place if it was your only way in). `az keyvault secret show`, as in
 [Get the tokens](#after-it-deploys), shows what the secret holds now. Then check that its
 fingerprint is gone from `tokens` in the diagnostics report ([Running it](#running-it)).
+If it's still listed, the app hasn't read the new version yet: restart it again, or wait
+up to 30 minutes, and check again.
 
 **Turning it off**, once single sign-on works and gives someone the admin role. First
 remove the setting from the `altiward` container, which starts a new revision without it:
