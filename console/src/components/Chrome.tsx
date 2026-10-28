@@ -1,5 +1,5 @@
-import { type ReactNode, useId, useLayoutEffect, useRef, useState } from "react";
-import { RefreshIcon, SearchIcon } from "./Icons";
+import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { DisclosureGlyph, RefreshIcon, SearchIcon } from "./Icons";
 
 export function Toolbar({ title, subtitle, children, onRefresh }: {
   title: string; subtitle?: string; children?: ReactNode; onRefresh?: () => void;
@@ -62,6 +62,47 @@ export function Details({ rows }: { rows: [string, ReactNode][] }) {
     <div className="box">
       <dl>{rows.map(([k, v]) => [<dt key={`${k}-t`}>{k}</dt>, <dd key={`${k}-d`}>{v}</dd>])}</dl>
     </div>
+  );
+}
+
+// Per browser, like the look: which inspector sections someone keeps open is a preference.
+const SECTIONS_KEY = "altiward.sections";
+
+function savedSections(): Record<string, boolean> {
+  try { return JSON.parse(localStorage.getItem(SECTIONS_KEY) ?? "{}") ?? {}; } catch { return {}; }
+}
+
+function saveSection(id: string, open: boolean) {
+  try { localStorage.setItem(SECTIONS_KEY, JSON.stringify({ ...savedSections(), [id]: open })); } catch { /* this visit only */ }
+}
+
+/** An inspector group that folds away like a macOS disclosure, showing `summary` beside its
+ *  title while closed. It opens as last left in this browser, or `defaultOpen`; with
+ *  `attention`, such as a failing check, it opens whatever was left, also when attention
+ *  arrives later, and closing it then isn't remembered. Key it by the inspector's subject so each one starts afresh. */
+export function Section({ id, title, summary, attention, defaultOpen = false, children }: {
+  id: string; title: string; summary?: ReactNode; attention?: boolean; defaultOpen?: boolean; children: ReactNode;
+}) {
+  const [open, setOpen] = useState(() => !!attention || (savedSections()[id] ?? defaultOpen));
+  // A check that starts failing while the section is on screen opens it too.
+  useEffect(() => { if (attention) setOpen(true); }, [attention]);
+  const titleId = `${id}-title`;
+  return (
+    // role="group" is a <details>'s own, spelt out for the screenshot scripts' selectors.
+    <details className="group section" role="group" open={open} aria-labelledby={titleId}
+      onToggle={(e) => {
+        const now = e.currentTarget.open;
+        if (now === open) return;
+        setOpen(now);
+        if (!attention) saveSection(id, now);
+      }}>
+      <summary>
+        <DisclosureGlyph />
+        <h3 id={titleId}>{title}</h3>
+        {!open && summary != null && <span className="section-summary">{summary}</span>}
+      </summary>
+      {children}
+    </details>
   );
 }
 

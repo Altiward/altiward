@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import type { Command, Device, MDMDevice, PermanentUse } from "../api";
-import { Banner, Details, Empty, Explain, Missing, RoleNote, SearchField, Segmented, Toolbar } from "../components/Chrome";
+import { Banner, Details, Empty, Explain, Missing, RoleNote, SearchField, Section, Segmented, Toolbar } from "../components/Chrome";
 import { ClaimedGlyph, CloseIcon, ElevatedGlyph, EndedGlyph, NotGrantedGlyph, VerifiedGlyph } from "../components/Icons";
 import { NotInIntune } from "../components/NotInIntune";
 import { ConfirmSheet } from "../components/Sheet";
@@ -42,6 +42,13 @@ const permanentUseContext = (u: PermanentUse) => [
 ].filter(Boolean).join(" · ");
 /** Places the persistence snapshot couldn't read: changes there go unreported. */
 const blindSpots = (d: Device) => d.persistence_unreadable ?? [];
+/** Accounts named in a closed section's summary; more than this become a count. */
+const SUMMARY_NAMES = 3;
+const accounts = (names: string[]) => names.length <= SUMMARY_NAMES
+  ? names.join(", ")
+  : `${names.length} accounts`;
+/** Integrity alerts shown before "Show all". */
+const ALERTS_SHOWN = 3;
 
 /** Every Mac with its versions, admin group and last check-in. */
 export function FleetView() {
@@ -246,8 +253,8 @@ function NeverReported({ macs, intune }: { macs: Device[]; intune: Map<string, M
 /** What Intune knows about the Mac, or that it knows nothing. */
 function IntuneGroup({ device }: { device: MDMDevice | undefined }) {
   return (
-    <div className="group" role="group" aria-labelledby="intune-title">
-      <h3 id="intune-title">Intune</h3>
+    // A Mac Intune doesn't know is worth seeing, so its section opens.
+    <Section id="intune" title="Intune" summary={device?.primary_upn || device?.name || undefined} attention={!device}>
       {device ? (
         <Details rows={[
           ["Name (Intune)", device.name || <Missing key="name">Not set</Missing>],
@@ -257,7 +264,7 @@ function IntuneGroup({ device }: { device: MDMDevice | undefined }) {
       ) : (
         <div className="box"><p style={{ padding: "6px 0" }}><NotInIntune /></p></div>
       )}
-    </div>
+    </Section>
   );
 }
 
@@ -322,8 +329,9 @@ function DeviceInspector({ device: d, intune, severities, onClose }: {
       ) : <RoleNote>Revoking admin rights needs the operator role.</RoleNote>)}
       {notice && <div style={{ margin: "8px -16px 0" }}><Banner kind={notice.kind}>{notice.text}</Banner></div>}
 
-      <div className="group" role="group" aria-labelledby="admin-group-title">
-        <h3 id="admin-group-title">Admin group</h3>
+      <Fragment key={d.serial}>
+      <Section id="admin-group" title="Admin group" defaultOpen
+        summary={d.admin_members.length === 0 ? "No one" : accounts(d.admin_members)}>
         <div className="box">
           {d.admin_members.length === 0 && <p className="secondary" style={{ padding: "6px 0" }}>No one is an admin.</p>}
           <dl>
@@ -339,11 +347,12 @@ function DeviceInspector({ device: d, intune, severities, onClose }: {
             ])}
           </dl>
         </div>
-      </div>
+      </Section>
 
       {d.permanent_admins && (
-        <div className="group" role="group" aria-labelledby="permanent-admins-title">
-          <h3 id="permanent-admins-title">Permanent admins</h3>
+        <Section id="permanent-admins" title="Permanent admins"
+          summary={d.permanent_admins.length === 0 ? "None set" : accounts(d.permanent_admins)}
+          attention={(d.recent_permanent_uses ?? []).some((u) => u.state === "started")}>
           <div className="box">
             {d.permanent_admins.length === 0
               ? <p className="secondary" style={{ padding: "6px 0" }}>None set.</p>
@@ -385,12 +394,12 @@ function DeviceInspector({ device: d, intune, severities, onClose }: {
             From the Mac’s configuration profile. Change them in your MDM: Altiward reports this setting made any other
             way as tampering, and never removes these accounts’ admin rights. It records each time someone uses one.
           </p>
-        </div>
+        </Section>
       )}
 
       {(d.integrity || d.persistence_unreadable || (d.recent_tamper ?? []).length > 0) && (
-        <div className="group" role="group" aria-labelledby="integrity-title">
-          <h3 id="integrity-title">Integrity</h3>
+        <Section id="integrity" title="Integrity" summary={<IntegritySummary device={d} />}
+          attention={hasFailingCheck(d) || blindSpots(d).length > 0}>
           {(d.integrity || d.persistence_unreadable) && (
             <div className="box">
               <dl>
@@ -425,24 +434,11 @@ function DeviceInspector({ device: d, intune, severities, onClose }: {
               </dl>
             </div>
           )}
-          {(d.recent_tamper ?? []).length > 0 && (
-            <div className="box" style={{ marginTop: 8 }}>
-              <ul className="entries" aria-label="Recent integrity alerts">
-                {(d.recent_tamper ?? []).slice(0, 10).map((a) => (
-                  <li key={a.event_id}>
-                    <span>{integrityCheckLabel(a.check)}</span>
-                    <span className="secondary" title={dateTime(a.at)}>{relativeTime(a.at).toLowerCase()}</span>
-                    <span className="detail">{tamperStateLabel(a.state, a.check)}{a.problem && `: ${a.problem}`}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
+          {(d.recent_tamper ?? []).length > 0 && <IntegrityAlerts device={d} />}
+        </Section>
       )}
 
-      <div className="group">
-        <h3>Agent</h3>
+      <Section id="agent" title="Agent" summary={d.agent_version}>
         <Details rows={[
           ["Agent version", d.agent_version],
           ["Hardware UUID", <span key="hw" className="data">{d.hardware_uuid}</span>],
@@ -450,12 +446,11 @@ function DeviceInspector({ device: d, intune, severities, onClose }: {
           ["Last check-in", dateTime(lastCheckIn(d))],
           ["Events queued", d.queue_depth == null ? <Missing key="queued">Not reported</Missing> : String(d.queue_depth)],
         ]} />
-      </div>
+      </Section>
 
       {intune && <IntuneGroup device={intune.get(normaliseSerial(d.serial))} />}
 
-      <div className="group">
-        <h3>SAP Privileges</h3>
+      <Section id="privileges" title="SAP Privileges" summary={d.privileges_version ?? "Not installed"}>
         <Details rows={[
           ["Version", d.privileges_version ?? "Not installed"],
           ["Reports to Altiward", yesNo(p.post_change_hook_configured)],
@@ -465,7 +460,8 @@ function DeviceInspector({ device: d, intune, severities, onClose }: {
           ["Daily admin budget", p.admin_budget_minutes != null
             ? `${p.admin_budget_minutes} min` : <Missing key="budget">Not set</Missing>],
         ]} />
-      </div>
+      </Section>
+      </Fragment>
 
       {target !== undefined && (
         <ConfirmSheet
@@ -476,5 +472,44 @@ function DeviceInspector({ device: d, intune, severities, onClose }: {
           confirm="Revoke" destructive busy={busy} onConfirm={revoke} onCancel={() => setTarget(undefined)} />
       )}
     </aside>
+  );
+}
+
+/** The Integrity section's summary while closed: how many checks fail, or that all pass. */
+function IntegritySummary({ device: d }: { device: Device }) {
+  const checks = Object.values(d.integrity ?? {});
+  const failing = checks.filter((passing) => !passing).length;
+  const unread = blindSpots(d).length;
+  if (failing > 0) return <span className="tag denied"><NotGrantedGlyph /> {failing} failing</span>;
+  if (unread > 0) return <span className="tag attention"><NotGrantedGlyph /> Can’t read {unread === 1 ? "1 place" : `${unread} places`}</span>;
+  const total = checks.length + (d.persistence_unreadable ? 1 : 0);
+  if (total === 0) return null;
+  return <><VerifiedGlyph /> {total === 1 ? "Passing" : `All ${total} passing`}</>;
+}
+
+/** The newest integrity alerts, with the rest of the last ten behind "Show all". */
+function IntegrityAlerts({ device: d }: { device: Device }) {
+  const [all, setAll] = useState(false);
+  const alerts = (d.recent_tamper ?? []).slice(0, 10);
+  const shown = all ? alerts : alerts.slice(0, ALERTS_SHOWN);
+  return (
+    <div className="box" style={{ marginTop: 8 }}>
+      <ul className="entries" aria-label="Recent integrity alerts">
+        {shown.map((a) => (
+          <li key={a.event_id}>
+            <span>{integrityCheckLabel(a.check)}</span>
+            <span className="secondary" title={dateTime(a.at)}>{relativeTime(a.at).toLowerCase()}</span>
+            <span className="detail">{tamperStateLabel(a.state, a.check)}{a.problem && `: ${a.problem}`}</span>
+          </li>
+        ))}
+      </ul>
+      {alerts.length > ALERTS_SHOWN && (
+        <div className="more">
+          <button type="button" className="button" aria-expanded={all} onClick={() => setAll(!all)}>
+            {all ? "Show fewer" : `Show all ${alerts.length}`}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

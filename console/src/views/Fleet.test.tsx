@@ -64,6 +64,56 @@ describe("Fleet", () => {
     expect(within(group).getByText("Persistence check")).toHaveAccessibleDescription(/SSH keys/);
   });
 
+  it("folds away passing checks and details, and opens failing checks", async () => {
+    const fine: Device = { ...mac, integrity: { code_signature: true, settings_managed: true } };
+    const failing: Device = { ...mac, serial: "C02FAIL00001", integrity: { code_signature: true, settings_managed: false } };
+    render(<ApiContext.Provider value={fakeApi({ devices: vi.fn(async () => [fine, failing]) })}><MemoryRouter><FleetView /></MemoryRouter></ApiContext.Provider>);
+    await userEvent.click(await screen.findByText("C02ZM1BBMD6T"));
+    let integrity = screen.getByRole("group", { name: "Integrity" });
+    expect(integrity).not.toHaveAttribute("open");
+    expect(within(integrity).getByText(/All 2 passing/)).toBeVisible();
+    expect(within(integrity).getByText("App signature")).not.toBeVisible();
+    expect(screen.getByRole("group", { name: "Admin group" })).toHaveAttribute("open");
+    const agent = screen.getByRole("group", { name: "Agent" });
+    expect(agent).not.toHaveAttribute("open");
+    expect(agent.querySelector(".section-summary")).toHaveTextContent("0.1.0");
+    expect(within(agent).getByText("Hardware UUID")).not.toBeVisible();
+
+    await userEvent.click(screen.getByText("C02FAIL00001"));
+    integrity = screen.getByRole("group", { name: "Integrity" });
+    expect(integrity).toHaveAttribute("open");
+    expect(within(integrity).getByText("Failing")).toBeVisible();
+  });
+
+  it("remembers which sections someone opens", async () => {
+    const other: Device = { ...mac, serial: "C02OTHER0001" };
+    render(<ApiContext.Provider value={fakeApi({ devices: vi.fn(async () => [mac, other]) })}><MemoryRouter><FleetView /></MemoryRouter></ApiContext.Provider>);
+    await userEvent.click(await screen.findByText("C02ZM1BBMD6T"));
+    await userEvent.click(within(screen.getByRole("group", { name: "Agent" })).getByText("Agent"));
+    expect(screen.getByRole("group", { name: "Agent" })).toHaveAttribute("open");
+    expect(screen.getByText("Hardware UUID")).toBeVisible();
+
+    await userEvent.click(screen.getByText("C02OTHER0001"));
+    expect(screen.getByRole("group", { name: "Agent" })).toHaveAttribute("open");
+    expect(JSON.parse(localStorage.getItem("altiward.sections")!)).toEqual({ agent: true });
+  });
+
+  it("shows the newest integrity alerts and the rest on request", async () => {
+    const at = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+    const noisy: Device = {
+      ...mac,
+      integrity: { privileges_hook: true },
+      recent_tamper: [1, 2, 3, 4, 5].map((h) => ({ event_id: `t${h}`, at: at(h), check: "privileges_hook", state: "restored" as const, problem: "" })),
+    };
+    render(<ApiContext.Provider value={fakeApi({ devices: vi.fn(async () => [noisy]) })}><MemoryRouter><FleetView /></MemoryRouter></ApiContext.Provider>);
+    await userEvent.click(await screen.findByText("C02ZM1BBMD6T"));
+    const alerts = () => within(screen.getByRole("list", { name: "Recent integrity alerts" })).getAllByRole("listitem");
+    expect(alerts()).toHaveLength(3);
+    await userEvent.click(screen.getByRole("button", { name: "Show all 5" }));
+    expect(alerts()).toHaveLength(5);
+    expect(screen.getByRole("button", { name: "Show fewer" })).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("puts a tamper alert's problem on a line of its own", async () => {
     const problem = "/Library/Application Support/Altiward/Altiward.app/Contents/MacOS/Altiward is not the hook";
     const tampered: Device = {
@@ -395,8 +445,13 @@ describe("Fleet and Intune", () => {
     })])));
     await userEvent.click(await screen.findByText("C02ZM1BBMD6T"));
     const inspector = screen.getByRole("complementary", { name: "Mac details" });
-    expect(await within(inspector).findByText("Primary user (Intune)")).toBeInTheDocument();
-    expect(within(inspector).getByText("anna.smith@example.com")).toBeInTheDocument();
+    const section = await within(inspector).findByRole("group", { name: "Intune" });
+    // Closed, with the primary user beside the title.
+    expect(section).not.toHaveAttribute("open");
+    expect(section.querySelector(".section-summary")).toHaveTextContent("anna.smith@example.com");
+    await userEvent.click(within(section).getByText("Intune"));
+    expect(within(inspector).getByText("Primary user (Intune)")).toBeVisible();
+    expect(within(inspector).getByText("anna.smith@example.com")).toBeVisible();
     expect(within(inspector).getByText("Last Intune check-in")).toBeInTheDocument();
     expect(within(inspector).getByText(dateTime("2026-10-17T08:30:00Z"))).toBeInTheDocument();
   });
@@ -404,7 +459,8 @@ describe("Fleet and Intune", () => {
   it("says when Intune has no record of the Mac", async () => {
     renderFleet(fakeApi(connected([])));
     await userEvent.click(await screen.findByText("C02ZM1BBMD6T"));
-    expect(await screen.findByText("Not in Intune")).toBeInTheDocument();
+    // Open by itself: a Mac Intune doesn't know is worth seeing.
+    expect(await screen.findByText("Not in Intune")).toBeVisible();
     expect(screen.queryByText("Primary user (Intune)")).toBeNull();
   });
 
