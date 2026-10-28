@@ -64,7 +64,8 @@ HTTPS. It contains no third-party code, and makes no connections to Apple, SAP, 
 or anyone else. It:
 
 - enrols with the enrolment token from your profile, registering a key it makes on the Mac
-  and saying whether that key is in the Mac's Secure Enclave;
+  and saying whether that key is in the Mac's Secure Enclave, and sends the MDM's ID for
+  the Mac, if the profile sets `MDMDeviceID`;
 - replaces that key from time to time (key rotation): a file key moves into the Secure
   Enclave where the Mac has one, and a file key on another Mac is replaced every 30 days.
   It sends the new key's public half, whether it is in the Secure Enclave, and a proof

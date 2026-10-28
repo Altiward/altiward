@@ -9,8 +9,9 @@
                        are readable by local users, so treat the token as a fleet-wide
                        secret.
   MDMDeviceID          The MDM's own ID for the Mac. Intune: {{deviceid}}, in that case.
-                       Jamf Pro and Kandji later.
-  HeartbeatInterval    Seconds between admin-group readings (default 300, minimum 30).
+                       Jamf Pro and Kandji later. Sent once, when the Mac enrols.
+  HeartbeatInterval    Seconds between admin-group readings (default 300, minimum 30,
+                       maximum 3600: a Mac checks in at least hourly).
   FlushInterval        Seconds between delivery retries (default 60, minimum 10).
   PermanentAdmins      Accounts expected to hold standing admin rights (IT, break-glass);
                        never reported as out-of-band, never demoted by ExpiryEnforcement,

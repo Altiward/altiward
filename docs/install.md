@@ -166,6 +166,9 @@ Create these in your MDM and scope them to a pilot group first.
    a profile file. Set at least:
    - `ServerURL`: `https://<agent hostname>`
    - `EnrollmentToken`: the token after `yourcompany=` in `ALTIWARD_AGENT_TOKENS`
+   - `MDMDeviceID`: your MDM's own ID for the Mac, which the agent sends once, when it
+     enrols. Leave it as `{{deviceid}}` for Intune, which fills in each Mac's device ID.
+     Leave the key out for another MDM.
    - `PermanentAdmins`: accounts that should always be admins, such as your IT or
      break-glass accounts. Altiward never flags or removes them. Include the local
      admin account your MDM manages with LAPS (Jamf Pro's managed local administrator,
@@ -183,7 +186,8 @@ Create these in your MDM and scope them to a pilot group first.
      > manages if it isn't in `PermanentAdmins`. Read [Enforcement](#enforcement) before
      > turning it on.
 
-   The example explains every other key. Two of them let the agent act, not only report:
+   The example explains every other key. `HeartbeatInterval` is 5 minutes by default, and
+   at most 3600 seconds: a larger value counts as an hour. Two of them let the agent act, not only report:
    `ExpiryEnforcement`, for rights that outlive the expiry Privileges set, and
    `OutOfBandEnforcement`, for admin rights nobody granted. Both default to `alert`, which
    only reports. Keep them there for the pilot ([Enforcement](#enforcement)).

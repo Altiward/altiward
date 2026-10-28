@@ -46,7 +46,8 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
   Privileges 2.6+ and its system extension on (macOS 14+), the event names the process
   that added them (`detail.instigator`), read from the extension's unified log entries and
   marked `extension_verified` when the agent matched the entry to the real extension.
-- **Sends a heartbeat** every 5 minutes (`HeartbeatInterval`). It reconciles the `admin`
+- **Sends a heartbeat** every 5 minutes (`HeartbeatInterval`, from 30 seconds to an hour:
+  a larger value counts as 3600). It reconciles the `admin`
   group with the ledger, closing sessions whose revoke never arrived and raising anything
   the 15-second check missed, and sends `agent.health`.
 - **Acts on expiry,** each heartbeat, once rights from a Privileges grant outlive their
@@ -137,7 +138,8 @@ Every setting is read when the daemon starts. It checks for changes every 15 sec
 when one has changed, logs which and exits for launchd to start it again with them, so a
 profile that arrives after the package, or a later change, applies within seconds.
 
-The agent enrols with the `EnrollmentToken` on first delivery, then signs every request
+The agent enrols with the `EnrollmentToken` on first delivery, with the MDM's ID for the
+Mac (`MDMDeviceID`; Intune's `{{deviceid}}`) when the profile sets one, then signs every request
 with its own P-256 key. On a Mac with a Secure Enclave the daemon makes the key there; on
 other Macs, and when the Secure Enclave fails at enrolment, the key starts in the agent
 store under the root-only data directory. `altiward-agent status` shows the device ID,
