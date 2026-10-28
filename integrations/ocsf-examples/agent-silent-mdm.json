@@ -25,7 +25,7 @@
         "type_id": 1
       },
       "created_time": 1792150200000,
-      "desc": "Intune heard from C02XK0AAJGH5 at 2026-10-16T11:20:00Z, but it hasn't checked in with Altiward since 2026-10-16T09:05:00Z: the agent may have been removed or stopped, or can't reach the agent hostname. Admins at its last check-in: jdoe, itadmin",
+      "desc": "Intune heard from C02XK0AAJGH5 at 2026-10-16T11:20:00Z, but it hasn't checked in with Altiward since 2026-10-16T09:05:00Z: the agent may have been removed or stopped, or can't reach the agent hostname. Admins at its last check-in: \"itadmin\", \"jdoe\"",
       "first_seen_time": 1792150200000,
       "title": "Altiward agent stopped checking in",
       "types": [
@@ -34,7 +34,7 @@
       "uid": "5b8f3e4c-0d6a-5c91-9e2f-3a4b5c6d7e8f"
     },
     "is_alert": true,
-    "message": "Intune heard from C02XK0AAJGH5 at 2026-10-16T11:20:00Z, but it hasn't checked in with Altiward since 2026-10-16T09:05:00Z: the agent may have been removed or stopped, or can't reach the agent hostname. Admins at its last check-in: jdoe, itadmin",
+    "message": "Intune heard from C02XK0AAJGH5 at 2026-10-16T11:20:00Z, but it hasn't checked in with Altiward since 2026-10-16T09:05:00Z: the agent may have been removed or stopped, or can't reach the agent hostname. Admins at its last check-in: \"itadmin\", \"jdoe\"",
     "metadata": {
       "logged_time": 1792150200000,
       "product": {
@@ -57,8 +57,8 @@
       "altiward": {
         "detail": {
           "admin_members": [
-            "jdoe",
-            "itadmin"
+            "itadmin",
+            "jdoe"
           ],
           "basis": "mdm_check_in",
           "last_seen_at": "2026-10-16T09:05:00Z",

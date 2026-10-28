@@ -328,6 +328,28 @@ func suite(t *testing.T, newStore func(t *testing.T, sink string) Store) {
 		}
 	})
 
+	t.Run("a device keeps its silence basis and highest agent version", func(t *testing.T) {
+		s, tenant, _ := setup(t)
+		_, _, _, health := fixtures(t)
+		health.Device.AgentVersion = "1.2.0"
+		older := health
+		older.EventID = "3e9c9d85-9d3b-4a6b-8c8b-00000000000a"
+		older.Timestamp = health.Timestamp.Add(time.Minute)
+		older.Device.AgentVersion = "1.1.0"
+		early := testfixture.Event(t, "agent-silent-mdm")
+		if _, err := s.Ingest(ctx, tenant, []event.Event{health, older, early}, now); err != nil {
+			t.Fatal(err)
+		}
+		devices, err := s.ListDevices(ctx, tenant)
+		if err != nil || len(devices) != 1 {
+			t.Fatalf("devices = %+v, %v", devices, err)
+		}
+		d := devices[0]
+		if d.AgentVersion != "1.1.0" || d.HighestAgentVersion != "1.2.0" || !d.Silent() || d.Silence.Basis != event.SilentBasisMDMCheckIn {
+			t.Fatalf("device = %+v, silence = %+v", d, d.Silence)
+		}
+	})
+
 	t.Run("a server-raised event does not create a device", func(t *testing.T) {
 		s, tenant, sink := setup(t)
 		enrolled := testfixture.Event(t, "agent-enrollment-enrolled")

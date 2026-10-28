@@ -40,9 +40,12 @@ const MDMMinAgent = "1.2"
 // mustn't hold the alert back for longer.
 const MDMPendingGrace = 24 * time.Hour
 
-// Macs that checked in within mdmHoldWindow count towards holding the early basis back, so
-// a few stopped agents can't hold it back for the tenant's whole limit.
-const mdmHoldWindow = 24 * time.Hour
+// The early basis is for silences shorter than mdmWindow: a longer one waits for the
+// tenant's limit, and doesn't count towards a hold.
+const mdmWindow = 24 * time.Hour
+
+// maxSilenceAdmins is how many admins an alert names, well within the detail limit.
+const maxSilenceAdmins = 50
 
 // MDMSeen is what the MDM says of a Mac, for Check.
 type MDMSeen struct {
@@ -100,12 +103,16 @@ func Check(d session.Device, now time.Time, silentAfter time.Duration, mdm MDMSe
 		}
 		basis = event.SilentBasisMDMCheckIn
 	}
+	names, cut := admins(d.AdminMembers)
 	detail := map[string]any{
 		"state":                event.SilentStateSilent,
 		"basis":                basis,
 		"last_seen_at":         timestamp(seen),
 		"silent_after_seconds": int(silentAfter.Seconds()),
-		"admin_members":        append([]string{}, d.AdminMembers...),
+		"admin_members":        names,
+	}
+	if cut > 0 {
+		detail["admin_members_truncated"] = cut
 	}
 	if !mdmCheckIn.IsZero() {
 		detail["mdm_last_check_in"] = timestamp(mdmCheckIn)
@@ -113,7 +120,32 @@ func Check(d session.Device, now time.Time, silentAfter time.Duration, mdm MDMSe
 	if mdm.PendingDeviceID != "" {
 		detail["pending_device_id"] = mdm.PendingDeviceID
 	}
-	return raise(d, now, "silent/"+timestamp(seen), detail), true
+	e := raise(d, now, "silent/"+timestamp(seen), detail)
+	if e.Validate(now) != nil {
+		// Too large to store: raise it without the extras rather than not at all.
+		for _, key := range []string{"admin_members", "admin_members_truncated", "mdm_last_check_in", "pending_device_id"} {
+			delete(e.Detail, key)
+		}
+	}
+	return e, true
+}
+
+// admins is the admin group an alert names, by admingroup.FromHealth's rules: without empty
+// or over-long names or duplicates, sorted, and cut to maxSilenceAdmins. cut counts the
+// names the cut left out.
+func admins(members []string) (names []string, cut int) {
+	names = []string{}
+	for _, name := range members {
+		if name != "" && len(name) <= event.MaxNameLength {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	names = slices.Compact(names)
+	if len(names) > maxSilenceAdmins {
+		return slices.Clone(names[:maxSilenceAdmins]), len(names) - maxSilenceAdmins
+	}
+	return names, 0
 }
 
 // back reports whether a silent Mac has checked in since: the server received an event
@@ -155,8 +187,6 @@ type Silence struct {
 	MDMSource string
 	MDMTenant string
 	Started   time.Time
-
-	warnedAt time.Time // when holding the early basis back was last logged
 }
 
 // Run sweeps, then waits interval, until ctx is cancelled.
@@ -184,13 +214,15 @@ func (w *Silence) Sweep(ctx context.Context) (raised int, err error) {
 		return 0, err
 	}
 	tenants := map[string]store.TenantSettings{}
+	failed := map[string]bool{} // reported once a sweep
 	var errs []error
 	settingsOf := func(tenantID string) (store.TenantSettings, bool) {
-		if settings, ok := tenants[tenantID]; ok {
-			return settings, true
+		if settings, ok := tenants[tenantID]; ok || failed[tenantID] {
+			return settings, ok
 		}
 		settings, err := w.Store.TenantSettings(ctx, tenantID)
 		if err != nil {
+			failed[tenantID] = true
 			errs = append(errs, fmt.Errorf("tenant %s settings: %w", tenantID, err))
 			return settings, false
 		}
@@ -251,12 +283,16 @@ func (w *Silence) Sweep(ctx context.Context) (raised int, err error) {
 // mdmSeen returns what the MDM says of each of MDMTenant's devices it lists, by serial, with
 // the guards on the early basis applied:
 //   - not until MDMStartGrace after the server started;
-//   - not for a retired Mac, or one whose agent never reported MDMMinAgent or later;
+//   - only for a silence shorter than mdmWindow;
+//   - not for a retired Mac, one whose agent never reported MDMMinAgent or later, or one
+//     whose serial isn't as the MDM's are matched (padded or lower-case);
 //   - not for MDMPendingGrace after the oldest key the Mac enrolled since its last check-in
 //     that waits for approval;
+//   - not for a Mac last heard from before the latest hold;
 //   - not for any Mac while more than the larger of 5 and a fifth of the MDM's Macs would
 //     trip, counting those raised early already: Altiward is then probably what they can't
-//     reach. The hold is recorded for Settings and logged at most hourly.
+//     reach. The hold is recorded, for Settings and the next sweeps, and logged. The Macs
+//     it held wait for the tenant's limit.
 //
 // It returns nil when the tenant's silence alerts are off.
 func (w *Silence) mdmSeen(ctx context.Context, now time.Time, devices []store.Device, settings store.TenantSettings) (map[string]MDMSeen, error) {
@@ -281,19 +317,28 @@ func (w *Silence) mdmSeen(ctx context.Context, now time.Time, devices []store.De
 	}
 	pending := map[string][]store.DeviceCredential{}
 	for _, k := range keys {
-		pending[k.Serial] = append(pending[k.Serial], k)
+		serial := store.MDMSerial(k.Serial)
+		pending[serial] = append(pending[serial], k)
+	}
+	status, err := w.Store.MDMSyncStatus(ctx, w.MDMTenant, w.MDMSource)
+	if err != nil {
+		return nil, fmt.Errorf("tenant %s: %s status: %w", w.MDMTenant, w.MDMSource, err)
 	}
 
 	started := !now.Before(w.Started.Add(MDMStartGrace))
 	out := map[string]MDMSeen{}
-	trip := 0
+	tripped := map[string]bool{}
 	for _, d := range devices {
-		at, ok := newest[store.MDMSerial(d.Serial)]
-		if d.TenantID != w.MDMTenant || !ok {
+		if d.TenantID != w.MDMTenant || d.Serial != store.MDMSerial(d.Serial) {
+			continue
+		}
+		at, ok := newest[d.Serial]
+		if !ok {
 			continue
 		}
 		seen := d.CheckedInAt()
-		m := MDMSeen{LastCheckIn: at, MayRaise: started && d.RetiredAt == nil &&
+		m := MDMSeen{LastCheckIn: at, MayRaise: started && d.RetiredAt == nil && now.Sub(seen) < mdmWindow &&
+			(status.SilenceHeldAt == nil || seen.After(*status.SilenceHeldAt)) &&
 			release.AgentAtLeast(cmp.Or(d.HighestAgentVersion, d.AgentVersion), MDMMinAgent)}
 		if k := oldestSince(pending[d.Serial], seen); k != nil {
 			if now.Before(k.CreatedAt.Add(MDMPendingGrace)) {
@@ -302,23 +347,21 @@ func (w *Silence) mdmSeen(ctx context.Context, now time.Time, devices []store.De
 				m.PendingDeviceID = k.DeviceID
 			}
 		}
-		if m.MayRaise && now.Sub(seen) < mdmHoldWindow && early(seen, m.checkIn(now)) {
-			trip++
+		if m.MayRaise && early(seen, m.checkIn(now)) {
+			tripped[d.Serial] = true
 		}
 		out[d.Serial] = m
 	}
-	if limit := max(5, len(newest)/5); trip > limit {
+	if limit := max(5, len(newest)/5); len(tripped) > limit {
 		for serial, m := range out {
 			m.MayRaise = false
 			out[serial] = m
 		}
-		if now.Sub(w.warnedAt) >= time.Hour {
-			w.warnedAt = now
-			w.Log.Warn("holding back early silence alerts: too many Macs stopped checking in while the MDM still hears from them, "+
-				"so Altiward is probably unreachable (check the agent hostname, its certificate and any proxy)",
-				"tenant", w.MDMTenant, "source", w.MDMSource, "macs", trip, "limit", limit)
-		}
-		if err := w.Store.RecordSilenceHeld(ctx, w.MDMTenant, w.MDMSource, trip, now); err != nil {
+		w.Log.Warn("holding back early silence alerts: too many Macs stopped checking in while the MDM still hears from them, "+
+			"so Altiward is probably unreachable (check the agent hostname, its certificate and any proxy); "+
+			"they are reported when they reach the tenant's limit",
+			"tenant", w.MDMTenant, "source", w.MDMSource, "macs", len(tripped), "limit", limit)
+		if err := w.Store.RecordSilenceHeld(ctx, w.MDMTenant, w.MDMSource, len(tripped), now); err != nil {
 			return out, fmt.Errorf("tenant %s: record the hold: %w", w.MDMTenant, err)
 		}
 	}

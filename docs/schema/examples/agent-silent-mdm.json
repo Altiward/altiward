@@ -20,6 +20,6 @@
     "last_seen_at": "2026-10-16T09:05:00Z",
     "mdm_last_check_in": "2026-10-16T11:20:00Z",
     "silent_after_seconds": 259200,
-    "admin_members": ["jdoe", "itadmin"]
+    "admin_members": ["itadmin", "jdoe"]
   }
 }

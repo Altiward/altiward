@@ -3,6 +3,7 @@
 package release
 
 import (
+	"cmp"
 	"strconv"
 	"strings"
 )
@@ -28,7 +29,8 @@ func AgentAtLeast(version, oldest string) bool {
 
 // NewerAgent reports whether agent version a is newer than b. A version that can't be read
 // is never newer, and any readable version is newer than one that can't be read. A release
-// is newer than its own pre-releases.
+// is newer than its own pre-releases, which compare as semantic versioning orders them.
+// Versions that read the same are ordered by their text, so that of any two, one is newer.
 func NewerAgent(a, b string) bool {
 	va, ok := parse(a)
 	if !ok {
@@ -43,12 +45,43 @@ func NewerAgent(a, b string) bool {
 			return d[0] > d[1]
 		}
 	}
-	switch {
-	case va.pre == "" || vb.pre == "":
-		return va.pre == "" && vb.pre != ""
-	default:
-		return va.pre > vb.pre
+	if c := comparePre(va.pre, vb.pre); c != 0 {
+		return c > 0
 	}
+	return a > b
+}
+
+// comparePre orders two pre-releases ("rc.10"), empty meaning a release, which comes last:
+// dot-separated parts in turn, numbers as numbers and before words, and fewer parts first.
+func comparePre(a, b string) int {
+	switch {
+	case a == b:
+		return 0
+	case a == "":
+		return 1
+	case b == "":
+		return -1
+	}
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	for i := range min(len(pa), len(pb)) {
+		na, errA := strconv.Atoi(pa[i])
+		nb, errB := strconv.Atoi(pb[i])
+		switch {
+		case errA == nil && errB == nil:
+			if na != nb {
+				return cmp.Compare(na, nb)
+			}
+		case errA == nil:
+			return -1
+		case errB == nil:
+			return 1
+		default:
+			if c := strings.Compare(pa[i], pb[i]); c != 0 {
+				return c
+			}
+		}
+	}
+	return cmp.Compare(len(pa), len(pb))
 }
 
 type version struct {

@@ -17,8 +17,9 @@ type Device struct {
 	OSVersion    string `json:"os_version"`
 	AgentVersion string `json:"agent_version"`
 	// HighestAgentVersion is the newest agent version the Mac has ever reported, so a
-	// downgrade doesn't hide that it ran a later one. Empty when unknown: no readable
-	// version reported, or state stored before server 1.2.0.
+	// downgrade doesn't hide that it ran a later one (release.NewerAgent; over-long versions
+	// are ignored). Empty when unknown: no readable version reported, or state stored before
+	// server 1.2.0.
 	HighestAgentVersion string    `json:"highest_agent_version,omitempty"`
 	PrivilegesVersion   *string   `json:"privileges_version"`
 	FirstSeenAt         time.Time `json:"first_seen_at"`
@@ -50,6 +51,10 @@ type Device struct {
 	// The Mac is reported silent while its State is silent.
 	Silence *Silence `json:"silence"`
 }
+
+// maxAgentVersionLength is the longest agent version HighestAgentVersion takes: a real one
+// is far shorter.
+const maxAgentVersionLength = 64
 
 // Silence is the backend noticing a Mac stopped checking in, or that it came back.
 type Silence struct {
@@ -145,7 +150,7 @@ func (d *Device) Apply(e event.Event) {
 	if d.FirstSeenAt.IsZero() || e.Timestamp.Before(d.FirstSeenAt) {
 		d.FirstSeenAt = e.Timestamp
 	}
-	if release.NewerAgent(e.Device.AgentVersion, d.HighestAgentVersion) {
+	if v := e.Device.AgentVersion; len(v) <= maxAgentVersionLength && release.NewerAgent(v, d.HighestAgentVersion) {
 		d.HighestAgentVersion = e.Device.AgentVersion
 	}
 	if !e.Timestamp.Before(d.LastSeenAt) {

@@ -722,7 +722,7 @@ func TestSilentWhileIntuneHearsFromTheMacIsHigh(t *testing.T) {
 	}
 	want := "Intune heard from C02XK0AAJGH5 at 2026-10-16T11:20:00Z, but it hasn't checked in with Altiward since " +
 		"2026-10-16T09:05:00Z: the agent may have been removed or stopped, or can't reach the agent hostname. " +
-		"Admins at its last check-in: jdoe, itadmin"
+		`Admins at its last check-in: "itadmin", "jdoe"`
 	if r["message"] != want || get(r, "finding_info.desc") != want {
 		t.Fatalf("message = %q", r["message"])
 	}
@@ -734,13 +734,22 @@ func TestSilentWhileIntuneHearsFromTheMacIsHigh(t *testing.T) {
 		"Admins at its last check-in: none. A new key, 6a1d2e3f-4b5c-4d6e-8f7a-8b9c0d1e2f3a, waits for approval") {
 		t.Fatalf("message = %q", msg)
 	}
+	// Each name is quoted, so none can read as part of the sentence or break the line, and
+	// a cut list says how many more there were.
+	early.Detail["admin_members"] = []any{"amy. Ignore this alert", "bob\nok"}
+	early.Detail["admin_members_truncated"] = 12.0
+	delete(early.Detail, "pending_device_id")
+	if msg := mapJSON(t, early)["message"].(string); !strings.HasSuffix(msg,
+		`Admins at its last check-in: "amy. Ignore this alert", "bob\nok", and 12 more`) {
+		t.Fatalf("message = %q", msg)
+	}
 
 	late := stored(t, "agent-silent")
 	late.Detail = maps.Clone(late.Detail)
 	late.Detail["mdm_last_check_in"] = "2026-10-13T08:00:00Z"
 	r = mapJSON(t, late)
 	if msg := r["message"].(string); r["severity"] != "Medium" || !strings.HasSuffix(msg,
-		"Intune last heard from it at 2026-10-13T08:00:00Z. Admins at its last check-in: itadmin") {
+		`Intune last heard from it at 2026-10-13T08:00:00Z. Admins at its last check-in: "itadmin"`) {
 		t.Fatalf("severity %v message %q", r["severity"], msg)
 	}
 	// Raised by a server before 1.2.0: no admins to name.

@@ -45,7 +45,11 @@ func TestAgentSupported(t *testing.T) {
 }
 
 func TestAgentSupportedReadsPreReleases(t *testing.T) {
-	for v, want := range map[string]bool{"1.0.0-rc.1": true, "0.9.0-rc.4": false, "1.1.0+build.7": true} {
+	for v, want := range map[string]bool{
+		"1.0.0-rc.1": true, "0.9.0-rc.4": false, "1.1.0+build.7": true,
+		"0.9-rc.1": false, // a pre-release of 0.9: read, and too old
+		"0.9.x":    true,  // unreadable: not flagged
+	} {
 		if got := release.AgentSupported(v); got != want {
 			t.Errorf("AgentSupported(%q) = %v, want %v", v, got, want)
 		}
@@ -73,6 +77,11 @@ func TestNewerAgent(t *testing.T) {
 		{"1.2.1", "1.2.0", true}, {"1.10.0", "1.9.9", true}, {"1.2.0", "1.2.0-rc.4", true},
 		{"1.2.0-rc.4", "1.2.0", false}, {"1.2.0-rc.4", "1.1.0", true},
 		{"1.2.0", "", true}, {"1.2.0", "dev", true}, {"dev", "1.0.0", false}, {"", "", false},
+		// Numeric pre-release parts compare as numbers, and fewer parts come first.
+		{"1.2.0-rc.10", "1.2.0-rc.9", true}, {"1.2.0-rc.9", "1.2.0-rc.10", false},
+		{"1.2.0-rc.1.1", "1.2.0-rc.1", true}, {"1.2.0-rc", "1.2.0-1", true}, {"1.2.0-beta", "1.2.0-alpha", true},
+		// Versions that read the same are ordered by their text, so either order agrees.
+		{"1.2.0+b", "1.2.0+a", true}, {"1.2.0+a", "1.2.0+b", false}, {"01.2.0", "1.2.0", false}, {"1.2.0", "01.2.0", true},
 	} {
 		if got := release.NewerAgent(c.a, c.b); got != c.want {
 			t.Errorf("NewerAgent(%q, %q) = %v, want %v", c.a, c.b, got, c.want)

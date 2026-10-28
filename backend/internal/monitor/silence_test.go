@@ -3,6 +3,8 @@ package monitor_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -374,16 +376,96 @@ func TestNoContactCarriesIntunesCheckIn(t *testing.T) {
 	}
 }
 
+// The alert names the admins by admingroup.FromHealth's rules, sorted and capped, so a
+// forged reading can't make it too large to raise.
 func TestSilenceNamesTheAdmins(t *testing.T) {
 	d, seen := newAgent(t)
-	e, _ := monitor.Check(d, seen.Add(72*time.Hour), 72*time.Hour, monitor.MDMSeen{})
+	now := seen.Add(72 * time.Hour)
+	e, _ := monitor.Check(d, now, 72*time.Hour, monitor.MDMSeen{})
 	if got, _ := e.Detail["admin_members"].([]string); !slices.Equal(got, []string{"backdoor", "itadmin"}) {
 		t.Fatalf("admin_members = %#v", e.Detail["admin_members"])
 	}
+	if _, ok := e.Detail["admin_members_truncated"]; ok {
+		t.Fatalf("event = %+v: nothing was cut", e)
+	}
+	d.AdminMembers = []string{"zed", "", strings.Repeat("x", 256), "amy", "amy"}
+	e, _ = monitor.Check(d, now, 72*time.Hour, monitor.MDMSeen{})
+	if got, _ := e.Detail["admin_members"].([]string); !slices.Equal(got, []string{"amy", "zed"}) {
+		t.Fatalf("admin_members = %#v", e.Detail["admin_members"])
+	}
 	d.AdminMembers = nil
-	e, _ = monitor.Check(d, seen.Add(72*time.Hour), 72*time.Hour, monitor.MDMSeen{})
+	for i := range 60 {
+		d.AdminMembers = append(d.AdminMembers, fmt.Sprintf("user%02d", i))
+	}
+	e, _ = monitor.Check(d, now, 72*time.Hour, monitor.MDMSeen{})
+	if got, _ := e.Detail["admin_members"].([]string); len(got) != 50 || got[0] != "user00" || e.Detail["admin_members_truncated"] != 10 {
+		t.Fatalf("admin_members = %d names, truncated = %v", len(got), e.Detail["admin_members_truncated"])
+	}
+	d.AdminMembers = nil
+	e, _ = monitor.Check(d, now, 72*time.Hour, monitor.MDMSeen{})
 	if got, ok := e.Detail["admin_members"].([]string); !ok || got == nil || len(got) != 0 {
 		t.Fatalf("admin_members = %#v, want an empty list", e.Detail["admin_members"])
+	}
+}
+
+// A forged health reading at the detail limit, all admin names, still lets the alert be
+// raised.
+func TestSilenceFitsAReadingAtTheDetailLimit(t *testing.T) {
+	ctx := context.Background()
+	seen := testfixture.Time(t, "2026-10-16T09:00:00Z")
+	now := seen.Add(73 * time.Hour)
+	w, st := intuneWorker(t, now, nil)
+	health := testfixture.Event(t, "agent-health")
+	health.Timestamp = seen
+	names := []any{}
+	for i := 0; ; i++ {
+		next := append(names, fmt.Sprintf("u%07d", i))
+		if b, _ := json.Marshal(map[string]any{"admin_members": next}); len(b) > event.MaxDetailBytes {
+			break
+		}
+		names = next
+	}
+	health.Detail = map[string]any{"admin_members": names}
+	if err := health.Validate(seen); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Ingest(ctx, tenant, []event.Event{health}, seen); err != nil {
+		t.Fatal(err)
+	}
+	sweep(t, w, 1)
+	items, _ := st.ClaimExports(ctx, "splunk", 100, time.Minute, now)
+	e := items[len(items)-1].Event
+	var got struct {
+		Admins    []string `json:"admin_members"`
+		Truncated int      `json:"admin_members_truncated"`
+	}
+	b, _ := json.Marshal(e.Detail)
+	if err := json.Unmarshal(b, &got); err != nil || e.Type != event.AgentSilent ||
+		len(got.Admins) != 50 || got.Truncated != len(names)-50 {
+		t.Fatalf("detail: %d names, truncated = %d, err = %v", len(got.Admins), got.Truncated, err)
+	}
+}
+
+// An alert too large to store is raised without its optional fields: it fails towards
+// alerting.
+func TestSilenceDropsTheExtrasRatherThanFail(t *testing.T) {
+	d, seen := newAgent(t)
+	now := seen.Add(3 * time.Hour)
+	mdm := monitor.MDMSeen{LastCheckIn: seen.Add(150 * time.Minute), MayRaise: true, PendingDeviceID: strings.Repeat("x", 70<<10)}
+	e, ok := monitor.Check(d, now, 72*time.Hour, mdm)
+	if !ok {
+		t.Fatal("not raised")
+	}
+	if err := e.Validate(now); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"admin_members", "pending_device_id", "mdm_last_check_in"} {
+		if _, ok := e.Detail[key]; ok {
+			t.Fatalf("detail keeps %s: %v", key, e.Detail)
+		}
+	}
+	if e.Detail["basis"] != "mdm_check_in" || e.Detail["state"] != "silent" {
+		t.Fatalf("detail = %v", e.Detail)
 	}
 }
 
@@ -573,14 +655,18 @@ func TestMDMSilenceSkipsPendingKeys(t *testing.T) {
 	enroll("5f0c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f", seen.Add(-time.Hour))
 	enroll(pending, seen.Add(30*time.Minute))
 	sweep(t, w, 0)
-	// A newer key doesn't extend the wait.
+	// The wait outlasts the early basis, so the Mac waits for the tenant's limit, which names
+	// the oldest waiting key.
 	enroll("8c3f4a5b-6d7e-4f80-9b0c-0d1e2f3a4b5c", seen.Add(20*time.Hour))
+	if err := st.PutTenantSettings(ctx, tenant, store.TenantSettings{ReenrollmentRequiresApproval: true, SilentAfterHours: 25}, audit(tenant)); err != nil {
+		t.Fatal(err)
+	}
 	w.Now = func() time.Time { return seen.Add(30*time.Minute + 24*time.Hour - time.Minute) }
 	sweep(t, w, 0)
-	w.Now = func() time.Time { return seen.Add(30*time.Minute + 24*time.Hour) }
+	w.Now = func() time.Time { return seen.Add(25 * time.Hour) }
 	sweep(t, w, 1)
 	items, _ := st.ClaimExports(ctx, "splunk", 100, time.Minute, w.Now())
-	if e := items[len(items)-1].Event; e.Detail["basis"] != "mdm_check_in" || e.Detail["pending_device_id"] != pending {
+	if e := items[len(items)-1].Event; e.Detail["basis"] != "no_contact" || e.Detail["pending_device_id"] != pending {
 		t.Fatalf("event = %+v", e)
 	}
 }
@@ -636,23 +722,6 @@ func TestMDMSilenceHoldsWhenTheyTripAcrossSweeps(t *testing.T) {
 	}
 }
 
-// Once fewer trip, a held Mac is raised in the next sweep, once.
-func TestMDMSilenceRaisesAHeldMacOnceTheHoldLifts(t *testing.T) {
-	seen := testfixture.Time(t, "2026-10-16T09:00:00Z")
-	now := seen.Add(4 * time.Hour)
-	fleet := macs(10, "1.2.0", now.Add(-time.Minute), now)
-	for i := range 6 {
-		fleet[i].seen = seen
-	}
-	w, st := intuneWorker(t, now, fleet)
-	sweep(t, w, 0)
-	checkIn(t, st, tenant, fleet[0].serial, "1.2.0", now.Add(time.Minute))
-	checkIn(t, st, tenant, fleet[1].serial, "1.2.0", now.Add(time.Minute))
-	w.Now = func() time.Time { return now.Add(2 * time.Minute) }
-	sweep(t, w, 4)
-	sweep(t, w, 0)
-}
-
 // The hold is for the early basis only: a Mac quiet past the tenant's limit is raised.
 func TestMDMSilenceNeverHoldsNoContact(t *testing.T) {
 	seen := testfixture.Time(t, "2026-10-16T09:00:00Z")
@@ -669,9 +738,9 @@ func TestMDMSilenceNeverHoldsNoContact(t *testing.T) {
 	}
 }
 
-// Macs Altiward hasn't heard from in a day don't count: a few stopped agents mustn't hold
-// the early rule back for the whole limit.
-func TestMDMSilenceCountsOnlyTheLastDay(t *testing.T) {
+// The early basis is for silences under a day: a longer one waits for the tenant's limit, and
+// doesn't count towards a hold.
+func TestMDMSilenceOnlyForTheFirstDay(t *testing.T) {
 	seen := testfixture.Time(t, "2026-10-16T09:00:00Z")
 	now := seen.Add(30 * time.Hour)
 	fleet := macs(10, "1.2.0", now.Add(-time.Minute), now)
@@ -679,8 +748,84 @@ func TestMDMSilenceCountsOnlyTheLastDay(t *testing.T) {
 		fleet[i].seen = seen // 30 hours ago
 	}
 	fleet[6].seen = now.Add(-3 * time.Hour)
-	w, _ := intuneWorker(t, now, fleet)
-	sweep(t, w, 7)
+	w, st := intuneWorker(t, now, fleet)
+	sweep(t, w, 1)
+	if got := silences(t, st); len(got) != 1 || got[fleet[6].serial] == "" {
+		t.Fatalf("silences = %v", got)
+	}
+}
+
+// Once a hold is recorded, a Mac Altiward last heard from before it is never raised early:
+// it waits for the tenant's limit, as Settings says. Through a long outage nothing is
+// raised early, even as more Macs trip and after a restart.
+func TestMDMSilenceRaisesNothingEarlyThroughAnOutage(t *testing.T) {
+	ctx := context.Background()
+	seen := testfixture.Time(t, "2026-10-16T09:00:00Z")
+	now := seen.Add(3 * time.Hour)
+	fleet := macs(10, "1.2.0", seen, now)
+	for i := 6; i < 10; i++ {
+		fleet[i].mdmAt = seen.Add(time.Hour) // Intune hasn't heard from these since either
+	}
+	w, st := intuneWorker(t, now, fleet)
+	sweep(t, w, 0)
+	for i := 6; i < 10; i++ {
+		fleet[i].mdmAt = now.Add(2 * time.Hour)
+	}
+	syncIntune(t, st, fleet)
+	for _, at := range []time.Duration{time.Minute, 2 * time.Hour, 23 * time.Hour, 25 * time.Hour} {
+		w.Now = func() time.Time { return now.Add(at) }
+		sweep(t, w, 0)
+	}
+	// A restart: the hold is read from the store.
+	restarted := &monitor.Silence{Store: st, Log: w.Log, Now: func() time.Time { return now.Add(5 * time.Hour) },
+		MDMSource: store.MDMIntune, MDMTenant: tenant, Started: now.Add(-24 * time.Hour)}
+	sweep(t, restarted, 0)
+	restarted.Now = func() time.Time { return seen.Add(72 * time.Hour) }
+	sweep(t, restarted, 10)
+	for serial, basis := range silences(t, st) {
+		if basis != "no_contact" {
+			t.Fatalf("%s raised on %s", serial, basis)
+		}
+	}
+	if status, _ := st.MDMSyncStatus(ctx, tenant, store.MDMIntune); !status.SilenceHeldAt.Equal(now) || status.SilenceHeld != 6 {
+		t.Fatalf("status = %+v", status)
+	}
+}
+
+// When half the held Macs come back, the rest still aren't raised early.
+func TestMDMSilenceRecoveryTailStaysHeld(t *testing.T) {
+	seen := testfixture.Time(t, "2026-10-16T09:00:00Z")
+	now := seen.Add(3 * time.Hour)
+	fleet := macs(10, "1.2.0", seen, now)
+	w, st := intuneWorker(t, now, fleet)
+	sweep(t, w, 0)
+	for i := range 5 {
+		checkIn(t, st, tenant, fleet[i].serial, "1.2.0", now.Add(time.Minute))
+	}
+	w.Now = func() time.Time { return now.Add(2 * time.Minute) }
+	sweep(t, w, 0)
+	w.Now = func() time.Time { return now.Add(time.Hour) }
+	sweep(t, w, 0)
+}
+
+// A Mac that checked in after the hold, then went quiet, is raised early as normal.
+func TestMDMSilenceAfterAHoldRaisesNewSilences(t *testing.T) {
+	seen := testfixture.Time(t, "2026-10-16T09:00:00Z")
+	now := seen.Add(3 * time.Hour)
+	fleet := macs(10, "1.2.0", now.Add(-time.Minute), now)
+	for i := range 6 {
+		fleet[i].seen = seen
+	}
+	w, st := intuneWorker(t, now, fleet)
+	sweep(t, w, 0)
+	checkIn(t, st, tenant, fleet[9].serial, "1.2.0", now.Add(time.Minute))
+	fleet[9].mdmAt = now.Add(time.Minute + 150*time.Minute)
+	syncIntune(t, st, fleet)
+	w.Now = func() time.Time { return now.Add(3 * time.Hour) }
+	sweep(t, w, 1)
+	if got := silences(t, st); len(got) != 1 || got[fleet[9].serial] != "mdm_check_in" {
+		t.Fatalf("silences = %v", got)
+	}
 }
 
 // Agents before the hourly heartbeat cap may check in less often than every two hours.
@@ -719,6 +864,7 @@ func TestMDMSilenceOnlyForTheIntuneTenant(t *testing.T) {
 	}
 }
 
+// A hold is logged once: the Macs it held don't count again.
 func TestMDMSilenceWarnsOnce(t *testing.T) {
 	seen := testfixture.Time(t, "2026-10-16T09:00:00Z")
 	now := seen.Add(4 * time.Hour)
@@ -729,17 +875,49 @@ func TestMDMSilenceWarnsOnce(t *testing.T) {
 	w, _ := intuneWorker(t, now, fleet)
 	var logs bytes.Buffer
 	w.Log = slog.New(slog.NewTextHandler(&logs, nil))
-	sweep(t, w, 0)
-	w.Now = func() time.Time { return now.Add(59 * time.Minute) }
-	sweep(t, w, 0)
+	for _, at := range []time.Duration{0, time.Minute, time.Hour, 3 * time.Hour} {
+		w.Now = func() time.Time { return now.Add(at) }
+		sweep(t, w, 0)
+	}
 	if n := strings.Count(logs.String(), "level=WARN"); n != 1 {
-		t.Fatalf("%d warnings in an hour:\n%s", n, logs.String())
+		t.Fatalf("%d warnings:\n%s", n, logs.String())
 	}
-	w.Now = func() time.Time { return now.Add(time.Hour) }
+}
+
+// A serial that isn't already normalised (padded, or lower-case) is never raised early and
+// doesn't count towards a hold: a few forged Macs mustn't hold back the real ones.
+func TestMDMSilenceSkipsUnnormalisedSerials(t *testing.T) {
+	seen := testfixture.Time(t, "2026-10-16T09:00:00Z")
+	now := seen.Add(4 * time.Hour)
+	fleet := macs(10, "1.2.0", now.Add(-time.Minute), now)
+	fleet[0].seen = seen
+	w, st := intuneWorker(t, now, fleet)
+	real := fleet[0].serial
+	for _, serial := range []string{" " + real, real + " ", strings.ToLower(real), " " + fleet[1].serial, strings.ToLower(fleet[2].serial), fleet[3].serial + " "} {
+		checkIn(t, st, tenant, serial, "1.2.0", seen)
+	}
+	sweep(t, w, 1)
+	if got := silences(t, st); len(got) != 1 || got[real] != "mdm_check_in" {
+		t.Fatalf("silences = %v", got)
+	}
+}
+
+// A pending key is matched on the normalised serial.
+func TestMDMSilenceMatchesPendingKeysOnTheNormalisedSerial(t *testing.T) {
+	ctx := context.Background()
+	seen := testfixture.Time(t, "2026-10-16T09:00:00Z")
+	fleet := macs(1, "1.2.0", seen, seen.Add(3*time.Hour))
+	w, st := intuneWorker(t, seen.Add(4*time.Hour), fleet)
+	if err := st.PutTenantSettings(ctx, tenant, store.TenantSettings{ReenrollmentRequiresApproval: true, NewMacRequiresApproval: true}, audit(tenant)); err != nil {
+		t.Fatal(err)
+	}
+	res, err := st.Enroll(ctx, store.DeviceCredential{DeviceID: "7b2e3f4a-5c6d-4e7f-8a9b-9c0d1e2f3a4b", TenantID: tenant,
+		Serial: " " + strings.ToLower(fleet[0].serial), HardwareUUID: "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+		PublicKey: []byte("key"), CreatedAt: seen.Add(30 * time.Minute)}, store.EnrollLimits{})
+	if err != nil || res.Credential.Status != store.CredentialPending {
+		t.Fatalf("res = %+v, err = %v", res, err)
+	}
 	sweep(t, w, 0)
-	if n := strings.Count(logs.String(), "level=WARN"); n != 2 {
-		t.Fatalf("%d warnings after an hour:\n%s", n, logs.String())
-	}
 }
 
 // Turned off, no silence is raised on either basis, and none is held.
@@ -784,5 +962,23 @@ func TestMDMSilenceSkipsRetiredMacs(t *testing.T) {
 	sweep(t, w, 5)
 	if got := silences(t, st); got[fleet[0].serial] != "" {
 		t.Fatalf("silences = %v", got)
+	}
+}
+
+// brokenSettings is a store whose tenant settings can't be read.
+type brokenSettings struct{ store.Store }
+
+func (brokenSettings) TenantSettings(context.Context, string) (store.TenantSettings, error) {
+	return store.TenantSettings{}, errors.New("settings unavailable")
+}
+
+// One tenant's settings error is reported once a sweep, however many of its Macs are quiet.
+func TestSweepReportsASettingsErrorOnce(t *testing.T) {
+	seen := testfixture.Time(t, "2026-10-16T09:00:00Z")
+	w, st := intuneWorker(t, seen.Add(80*time.Hour), macs(3, "1.2.0", seen, seen.Add(3*time.Hour)))
+	w.Store = brokenSettings{st}
+	_, err := w.Sweep(context.Background())
+	if err == nil || strings.Count(err.Error(), "settings unavailable") != 1 {
+		t.Fatalf("err = %v", err)
 	}
 }

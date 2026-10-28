@@ -40,6 +40,8 @@ export interface Device {
   hardware_uuid: string;
   os_version: string;
   agent_version: string;
+  /** The newest agent version the Mac has ever reported, so a downgrade doesn't hide it. Missing when unknown. */
+  highest_agent_version?: string;
   privileges_version: string | null;
   first_seen_at: string;
   /** Newest event, by the Mac's clock. */

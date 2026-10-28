@@ -50,6 +50,7 @@ package ocsf
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/Altiward/altiward/backend/internal/event"
@@ -354,15 +355,7 @@ func silent(e store.StoredEvent, tenantID string) Record {
 				"the agent may have been removed or stopped, or can't reach the agent hostname", e.Device.Serial, mdmCheckIn, lastSeen)
 		} else {
 			desc = fmt.Sprintf("%s has not checked in since %s", e.Device.Serial, lastSeen)
-			// A number is an int straight from the monitor and a float64 after a JSON round trip.
-			var secs int
-			switch v := e.Detail["silent_after_seconds"].(type) {
-			case int:
-				secs = v
-			case float64:
-				secs = int(v)
-			}
-			if secs > 0 {
+			if secs := detailInt(e.Detail, "silent_after_seconds"); secs > 0 {
 				desc += fmt.Sprintf(" (the limit is %d hours)", secs/3600)
 			}
 			desc += "; the agent may have been removed, the Mac is off, or it can't reach the agent hostname " +
@@ -371,11 +364,19 @@ func silent(e store.StoredEvent, tenantID string) Record {
 				desc += ". Intune last heard from it at " + mdmCheckIn
 			}
 		}
-		// Left out by servers before 1.2.0, which didn't send the admins.
+		// Left out by servers before 1.2.0, which didn't send the admins. Each name is quoted,
+		// so a name can't read as part of the sentence or break the line.
 		if _, ok := e.Detail["admin_members"]; ok {
 			admins := "none"
 			if names := detailStrings(e.Detail, "admin_members"); len(names) > 0 {
-				admins = strings.Join(names, ", ")
+				quoted := make([]string, len(names))
+				for i, name := range names {
+					quoted[i] = strconv.Quote(name)
+				}
+				admins = strings.Join(quoted, ", ")
+			}
+			if more := detailInt(e.Detail, "admin_members_truncated"); more > 0 {
+				admins += fmt.Sprintf(", and %d more", more)
 			}
 			desc += ". Admins at its last check-in: " + admins
 		}
@@ -394,6 +395,18 @@ func silent(e store.StoredEvent, tenantID string) Record {
 	}
 	r["message"] = desc
 	return r
+}
+
+// detailInt is a detail field that is a number: an int straight from the monitor and a
+// float64 after a JSON round trip. 0 when missing.
+func detailInt(detail map[string]any, key string) int {
+	switch v := detail[key].(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	}
+	return 0
 }
 
 // intuneReasons says, in an enrolment's message, what Intune said about the device ID the

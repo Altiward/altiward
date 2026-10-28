@@ -715,7 +715,8 @@ describe("Settings MDM", () => {
     expect(banner).toHaveTextContent(`Early alerts held back ${dateTime(at)}: 12 Macs had stopped checking in with ` +
       "Altiward while Intune still heard from them, too many to be agents removed one by one.");
     expect(banner).toHaveTextContent("Altiward is probably what they can’t reach: check the agent hostname, its certificate and any proxy.");
-    expect(banner).toHaveTextContent("Each Mac is still reported once it has been quiet for the alert limit.");
+    expect(banner).toHaveTextContent(
+      "Those Macs aren’t raised early, even once fewer Macs trip: each is reported when it has been quiet for the alert limit.");
   });
 
   it("doesn't warn about alerts held back more than a day ago", async () => {

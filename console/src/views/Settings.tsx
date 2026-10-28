@@ -567,8 +567,8 @@ function MdmSettings() {
           <Banner>
             Early alerts held back {dateTime(s.silence_held_at!)}: {s.silence_held} Macs had stopped checking in with Altiward
             while Intune still heard from them, too many to be agents removed one by one. Altiward is probably what they
-            can’t reach: check the agent hostname, its certificate and any proxy. Each Mac is still reported once it has
-            been quiet for the alert limit.
+            can’t reach: check the agent hostname, its certificate and any proxy. Those Macs aren’t raised early, even
+            once fewer Macs trip: each is reported when it has been quiet for the alert limit.
           </Banner>
         )}
         {s?.configured && (

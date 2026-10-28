@@ -116,7 +116,8 @@ ownership checks over concurrent ingestion writes within one tenant.
 | | `basis` | Why it was raised (`silent` only): `no_contact` (the Mac hasn't checked in for the tenant's limit) or `mdm_check_in` (with Intune connected, Intune heard from the Mac at least 2 hours after its last check-in with Altiward, so the Mac is on and online: the agent may have been removed or stopped). Left out by servers before 1.2.0, which raised only `no_contact` |
 | | `last_seen_at` | The Mac's last check-in, by the server's clock (when it received the event, not the event's `timestamp`): before the silence for `silent`, the one that ended it for `resumed` |
 | | `mdm_last_check_in` | With Intune connected, Intune's last check-in from the Mac, from the server's copy of Intune's Macs, and no later than the event's `timestamp`; left out when Intune doesn't list the Mac or hasn't heard from it (`silent` only, either basis). With `no_contact`, a check-in no later than `last_seen_at` says Intune hasn't heard from the Mac either, such as a closed laptop |
-| | `admin_members` | Everyone in the Mac's admin group at its newest health reading (macOS short names), so the alert says who was admin when it went quiet; empty when nobody was (`silent` only) |
+| | `admin_members` | The Mac's admin group at its newest health reading (macOS short names), so the alert says who was admin when it went quiet: sorted, without duplicates, empty names or names over 255 bytes, and at most 50; empty when nobody was (`silent` only) |
+| | `admin_members_truncated` | How many names the cut to 50 left out; absent when none (`silent` only) |
 | | `pending_device_id` | With Intune connected, the device ID of a key enrolled for the Mac since its last check-in that has waited for approval for more than a day; left out when there is none (`silent` only) |
 | | `silent_after_seconds` | The tenant's limit when it was raised (`silent` only) |
 | | `silent_since`, `alert_event_id` | The `last_seen_at` and event ID of the `silent` event this ends (`resumed` only) |
@@ -180,16 +181,20 @@ retired, so it does.
 
 With Intune connected, the `mdm_check_in` basis applies only to the Intune tenant's Macs
 whose agent has ever reported version 1.2.0 or later (the first that checks in at least
-hourly), or a version the server can't read, matched to Intune by serial number. It waits 2 hours and 10 minutes after the server
-starts, so that Intune's check-ins from during an outage don't trip every Mac. A Mac with a
-key enrolled since its last check-in and waiting for approval isn't raised on it for a day
-after that key, since a pending key can't check in. If more than the larger of 5 and a fifth
-of the Macs Intune lists meet the rule at once, counting those already raised on it and
-leaving out Macs Altiward last heard from more than a day ago, none is raised on it: Altiward
-is then probably what the Macs can't reach. The server logs a warning at most hourly, and
-`GET /v1/mdm` shows when this last happened (`silence_held_at`) and for how many Macs
-(`silence_held`). A held Mac is raised once the hold lifts, or when it reaches the tenant's
-limit.
+hourly), or a version the server can't read, matched to Intune by serial number as the Mac
+reports it (a serial with spaces around it or in lower case never matches). It applies
+only while the Mac has been quiet for less than a day; a longer silence waits for the
+tenant's limit. It waits 2 hours and 10 minutes after the server starts, so that Intune's
+check-ins from during an outage don't trip every Mac. A Mac with a key enrolled since its
+last check-in and waiting for approval isn't raised on it, since a pending key can't check
+in: the wait lasts a day from the oldest such key, longer than the basis applies. It is
+reported at the tenant's limit, naming that key once it has waited a day. If more than the larger of 5 and a fifth of the
+Macs Intune lists meet the rule at once, counting those already raised on it, none is
+raised on it: Altiward is then probably what the Macs can't reach. The server logs a
+warning, and `GET /v1/mdm` shows when this last happened (`silence_held_at`) and for how
+many Macs (`silence_held`). A Mac Altiward last heard from before that time is never raised
+on `mdm_check_in`, even once fewer Macs meet the rule: it is reported when it reaches the
+tenant's limit. Macs that check in after it are raised early as before.
 
 `agent.enrollment` is raised by the backend when a Mac enrols a key, not by the agent.
 Its `timestamp` is when the backend raised it, and `device` is what the Mac said when it

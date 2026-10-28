@@ -952,17 +952,18 @@ what the errors mean.
   raises its "not checking in" alert at once, at High rather than Medium, instead of
   waiting for the alert limit. A closed laptop stays quiet, as Intune doesn't hear from it
   either. The alert, on either basis, names who was in the Mac's admin group at its last
-  check-in and, with Intune connected, when Intune last heard from it. Each silence is
-  raised once. This applies to Macs whose agent has reported version 1.2.0 or later, which
-  checks in at least hourly, and waits 2 hours and 10 minutes after the server starts. A
-  Mac with a new key waiting for approval in **Enrollments** isn't raised early for a day
-  after that key. While many Macs meet this rule (more than the larger of 5 and a fifth of
-  the Macs in Intune, counting those already raised and leaving out Macs Altiward hasn't
-  heard from for a day), none is raised early: Altiward itself is then probably
-  unreachable (the agent hostname, its certificate or a proxy), not every agent removed.
-  **Settings › MDM** shows a banner for a day, and the server logs a warning at most
-  hourly. The alert limit is the backstop when Intune can't reach the Mac either, such as
-  a Mac cut off from the network, or one where Intune is blocked too.
+  check-in (up to 50 people) and, with Intune connected, when Intune last heard from it.
+  Each silence is raised once. This applies to Macs whose agent has reported version 1.2.0
+  or later, which checks in at least hourly, during the first day of a silence, from 2
+  hours and 10 minutes after the server starts. A Mac with a new key waiting for approval
+  in **Enrollments** isn't raised early. When many Macs meet this rule at once (more than
+  the larger of 5 and a fifth of the Macs in Intune, counting those already raised), none
+  is raised early: Altiward itself is then probably unreachable (the agent hostname, its
+  certificate or a proxy), not every agent removed. Those Macs are reported when they
+  reach the alert limit, even if fewer Macs trip later. **Settings › MDM** shows a banner
+  for a day, and the server logs a warning. The alert limit is the backstop when Intune
+  can't reach the Mac either, such as a Mac cut off from the network, or one where Intune
+  is blocked too.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/install/settings-mdm-dark.png">
@@ -1578,7 +1579,7 @@ Logs aren't included. If a maintainer asks for them:
 | A Mac shows **Not checking in** while it's on and online | Something between the Mac and the server answers or drops its key rotation request, so it holds its reports. `altiward-agent status` shows `key rotation:` and the last answer ([Key rotation](#key-rotation)) |
 | A Mac shows **Not checking in**, and its details say Intune still hears from it | The agent has stopped reporting while the Mac is on and online: it may have been removed or stopped, or it can't reach the agent hostname. Run `altiward-agent status` on the Mac. |
 | A Mac shows **Not checking in** | It has been off, offline or unable to reach the agent hostname for longer than the limit. Its events wait on the Mac and arrive when it reconnects. If laptops show this when they're away from the office, the agent hostname isn't reachable from the internet ([Two hostnames](#what-youre-installing)). |
-| **Settings › MDM** says early alerts were held back | Many Macs stopped checking in with Altiward while Intune still heard from them, so Altiward is probably what they can't reach: check the agent hostname from outside your network, its certificate and any proxy. Each Mac is still reported, once fewer Macs trip or when it reaches the alert limit. |
+| **Settings › MDM** says early alerts were held back | Many Macs stopped checking in with Altiward while Intune still heard from them, so Altiward is probably what they can't reach: check the agent hostname from outside your network, its certificate and any proxy. Those Macs aren't raised early: each is reported when it reaches the alert limit. |
 | **Needs attention** on a Mac | An integrity check failed, for example the agent's files changed, or `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`, `OutOfBandEnforcement`, `OutOfBandGraceMinutes`, `UserPrincipalNames`, `PlatformSSOIdentity` or `HookCodeRequirement` was set outside MDM. The Mac's details say which. |
 
 For anything else, run the [diagnostics report](#diagnostics-for-a-bug-report) and check its

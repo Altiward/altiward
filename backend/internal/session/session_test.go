@@ -513,3 +513,25 @@ func TestDeviceKeepsTheHighestAgentVersion(t *testing.T) {
 		}
 	}
 }
+
+// Versions that read the same are ordered by their text, and an over-long one is ignored,
+// so the highest doesn't depend on the order events arrive in.
+func TestDeviceHighestAgentVersionIgnoresLongAndTiedVersions(t *testing.T) {
+	a := testfixture.Event(t, "agent-health")
+	a.Device.AgentVersion = "1.2.0+a"
+	b := testfixture.Event(t, "agent-health")
+	b.EventID = "0b5e0f3a-1c2d-4e5f-8a9b-0c1d2e3f4a5b"
+	b.Device.AgentVersion = "1.2.0+b"
+	long := testfixture.Event(t, "agent-health")
+	long.EventID = "1c6f1a4b-2d3e-4f5a-9b0c-1d2e3f4a5b6c"
+	long.Device.AgentVersion = "9.0.0+" + strings.Repeat("x", 59) // 65 bytes
+	for _, order := range [][]event.Event{{a, b, long}, {long, b, a}} {
+		d := session.NewDevice("t1", a.Device.Serial)
+		for _, e := range order {
+			d.Apply(e)
+		}
+		if d.HighestAgentVersion != "1.2.0+b" {
+			t.Fatalf("highest = %s", d.HighestAgentVersion)
+		}
+	}
+}
