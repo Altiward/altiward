@@ -186,11 +186,12 @@ Create these in your MDM and scope them to a pilot group first.
      > manages if it isn't in `PermanentAdmins`. Read [Enforcement](#enforcement) before
      > turning it on.
 
-   The example explains every other key. `HeartbeatInterval` is 5 minutes by default, and
-   at most 3600 seconds: a larger value counts as an hour. Two of them let the agent act, not only report:
-   `ExpiryEnforcement`, for rights that outlive the expiry Privileges set, and
-   `OutOfBandEnforcement`, for admin rights nobody granted. Both default to `alert`, which
-   only reports. Keep them there for the pilot ([Enforcement](#enforcement)).
+   The example explains every other key. `HeartbeatInterval` is 5 minutes by default and at
+   most 3600 seconds (a larger value counts as an hour), so a running agent checks in at
+   least hourly. Two keys let the agent act, not only report: `ExpiryEnforcement`, for
+   rights that outlive the expiry Privileges set, and `OutOfBandEnforcement`, for admin
+   rights nobody granted. Both default to `alert`, which only reports. Keep them there for
+   the pilot ([Enforcement](#enforcement)).
 
    Deliver the profile through MDM rather than `defaults write`: Altiward reports
    `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`,
@@ -890,23 +891,25 @@ what the errors mean.
 
 ### What it adds to the console
 
-Once the first sync has finished:
-
-- **Enrollments** checks each key that enrols, as described in
-  [Settings worth reviewing](#6-settings-worth-reviewing): the **Intune check** in a key's
-  details, **Not in Intune** on a Mac Intune doesn't list, and the **Require an Intune match**
-  setting. It asks Intune for the device ID the Mac's profile sent
-  ([step 2](#2-deploy-the-agent)) once, when the Mac enrols, waits at most 10 seconds and makes at most 30
-  lookups a minute. A Mac enrolling again with a key it already has makes none.
-- **Fleet** shows, in a Mac's details, its **Primary user (Intune)** and **Last Intune
-  check-in**, or **Not in Intune**. A panel above the table, **In Intune, never reported to
-  Altiward**, lists the Macs Intune manages that no agent has ever checked in from: the agent
-  may not have reached them yet. It is hidden when there are none, and when Intune is off.
+- **Enrollments** checks each key that enrols from the moment Intune is connected, as
+  described in [Settings worth reviewing](#6-settings-worth-reviewing): the **Intune check**
+  in a key's details, and the **Require an Intune match** setting. It asks Intune for the
+  device ID the Mac's profile sent ([step 2](#2-deploy-the-agent)) once, when the Mac enrols,
+  waits at most 10 seconds and makes at most 30 lookups a minute. A Mac enrolling again with
+  a key it already has makes none. Three things wait for the first sync, which copies
+  Intune's Macs: the **Not in Intune** tag on a Mac Intune doesn't list, telling a profile
+  that sends the Mac's Entra ID device ID apart from an ID Intune doesn't know, and
+  `mdm_serial_known` in the `agent.enrollment` event.
+- Once the first sync has finished, **Fleet** shows, in a Mac's details, its **Primary user
+  (Intune)** and **Last Intune check-in**, or **Not in Intune**. A panel above the table,
+  **In Intune, never reported to Altiward**, lists the Macs Intune manages that no agent has
+  ever checked in from: the agent may not have reached them yet. It is hidden when there are
+  none, and when Intune is off.
 - **Settings › MDM** shows whether Intune is connected, how many Macs it holds, when it last
   synced and the last error, how many of the active Macs checked since Intune was connected
   matched it, and how many enrolled before and haven't been checked yet. It links back here
-  while Intune isn't connected. Everyone who can sign in sees these, as
-  they see the Intune records themselves.
+  while Intune isn't connected. Everyone who can sign in sees these, as they see the Intune
+  records themselves.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/install/settings-mdm-dark.png">

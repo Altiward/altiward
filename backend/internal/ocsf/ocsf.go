@@ -368,12 +368,6 @@ func silent(e store.StoredEvent, tenantID string) Record {
 	return r
 }
 
-// enrollment maps an agent.enrollment event, raised by the server when a Mac registers a
-// key. It is an API Activity record like the console's approval and revoke of an
-// enrolment, so a SIEM sees the whole lifecycle in one class: the resource is the
-// enrolment (the device credential) and the actor is the enrolment token's fingerprint,
-// in the same field as a console token's. A rotation has no token: the Mac proved it held
-// the old key, so the actor is the Mac, by its serial.
 // intuneReasons says, in an enrolment's message, what Intune said about the device ID the
 // Mac sent, for each mdm_check but a mismatch.
 var intuneReasons = map[string]string{
@@ -384,6 +378,12 @@ var intuneReasons = map[string]string{
 	"unavailable": "Intune couldn't be asked",
 }
 
+// enrollment maps an agent.enrollment event, raised by the server when a Mac registers a
+// key. It is an API Activity record like the console's approval and revoke of an
+// enrolment, so a SIEM sees the whole lifecycle in one class: the resource is the
+// enrolment (the device credential) and the actor is the enrolment token's fingerprint,
+// in the same field as a console token's. A rotation has no token: the Mac proved it held
+// the old key, so the actor is the Mac, by its serial.
 func enrollment(e store.StoredEvent, tenantID string) Record {
 	state, _ := e.Detail["state"].(string)
 	severity, alert := SeverityInformational, false
@@ -391,7 +391,13 @@ func enrollment(e store.StoredEvent, tenantID string) Record {
 	switch state {
 	case event.EnrollmentStatePending:
 		severity, alert = SeverityMedium, true
-		msg = fmt.Sprintf("%s enrolled again with a new key, waiting for approval", e.Device.Serial)
+		// A Mac's first key, or its first since its keys were revoked, has no previous key:
+		// approval for new Macs, or an Intune check, held it.
+		if detailString(e.Detail, "previous_device_id") == "" {
+			msg = fmt.Sprintf("%s enrolled as a new Mac, waiting for approval", e.Device.Serial)
+		} else {
+			msg = fmt.Sprintf("%s enrolled again with a new key, waiting for approval", e.Device.Serial)
+		}
 	case event.EnrollmentStateReplaced:
 		severity, alert = SeverityHigh, true
 		msg = fmt.Sprintf("%s enrolled again; the new key replaced the previous one without approval", e.Device.Serial)

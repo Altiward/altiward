@@ -715,6 +715,13 @@ func TestEnrollmentMapsToAPIActivity(t *testing.T) {
 	replaced := stored(t, "agent-enrollment-pending")
 	replaced.Detail = maps.Clone(replaced.Detail)
 	replaced.Detail["state"] = event.EnrollmentStateReplaced
+	// A Mac's first key held for approval (new Macs need approval, or an Intune check held
+	// it) has no previous key.
+	firstHeld := stored(t, "agent-enrollment-pending")
+	firstHeld.Detail = maps.Clone(firstHeld.Detail)
+	for _, k := range []string{"previous_device_id", "previous_key_storage", "hardware_uuid_matches"} {
+		delete(firstHeld.Detail, k)
+	}
 	tests := []struct {
 		name     string
 		event    store.StoredEvent
@@ -725,6 +732,7 @@ func TestEnrollmentMapsToAPIActivity(t *testing.T) {
 		{"enrolled", stored(t, "agent-enrollment-enrolled"), "Informational", false, "C02XK0AAJGH5 enrolled a new key"},
 		{"pending", stored(t, "agent-enrollment-pending"), "Medium", true,
 			"C02XK0AAJGH5 enrolled again with a new key, waiting for approval"},
+		{"first key pending", firstHeld, "Medium", true, "C02XK0AAJGH5 enrolled as a new Mac, waiting for approval"},
 		{"replaced", replaced, "High", true,
 			"C02XK0AAJGH5 enrolled again; the new key replaced the previous one without approval"},
 	}
@@ -738,7 +746,7 @@ func TestEnrollmentMapsToAPIActivity(t *testing.T) {
 				"actor.user.name":                "token:1a2b3c4d",
 				"api.operation":                  "enroll",
 				"unmapped.altiward.event_type":   "agent.enrollment",
-				"unmapped.altiward.detail.state": tt.name,
+				"unmapped.altiward.detail.state": tt.event.Detail["state"],
 			}
 			for path, w := range want {
 				if got := get(r, path); got != w {
