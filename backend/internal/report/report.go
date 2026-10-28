@@ -37,7 +37,7 @@ type Input struct {
 	Days int
 	// Sessions holds every session that is open or started in the period (Store.ReportSessions).
 	Sessions []session.Session
-	Devices  []session.Device
+	Devices  []store.Device
 	Sinks    []store.ExportBacklog // each configured SIEM's export status
 }
 

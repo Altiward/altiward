@@ -192,13 +192,13 @@ func suite(t *testing.T, newStore func(t *testing.T, sink string) Store) {
 		if _, err := s.Ingest(ctx, tenant, []event.Event{health}, now); err != nil {
 			t.Fatal(err)
 		}
-		mine := func(seenBefore time.Time) []session.Device {
+		mine := func(seenBefore time.Time) []Device {
 			t.Helper()
 			all, err := s.SilenceCandidates(ctx, seenBefore)
 			if err != nil {
 				t.Fatal(err)
 			}
-			out := []session.Device{}
+			out := []Device{}
 			for _, d := range all {
 				if d.TenantID == tenant {
 					out = append(out, d)

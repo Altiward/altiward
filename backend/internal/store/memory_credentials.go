@@ -40,6 +40,7 @@ func (m *Memory) Enroll(_ context.Context, c DeviceCredential, limits EnrollLimi
 		}
 	}
 	m.creds[c.DeviceID] = c
+	delete(m.retired, key{c.TenantID, c.Serial})
 	res.Credential = c
 	return res, nil
 }
@@ -69,6 +70,7 @@ func (m *Memory) ApproveCredential(_ context.Context, tenantID, deviceID string,
 	}
 	c.Status, c.ActivatedAt = CredentialActive, ptr(now)
 	m.creds[deviceID] = c
+	delete(m.retired, key{tenantID, c.Serial})
 	m.record(a)
 	return c, nil
 }
@@ -85,7 +87,15 @@ func (m *Memory) RevokeCredential(_ context.Context, tenantID, deviceID string, 
 		return DeviceCredential{}, ErrRotated
 	}
 	if c.Status != CredentialRevoked {
+		wasActive := c.Status == CredentialActive
 		m.revoke(c, now)
+		if wasActive && !m.hasLiveKey(tenantID, c.Serial) {
+			// Like the Postgres store, which has a row to update only for a Mac that has reported.
+			if k := (key{tenantID, c.Serial}); m.hasDevice(k) {
+				m.retired[k] = now
+			}
+			a = withRetired(a)
+		}
 	}
 	m.record(a)
 	return m.creds[deviceID], nil
@@ -211,6 +221,21 @@ func (m *Memory) lineageActive(id string) (DeviceCredential, bool) {
 	return DeviceCredential{}, false
 }
 
+// hasLiveKey reports whether the Mac has an active or pending key. It expects m.mu held.
+func (m *Memory) hasLiveKey(tenantID, serial string) bool {
+	for _, c := range m.creds {
+		if c.TenantID == tenantID && c.Serial == serial && c.Status != CredentialRevoked {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Memory) hasDevice(k key) bool {
+	_, ok := m.devices[k]
+	return ok
+}
+
 func (m *Memory) revoke(c DeviceCredential, now time.Time) {
 	c.Status, c.RevokedAt = CredentialRevoked, ptr(now)
 	m.creds[c.DeviceID] = c
@@ -267,6 +292,7 @@ func (m *Memory) Rotate(_ context.Context, r RotateRequest) (RotateResult, error
 		CreatedAt: r.Now, ActivatedAt: ptr(r.Now), RotatedFrom: cur.DeviceID, RotationSignedAt: ptr(r.SignedAt),
 	}
 	m.creds[next.DeviceID] = next
+	delete(m.retired, key{next.TenantID, next.Serial})
 	res.Credential = next
 	return res, nil
 }

@@ -121,7 +121,7 @@ func (w *Silence) Sweep(ctx context.Context) (raised int, err error) {
 			}
 			tenants[d.TenantID] = settings
 		}
-		e, ok := Check(d, now, settings.SilentAfter())
+		e, ok := Check(d.Device, now, settings.SilentAfter())
 		if !ok {
 			continue
 		}
@@ -129,7 +129,7 @@ func (w *Silence) Sweep(ctx context.Context) (raised int, err error) {
 			if settings.SilentAlertsOff {
 				continue // only a new silence; a resume still closes an earlier alert
 			}
-			retired, err := w.retired(ctx, d)
+			retired, err := w.retired(ctx, d.Device)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("device %s/%s credentials: %w", d.TenantID, d.Serial, err))
 				continue

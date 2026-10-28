@@ -68,10 +68,10 @@ type Store interface {
 	ReportSessions(ctx context.Context, tenantID string, since time.Time) ([]session.Session, error)
 	// GetSession returns the session and its events oldest first.
 	GetSession(ctx context.Context, tenantID, sessionID string) (session.Session, []StoredEvent, error)
-	ListDevices(ctx context.Context, tenantID string) ([]session.Device, error)
+	ListDevices(ctx context.Context, tenantID string) ([]Device, error)
 	// SilenceCandidates returns devices across all tenants that were last seen at or
 	// before seenBefore, or that have an agent.silent alert open.
-	SilenceCandidates(ctx context.Context, seenBefore time.Time) ([]session.Device, error)
+	SilenceCandidates(ctx context.Context, seenBefore time.Time) ([]Device, error)
 
 	// ClaimExports leases up to limit due items for sink so concurrent workers don't double-send.
 	ClaimExports(ctx context.Context, sink string, limit int, lease time.Duration, now time.Time) ([]ExportItem, error)

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"maps"
 	"time"
 )
 
@@ -37,6 +38,18 @@ type AuditEntry struct {
 	// Seq numbers entries in the order the store recorded them. It orders entries with the
 	// same At and, with At, is the cursor for the next page.
 	Seq int64 `json:"seq"`
+}
+
+// withRetired returns a with "retired": true in its detail, for a revoke that retired the
+// Mac. The caller's map is left as it was.
+func withRetired(a AuditEntry) AuditEntry {
+	detail := maps.Clone(a.Detail)
+	if detail == nil {
+		detail = map[string]any{}
+	}
+	detail["retired"] = true
+	a.Detail = detail
+	return a
 }
 
 // AuditFilter pages through the log, newest first. For the next page, pass the last

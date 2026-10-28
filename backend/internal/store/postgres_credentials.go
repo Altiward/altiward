@@ -145,6 +145,13 @@ func enforceEnrollLimits(ctx context.Context, tx pgx.Tx, c DeviceCredential, enr
 	return nil
 }
 
+// clearRetired takes the Mac back into Fleet: any new key for it, pending or active, does.
+func clearRetired(ctx context.Context, tx pgx.Tx, tenantID, serial string) error {
+	_, err := tx.Exec(ctx, `UPDATE devices SET retired_at = NULL WHERE tenant_id = $1 AND serial = $2 AND retired_at IS NOT NULL`,
+		tenantID, serial)
+	return err
+}
+
 func (p *Postgres) Enroll(ctx context.Context, c DeviceCredential, limits EnrollLimits) (EnrollResult, error) {
 	var res EnrollResult
 	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
@@ -212,7 +219,7 @@ func (p *Postgres) Enroll(ctx context.Context, c DeviceCredential, limits Enroll
 			return fmt.Errorf("insert credential: %w", err)
 		}
 		res.Credential = c
-		return nil
+		return clearRetired(ctx, tx, c.TenantID, c.Serial)
 	})
 	return res, err
 }
@@ -262,6 +269,9 @@ func (p *Postgres) ApproveCredential(ctx context.Context, tenantID, deviceID str
 			}
 			return err
 		}
+		if err := clearRetired(ctx, tx, tenantID, c.Serial); err != nil {
+			return err
+		}
 		return p.insertAudit(ctx, tx, a)
 	})
 	return out, err
@@ -291,12 +301,29 @@ func (p *Postgres) RevokeCredential(ctx context.Context, tenantID, deviceID stri
 		case err != nil && !errors.Is(err, ErrNotFound):
 			return err
 		}
+		// Only this key's own change from active to revoked can retire the Mac; a pending
+		// key rejected, or a key already revoked, never does.
+		wasActive := err == nil
 		if out, err = scanCredential(tx.QueryRow(ctx, `
 			UPDATE device_credentials
 			SET status = 'revoked', revoked_at = COALESCE(revoked_at, $3)
 			WHERE device_id = $1 AND tenant_id = $2
 			RETURNING `+credentialColumns, deviceID, tenantID, now)); err != nil {
 			return err
+		}
+		if wasActive {
+			var left bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM device_credentials WHERE tenant_id = $1 AND serial = $2 AND status <> 'revoked')`,
+				tenantID, c.Serial).Scan(&left); err != nil {
+				return err
+			}
+			if !left {
+				if _, err := tx.Exec(ctx, `UPDATE devices SET retired_at = $3 WHERE tenant_id = $1 AND serial = $2`,
+					tenantID, c.Serial, now); err != nil {
+					return err
+				}
+				a = withRetired(a)
+			}
 		}
 		return p.insertAudit(ctx, tx, a)
 	})
@@ -449,7 +476,7 @@ func (p *Postgres) Rotate(ctx context.Context, r RotateRequest) (RotateResult, e
 			return fmt.Errorf("insert credential: %w", err)
 		}
 		res.Credential = next
-		return nil
+		return clearRetired(ctx, tx, next.TenantID, next.Serial)
 	})
 	if err != nil {
 		return res, err

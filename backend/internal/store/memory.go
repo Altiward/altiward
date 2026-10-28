@@ -22,6 +22,8 @@ type Memory struct {
 	order    []key // insertion order, for timelines
 	sessions map[key]session.Session
 	devices  map[key]session.Device
+	// retired is when an admin retired each device in devices (see Device.RetiredAt).
+	retired  map[key]time.Time
 	exports  []*memExport
 	nextID   int64
 	creds    map[string]DeviceCredential // by device ID
@@ -60,6 +62,7 @@ func NewMemory(exportSinks []string) *Memory {
 		events:    map[key]StoredEvent{},
 		sessions:  map[key]session.Session{},
 		devices:   map[key]session.Device{},
+		retired:   map[key]time.Time{},
 		creds:     map[string]DeviceCredential{},
 		settings:  map[string]TenantSettings{},
 		delivered: map[[2]string]time.Time{},
@@ -240,16 +243,25 @@ func sortEvents(evs []StoredEvent) {
 	sort.SliceStable(evs, func(i, j int) bool { return evs[i].Timestamp.Before(evs[j].Timestamp) })
 }
 
-func (m *Memory) ListDevices(_ context.Context, tenantID string) ([]session.Device, error) {
+// device is the store's view of a device row. It expects m.mu held.
+func (m *Memory) device(k key, d session.Device) Device {
+	out := Device{Device: d}
+	if at, ok := m.retired[k]; ok {
+		out.RetiredAt = ptr(at)
+	}
+	return out
+}
+
+func (m *Memory) ListDevices(_ context.Context, tenantID string) ([]Device, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := []session.Device{}
+	out := []Device{}
 	for k, d := range m.devices {
 		if k.tenant == tenantID {
-			out = append(out, d)
+			out = append(out, m.device(k, d))
 		}
 	}
-	slices.SortFunc(out, func(a, b session.Device) int {
+	slices.SortFunc(out, func(a, b Device) int {
 		if a.Serial < b.Serial {
 			return -1
 		}
@@ -261,16 +273,16 @@ func (m *Memory) ListDevices(_ context.Context, tenantID string) ([]session.Devi
 	return out, nil
 }
 
-func (m *Memory) SilenceCandidates(_ context.Context, seenBefore time.Time) ([]session.Device, error) {
+func (m *Memory) SilenceCandidates(_ context.Context, seenBefore time.Time) ([]Device, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := []session.Device{}
-	for _, d := range m.devices {
+	out := []Device{}
+	for k, d := range m.devices {
 		if !d.CheckedInAt().After(seenBefore) || d.Silent() {
-			out = append(out, d)
+			out = append(out, m.device(k, d))
 		}
 	}
-	slices.SortFunc(out, func(a, b session.Device) int {
+	slices.SortFunc(out, func(a, b Device) int {
 		return strings.Compare(a.TenantID+"/"+a.Serial, b.TenantID+"/"+b.Serial)
 	})
 	return out, nil

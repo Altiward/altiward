@@ -327,22 +327,40 @@ func (p *Postgres) GetSession(ctx context.Context, tenantID, sessionID string) (
 	return s, evs, rows.Err()
 }
 
-func (p *Postgres) ListDevices(ctx context.Context, tenantID string) ([]session.Device, error) {
-	rows, err := p.pool.Query(ctx, `SELECT state FROM devices WHERE tenant_id = $1 ORDER BY serial`, tenantID)
+func (p *Postgres) ListDevices(ctx context.Context, tenantID string) ([]Device, error) {
+	rows, err := p.pool.Query(ctx, `SELECT state, retired_at FROM devices WHERE tenant_id = $1 ORDER BY serial`, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	return collectJSON[session.Device](rows)
+	return collectDevices(rows)
 }
 
-func (p *Postgres) SilenceCandidates(ctx context.Context, seenBefore time.Time) ([]session.Device, error) {
+func (p *Postgres) SilenceCandidates(ctx context.Context, seenBefore time.Time) ([]Device, error) {
 	rows, err := p.pool.Query(ctx, `
-		SELECT state FROM devices WHERE last_seen_at <= $1 OR state->'silence'->>'state' = 'silent'
+		SELECT state, retired_at FROM devices WHERE last_seen_at <= $1 OR state->'silence'->>'state' = 'silent'
 		ORDER BY tenant_id, serial`, seenBefore)
 	if err != nil {
 		return nil, err
 	}
-	return collectJSON[session.Device](rows)
+	return collectDevices(rows)
+}
+
+// collectDevices reads rows of (state, retired_at).
+func collectDevices(rows pgx.Rows) ([]Device, error) {
+	defer rows.Close()
+	out := []Device{}
+	for rows.Next() {
+		var raw []byte
+		var d Device
+		if err := rows.Scan(&raw, &d.RetiredAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(raw, &d.Device); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }
 
 func (p *Postgres) ClaimExports(ctx context.Context, sink string, limit int, lease time.Duration, now time.Time) ([]ExportItem, error) {

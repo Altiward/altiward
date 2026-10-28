@@ -14,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Altiward/altiward/backend/internal/event"
-	"github.com/Altiward/altiward/backend/internal/session"
 	"github.com/Altiward/altiward/backend/internal/testfixture"
 )
 
@@ -198,13 +197,13 @@ const (
 	retentionMigration = "migrations/0008_retention.sql"
 )
 
-func deviceBySerial(devices []session.Device, serial string) session.Device {
+func deviceBySerial(devices []Device, serial string) Device {
 	for _, d := range devices {
 		if d.Serial == serial {
 			return d
 		}
 	}
-	return session.Device{}
+	return Device{}
 }
 
 // inSchema returns url pointing at a fresh schema, dropped when the test ends.

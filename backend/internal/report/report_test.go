@@ -65,7 +65,7 @@ func TestNowCountsOpenSessionsBySourceAndAlerts(t *testing.T) {
 	resumed.Silence = &session.Silence{State: event.SilentStateResumed, At: now}
 	resumed.Integrity = map[string]bool{"code_signature": true}
 
-	o := build(t, report.Input{Sessions: sessions, Devices: []session.Device{failing, silent, resumed}})
+	o := build(t, report.Input{Sessions: sessions, Devices: []store.Device{{Device: failing}, {Device: silent}, {Device: resumed}}})
 	want := report.Now{Admins: 4, Privileges: 3, WithoutGrant: 1, PastExpiry: 2, MacsFailingChecks: 1, MacsSilent: 1}
 	if o.Now != want {
 		t.Fatalf("now = %+v, want %+v", o.Now, want)
@@ -168,12 +168,12 @@ func TestTopUsersAndMacs(t *testing.T) {
 }
 
 func TestHealthCountsVersionsAndSinks(t *testing.T) {
-	mac := func(serial, version string) session.Device {
+	mac := func(serial, version string) store.Device {
 		d := session.NewDevice("acme", serial)
 		d.AgentVersion = version
-		return d
+		return store.Device{Device: d}
 	}
-	devices := []session.Device{mac("A", "1.9.2"), mac("B", "1.9.2"), mac("C", "1.10.0"), mac("D", "0.0.4"), mac("E", "")}
+	devices := []store.Device{mac("A", "1.9.2"), mac("B", "1.9.2"), mac("C", "1.10.0"), mac("D", "0.0.4"), mac("E", "")}
 	delivered := now.Add(-time.Minute)
 	sinks := []store.ExportBacklog{
 		{Sink: "sentinel", LastDeliveredAt: &delivered},
