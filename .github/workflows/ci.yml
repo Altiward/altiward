@@ -122,7 +122,7 @@ jobs:
           tags: altiward-api:ci
       - name: The image starts and reports healthy
         run: |
-          docker run -d --name api -e ALTIWARD_AGENT_TOKENS=ci=agent-token-0000000001 altiward-api:ci
+          docker run -d --name api -e ALTIWARD_AGENT_TOKENS=ci=agent-token-0000000001 -e ALTIWARD_CONSOLE_TOKENS=ci=console-token-0000000001 altiward-api:ci
           # The first health check runs after the 30-second interval.
           for _ in $(seq 1 45); do
             if [ "$(docker inspect -f '{{.State.Health.Status}}' api)" = healthy ]; then
