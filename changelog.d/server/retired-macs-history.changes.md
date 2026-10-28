@@ -3,9 +3,10 @@
   a "not checking in" alert, and shows under **Show › Retired** with when it was retired
   and when its history is removed. The revoke asks you to confirm, and warns if someone
   still has admin rights on the Mac or it is failing an integrity check. A person with an
-  open session on a retired Mac stays in **Admins now**, tagged **Mac retired**, and its
-  failing check stays in view. A new key for the Mac brings it back. Macs you had already
-  revoked this way are retired when the server first starts.
+  open session on a retired Mac stays in **Admins now**, tagged **Mac retired**. A retired
+  Mac's failing check no longer counts in the Overview, but shows on the Mac under
+  **Show › Retired** in **Fleet**. A new key for the Mac brings it back. Macs you had
+  already revoked this way are retired when the server first starts.
 - **Keep history for**, in **Settings › General** (`history_days` in the settings API),
   sets how long Altiward keeps events, ended elevation sessions, commands and Macs that
   stopped checking in. The default is one year when a SIEM is connected and for good when
@@ -14,9 +15,12 @@
   period and its sessions, events and commands. It revokes the Mac's keys first, so a Mac
   that comes back enrols again. It never removes an event a SIEM is waiting for, anything
   from the last 90 days (Postgres refuses to delete it), or, under the default period,
-  anything received before the SIEM was connected. `GET /v1/retention` reports the period
-  in force and why. Activity records each run as `expire_history` and each Mac removed as
-  `remove_device`, with the actor `altiward:server`.
+  anything received before the SIEM's coverage date. That date is the first start of this
+  version with the SIEM configured, so on a server that already sends to a SIEM it is
+  the upgrade, until you replay earlier history with `replay-exports`.
+  `GET /v1/retention` reports the period in force and why. Activity records each run as
+  `expire_history` and each Mac removed as `remove_device`, with the actor
+  `altiward:server`.
 - The server raises an `agent.admin_group` event of its own, so your SIEM keeps who was in
   each Mac's admin group after the health readings that recorded it expire. It is sent
   when the group changes, and as a snapshot for a Mac's first reading and once a day for

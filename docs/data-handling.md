@@ -216,7 +216,7 @@ Everything is in your Postgres database.
 | Console sign-in sessions: the person's email, name, identity-provider ID and role | 12 hours at most, 1 hour idle; removed on sign-out, or when an admin ends it |
 | Events waiting for each SIEM | Until the SIEM accepts them |
 | When each SIEM last accepted something | Replaced at each delivery |
-| When each SIEM was connected (the first time the server started with it configured), or the date its history was replayed from if earlier | Forever |
+| Each SIEM's coverage date (the first time a server running this version started with it configured), or the date its history was replayed from if earlier | Forever |
 | When the server was set up, whether the admin group has been sent from stored readings, and the secret that makes the IDs of the server's own events unguessable | Forever |
 | With Intune connected, each Mac Intune manages: its Intune device ID, serial number, Entra device ID, primary user's UPN, device name and last check-in. Also when the copy was last refreshed, and its last error | Replaced at every sync, every 15 minutes; a failed sync keeps the last copy. Deleted when Intune is turned off, at the server's next start |
 
@@ -251,11 +251,13 @@ admin retired goes the same way, once its last check-in is older than the period
 It never removes:
 
 - an event a SIEM is still waiting for;
-- under the default period, an event received before the latest SIEM was connected. Connecting
-  a SIEM to an old database therefore removes nothing from before it until you send that
-  history to the SIEM with `replay-exports` ([Connect your SIEM](install.md#4-connect-your-siem)),
-  which moves that date back to the date it replays from. A period you set yourself isn't
-  held back by this, but still never takes an event a SIEM is waiting for;
+- under the default period, an event received before the latest SIEM's coverage date. That
+  date is the first time a server running this version started with the SIEM configured, so
+  on a server that already sent to a SIEM it is the upgrade, not when you really connected
+  it. Nothing received before it is removed until you send that history to the SIEM with
+  `replay-exports` ([Connect your SIEM](install.md#4-connect-your-siem)), which moves the
+  date back to the date it replays from. A period you set yourself isn't held back by
+  this, but still never takes an event a SIEM is waiting for;
 - anything from the last 90 days, whatever the setting. Postgres refuses to delete such
   rows, whatever the server asks;
 - Activity (which has its own period), console sign-in sessions, SIEM delivery state or enrolment keys.

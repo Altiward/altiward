@@ -421,10 +421,12 @@ docker compose exec altiward /usr/local/bin/altiward-api replay-exports sentinel
 ```
 
 Replaying also matters for history. The first time the server starts with a SIEM
-configured, Altiward notes that date. With the default **Keep history for** period
-([Settings worth reviewing](#6-settings-worth-reviewing)), nothing received before the latest
-SIEM's date is removed, so connecting a SIEM to an old server never deletes history the SIEM
-wasn't sent. Replaying from an earlier date moves that date back to it. A period you set
+configured, Altiward notes that date: for a server that already sent to a SIEM before an
+upgrade, the first start of the upgraded server, not when you really connected it. With the
+default **Keep history for** period ([Settings worth reviewing](#6-settings-worth-reviewing)),
+nothing received before the latest SIEM's date is removed, so connecting a SIEM to an old
+server never deletes history the SIEM wasn't sent. Replaying from an earlier date moves that
+date back to it. A period you set
 yourself isn't held back by this. Events from before a replay's date, and any the server has
 already removed, can't be sent.
 
@@ -589,11 +591,11 @@ In the console, under **Settings › General**:
   good** removes nothing. The setting shows the period in force and why. Altiward removes
   what is older once a day. Shortening the period asks you to confirm, and your SIEM keeps
   what it was sent. It never removes an event a SIEM is waiting for, anything from the last
-  90 days, or, under the default, anything received before your SIEM was connected until you
-  replay it to the SIEM ([Connect your SIEM](#4-connect-your-siem)). Removal doesn't start
-  until the server has sent each Mac's admin group to your SIEM from the readings it already
-  holds, which happens once, when the server first starts after an upgrade. What is removed
-  and what stays is in [Data handling](data-handling.md#how-long-history-is-kept).
+  90 days, or, under the default, anything received before your SIEM's coverage date (on a server that already had a SIEM,
+  the upgrade) until you replay it to the SIEM ([Connect your SIEM](#4-connect-your-siem)).
+  Removal doesn't start until the server has sent each Mac's admin group to your SIEM from
+  the readings it already holds, which happens once, when the server first starts after an
+  upgrade. What is removed and what stays is in [Data handling](data-handling.md#how-long-history-is-kept).
 
   An omitted `history_days` in a settings API update keeps the stored value.
 
