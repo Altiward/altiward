@@ -214,7 +214,10 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal
 		switch {
 		case errors.Is(err, store.ErrNotFound):
 			// A key the limits will refuse isn't checked either, or the enrolment token could
-			// spend the lookups that genuine Macs need. Enroll counts again as it stores.
+			// spend on refusals the lookups that genuine Macs need. Enroll still enforces the
+			// limits; requests that race past this check each cost a lookup. A key another
+			// tenant holds is refused here with 429 before Enroll's 409, which it gets once
+			// the window passes.
 			cred.CreatedAt = s.now()
 			if err := s.store.EnrollAllowed(r.Context(), cred, s.enrollLimits); errors.Is(err, store.ErrRateLimited) {
 				s.enrollRateLimited(w, p.TenantID, req.Serial, err)

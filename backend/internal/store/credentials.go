@@ -374,7 +374,8 @@ type Credentials interface {
 	// ErrNewMacsLimited or ErrKeysPerMacLimited, counted as Enroll counts over the windows
 	// ending at c.CreatedAt (it reads TenantID, Serial and CreatedAt). It stores nothing
 	// and takes none of Enroll's locks. It lets the server refuse before it asks Intune, and
-	// is only advisory: Enroll still enforces the limits, so a race only costs a lookup.
+	// is only advisory: Enroll still enforces the limits, and requests that race past this
+	// check each cost a lookup.
 	EnrollAllowed(ctx context.Context, c DeviceCredential, limits EnrollLimits) error
 	// Credential looks a credential up by device ID across tenants, for authentication.
 	Credential(ctx context.Context, deviceID string) (DeviceCredential, error)

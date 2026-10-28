@@ -1097,6 +1097,13 @@ func (f *fakeIntune) fail(err error) {
 // server wires it: asking src, which can look a serial up. opts follow the Intune option.
 func newServerWithIntuneMacs(t *testing.T, opts ...api.Option) (http.Handler, *store.Memory, *fakeIntune) {
 	t.Helper()
+	return newServerWithIntuneStore(t, func(st store.Store) store.Store { return st }, opts...)
+}
+
+// newServerWithIntuneStore is newServerWithIntuneMacs with the server using wrap(st) as its
+// store.
+func newServerWithIntuneStore(t *testing.T, wrap func(store.Store) store.Store, opts ...api.Option) (http.Handler, *store.Memory, *fakeIntune) {
+	t.Helper()
 	st := store.NewMemory([]string{"splunk"})
 	tokens, err := auth.Parse("acme="+agentToken, "acme="+consoleToken+",other="+otherConsole)
 	if err != nil {
@@ -1108,7 +1115,7 @@ func newServerWithIntuneMacs(t *testing.T, opts ...api.Option) (http.Handler, *s
 	src := &fakeIntune{}
 	checker := &mdm.Checker{Store: st, Source: src, TenantID: "acme", Log: log, Now: clock,
 		LookupTimeout: 10 * time.Second, SerialFilter: true}
-	return api.New(st, tokens, log, clock, append([]api.Option{api.WithMDM(checker)}, opts...)...), st, src
+	return api.New(wrap(st), tokens, log, clock, append([]api.Option{api.WithMDM(checker)}, opts...)...), st, src
 }
 
 // syncIntune copies intuneMacs into the store, as a sync does.
@@ -1299,6 +1306,40 @@ func TestEnrollLimitedMakesNoLookup(t *testing.T) {
 	wantRateLimited(t, rec, out)
 	if c, s := src.lookups(); c != calls || s != serialCalls {
 		t.Fatalf("lookups for a refused key = %d, %d; want %d, %d", c, s, calls, serialCalls)
+	}
+}
+
+// A new Mac over the new-Mac limit is refused before Intune is asked, by ID or by serial.
+func TestEnrollNewMacLimitedMakesNoLookup(t *testing.T) {
+	h, _, src := newServerWithIntuneMacs(t, api.WithEnrollLimits(store.EnrollLimits{NewMacsPerHour: 1}))
+	enrollWithID(t, h, fixtureSerial, macIntuneID)
+	calls, serialCalls := src.lookups()
+	rec, out := (&agent{h: h, key: newKey(t), mdmDeviceID: unknownIntuneID}).enroll(t, "C02NOTININTUNE")
+	wantRateLimited(t, rec, out)
+	if c, s := src.lookups(); c != calls || s != serialCalls {
+		t.Fatalf("lookups for a refused new Mac = %d, %d; want %d, %d", c, s, calls, serialCalls)
+	}
+}
+
+// failEnrollAllowed is a store whose limits can't be read.
+type failEnrollAllowed struct{ store.Store }
+
+func (failEnrollAllowed) EnrollAllowed(context.Context, store.DeviceCredential, store.EnrollLimits) error {
+	return errors.New("database unavailable")
+}
+
+// When the limits can't be read, the Mac is asked to retry, and Intune isn't asked.
+func TestEnrollLimitsUnreadableAnswers503(t *testing.T) {
+	h, st, src := newServerWithIntuneStore(t, func(s store.Store) store.Store { return failEnrollAllowed{s} })
+	rec, out := (&agent{h: h, key: newKey(t), mdmDeviceID: macIntuneID}).enroll(t, fixtureSerial)
+	if rec.Code != http.StatusServiceUnavailable || out["error"] != "could not enroll; retry later" {
+		t.Fatalf("enrol with the limits unreadable: %d %s", rec.Code, rec.Body)
+	}
+	if c, s := src.lookups(); c != 0 || s != 0 {
+		t.Fatalf("lookups = %d, %d; want none", c, s)
+	}
+	if creds, err := st.ListCredentials(context.Background(), "acme", store.CredentialFilter{}); err != nil || len(creds) != 0 {
+		t.Fatalf("%d credentials stored, %v", len(creds), err)
 	}
 }
 

@@ -9,5 +9,5 @@
   counts only Macs), `GET /v1/enrollments` shows each key's `mdm_check`, and `GET /v1/mdm`
   counts the keys in use by outcome (`checks`) and those never checked (`not_checked`): a
   Mac is checked only when it enrols a new key. The device ID itself is stored but never
-  shown, logged or sent. Lookups wait 10 seconds at most and are capped at 30 a minute,
-  and the same key enrolling again makes none.
+  shown, logged or sent. Lookups wait 10 seconds at most and are capped at 30 a minute.
+  The same key enrolling again makes none, and nor does a key the enrolment limits refuse.
