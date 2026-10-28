@@ -3,12 +3,15 @@ import Foundation
 public enum AgentStoreError: Error, Equatable, CustomStringConvertible {
     /// The store was written by a newer agent, in a layout this build doesn't know.
     case newerSchema(found: Int, supported: Int)
+    /// A row isn't in the shape this agent writes.
+    case unreadableRow(String)
 
     public var description: String {
         switch self {
         case .newerSchema(let found, let supported):
             "agent store has schema version \(found), newer than this agent's \(supported): "
                 + "a newer Altiward agent wrote it, so reinstall that release or later"
+        case .unreadableRow(let table): "a row in \(table) can't be read"
         }
     }
 }
@@ -549,34 +552,49 @@ public final class AgentStore: @unchecked Sendable {
 
     static let mdmPayloadsReadAtKey = "mdm_payloads_read_at"
 
-    /// Replaces the stored MDM payloads with `set`, which may be empty.
+    /// Stores `set`, which may be empty, as the last clean read. The rows are rewritten only
+    /// when the payloads changed; otherwise only the time of the read.
     public func saveMDMPayloads(_ set: MDMPayloadSet) throws {
         let rows = try set.payloads.map { ($0, try PlistValue.encode($0.settings)) }
         try transaction {
-            try db.execute("DELETE FROM mdm_payloads")
-            for (p, settings) in rows {
-                try db.run(
-                    "INSERT INTO mdm_payloads (domain, profile_uuid, payload_uuid, settings) VALUES (?, ?, ?, ?)",
-                    [.text(p.domain), .text(p.profileUUID), .text(p.payloadUUID), .blob(settings)])
+            if (try? Self.mdmPayloads(db: db))??.sameSettings(as: set) != true {
+                try db.execute("DELETE FROM mdm_payloads")
+                for (p, settings) in rows {
+                    try db.run(
+                        "INSERT INTO mdm_payloads (domain, profile_uuid, payload_uuid, settings) VALUES (?, ?, ?, ?)",
+                        [.text(p.domain), .text(p.profileUUID), .text(p.payloadUUID), .blob(settings)])
+                }
             }
             try setValue(AltiwardJSON.format(set.readAt), forKey: Self.mdmPayloadsReadAtKey)
         }
     }
 
-    /// The stored MDM payloads; nil when none were ever stored.
+    /// The stored MDM payloads; nil when none were ever stored. Throws when a row isn't one
+    /// this agent wrote.
     public func mdmPayloads() throws -> MDMPayloadSet? {
-        try locked {
-            guard let readAt = try value(forKey: Self.mdmPayloadsReadAtKey).flatMap(AltiwardJSON.parse) else {
-                return nil
+        try locked { try Self.mdmPayloads(db: db) }
+    }
+
+    /// The stored MDM payloads from the store in `directory`, opened read-only and left as it
+    /// is, for a command that changes nothing.
+    public static func storedMDMPayloads(directory: URL) throws -> MDMPayloadSet? {
+        try mdmPayloads(db: SQLiteConnection(path: directory.appendingPathComponent("agent.sqlite").path, readOnly: true))
+    }
+
+    private static func mdmPayloads(db: SQLiteConnection) throws -> MDMPayloadSet? {
+        guard
+            let readAt = try db.query("SELECT value FROM kv WHERE key = ?", [.text(mdmPayloadsReadAtKey)]).first?
+                .text(0).flatMap(AltiwardJSON.parse)
+        else { return nil }
+        let payloads = try db.query("SELECT domain, profile_uuid, payload_uuid, settings FROM mdm_payloads ORDER BY seq")
+            .map { row in
+                guard let domain = row.text(0), let profile = row.text(1), let payload = row.text(2),
+                    let settings = row.blob(3)
+                else { throw AgentStoreError.unreadableRow("mdm_payloads") }
+                return MDMPayload(
+                    domain: domain, profileUUID: profile, payloadUUID: payload, settings: try PlistValue.decode(settings))
             }
-            let payloads = try db.query("SELECT domain, profile_uuid, payload_uuid, settings FROM mdm_payloads ORDER BY seq")
-                .map { row in
-                    MDMPayload(
-                        domain: row.text(0)!, profileUUID: row.text(1)!, payloadUUID: row.text(2)!,
-                        settings: try PlistValue.decode(row.blob(3)!))
-                }
-            return MDMPayloadSet(payloads, readAt: readAt)
-        }
+        return MDMPayloadSet(payloads, readAt: readAt)
     }
 
     // MARK: Key-value state

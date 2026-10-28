@@ -70,7 +70,7 @@ struct SystemIntegrityTests {
             r[.settingsManaged]
                 == IntegrityResult(
                     ok: false, problem: "set outside MDM: PermanentAdmins, ExpiryEnforcement",
-                    findings: ["com.altiward.agent PermanentAdmins", "com.altiward.agent ExpiryEnforcement"]))
+                    findings: ["com.altiward.agent \"PermanentAdmins\"", "com.altiward.agent \"ExpiryEnforcement\""]))
         // Removing rights nobody granted is policy too: switching it off locally keeps them.
         for key in ["OutOfBandEnforcement", "OutOfBandGraceMinutes"] {
             #expect(integrity(local: [key]).run()[.settingsManaged]?.problem == "set outside MDM: \(key)")
@@ -99,7 +99,7 @@ struct SystemIntegrityTests {
             both.run()[.settingsManaged]
                 == IntegrityResult(
                     ok: false, problem: "set outside MDM: PermanentAdmins; managed settings differ from MDM's profiles: x",
-                    findings: ["com.altiward.agent PermanentAdmins", "com.altiward.agent ServerURL"]))
+                    findings: ["com.altiward.agent \"PermanentAdmins\"", "com.altiward.agent ServerURL"]))
 
         var held = integrity()
         held.managedSettings = { IntegrityResult(ok: true, problem: nil, held: true) }

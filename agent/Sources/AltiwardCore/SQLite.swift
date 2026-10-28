@@ -14,8 +14,9 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 final class SQLiteConnection {
     private var db: OpaquePointer?
 
-    init(path: String) throws {
-        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+    /// `readOnly` opens an existing database without changing it.
+    init(path: String, readOnly: Bool = false) throws {
+        let flags = (readOnly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) | SQLITE_OPEN_FULLMUTEX
         let rc = sqlite3_open_v2(path, &db, flags, nil)
         guard rc == SQLITE_OK else {
             let message = db.map { String(cString: sqlite3_errmsg($0)) } ?? "open failed"

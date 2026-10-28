@@ -192,8 +192,12 @@ struct TamperTests {
         results.withLock {
             $0 = [.settingsManaged: Self.settings(["com.altiward.agent ServerURL", "corp.sap.privileges EnableSystemExtension"])]
         }
+        // Within 10 minutes of the last report a changed failure waits, so it can't flood the SIEM.
+        clock.advance(300)
+        #expect(try tamper(t).isEmpty)
+        clock.advance(301)
         let again = try tamper(t)
-        #expect(again.map { $0.detail["state"] } == ["failed"])
+        try #require(again.map { $0.detail["state"] } == ["failed"])
         #expect(again[0].detail["problem"] == "differs: com.altiward.agent ServerURL, corp.sap.privileges EnableSystemExtension")
         // Not after a restart with the same keys.
         #expect(try tamper(tracker()).isEmpty)
@@ -262,5 +266,65 @@ struct TamperTests {
         results.withLock { $0 = [.launchDaemon: .failed("missing"), .settingsManaged: .ok] }
         #expect(try tamper(t).isEmpty)
     }
-}
 
+    /// A key set that keeps changing is reported at most every 10 minutes, with what fails then.
+    @Test func aChangingFailureIsReportedAtMostEveryTenMinutes() throws {
+        let t = tracker()
+        results.withLock { $0 = [.settingsManaged: Self.settings(["k0"])] }
+        _ = try tamper(t)
+        var reported = 0
+        for i in 1...40 {
+            clock.advance(30)
+            results.withLock { $0 = [.settingsManaged: Self.settings(["k\(i)"])] }
+            reported += try tamper(t).count
+        }
+        // 20 minutes of changes every 30 s: two more reports.
+        #expect(reported == 2)
+    }
+
+    /// The heartbeat reads its checks before its transaction; a settings check that ran and
+    /// committed in between is newer, and the heartbeat's older result doesn't overwrite it.
+    @Test func anOlderSettingsResultDoesNotOverwriteANewerOne() throws {
+        let check = OSAllocatedUnfairLock(initialState: IntegrityResult.ok)
+        var env = makeEnvironment(admins: FakeAdmins([]), clock: clock, integrity: { [results] in results.withLock { $0 } })
+        env.settingsCheck = { check.withLock { $0 } }
+        let t = ElevationTracker(store: store, environment: env)
+        let early = clock.now
+        clock.advance(5)
+        check.withLock {
+            $0 = IntegrityResult(ok: false, problem: "differs", findings: ["k"], observedAt: clock.now)
+        }
+        #expect(try t.checkManagedSettings().map { $0.detail["state"] } == ["failed"])
+        results.withLock { $0 = [.settingsManaged: IntegrityResult(ok: true, problem: nil, observedAt: early)] }
+        let events = try t.heartbeat()
+        #expect(events.filter { $0.type == .agentTamper }.isEmpty)
+        guard case .object(let integrity)? = events.first(where: { $0.type == .agentHealth })?.detail["integrity"] else {
+            Issue.record("agent.health has no integrity map")
+            return
+        }
+        #expect(integrity["settings_managed"] == .bool(false))
+        // A newer passing result restores it.
+        results.withLock { $0 = [.settingsManaged: IntegrityResult(ok: true, problem: nil, observedAt: clock.now)] }
+        #expect(try tamper(t).map { $0.detail["state"] } == ["restored"])
+    }
+
+    /// A failure that came and went between two runs is reported, then its recovery.
+    @Test func aFailureThatCameAndWentIsReported() throws {
+        let t = tracker()
+        results.withLock { $0 = [.settingsManaged: .ok] }
+        _ = try tamper(t)
+        let earlier = EarlierFailure(problem: "differed at a time", findings: ["k"])
+        results.withLock { $0 = [.settingsManaged: IntegrityResult(ok: true, problem: nil, earlier: earlier)] }
+        let events = try tamper(t)
+        #expect(events.map { $0.detail["state"] } == ["failed", "restored"])
+        #expect(events.first?.detail["problem"] == "differed at a time")
+
+        // Already failing with those findings: not said again.
+        results.withLock { $0 = [.settingsManaged: Self.settings(["k"])] }
+        _ = try tamper(t)
+        results.withLock {
+            $0 = [.settingsManaged: IntegrityResult(ok: false, problem: "x", findings: ["k"], earlier: earlier)]
+        }
+        #expect(try tamper(t).isEmpty)
+    }
+}

@@ -48,16 +48,37 @@ public struct IntegrityResult: Sendable, Equatable {
     public var findings: [String]?
     /// Nothing to report yet: the check waits for things to settle and keeps its last state.
     public var held = false
+    /// When the check looked, for checks that run at more than one time (`settings_managed`):
+    /// a result older than the one already recorded is left out.
+    public var observedAt: Date?
+    /// A failure seen since the check last ran and gone by now, reported before this result.
+    public var earlier: EarlierFailure?
 
-    public init(ok: Bool, problem: String?, findings: [String]? = nil, held: Bool = false) {
+    public init(
+        ok: Bool, problem: String?, findings: [String]? = nil, held: Bool = false, observedAt: Date? = nil,
+        earlier: EarlierFailure? = nil
+    ) {
         self.ok = ok
         self.problem = problem
         self.findings = findings
         self.held = held
+        self.observedAt = observedAt
+        self.earlier = earlier
     }
 
     public static let ok = IntegrityResult(ok: true, problem: nil)
     public static func failed(_ problem: String) -> IntegrityResult { IntegrityResult(ok: false, problem: problem) }
+}
+
+/// A failure that came and went between two runs of a check.
+public struct EarlierFailure: Sendable, Equatable {
+    public var problem: String
+    public var findings: [String]
+
+    public init(problem: String, findings: [String]) {
+        self.problem = problem
+        self.findings = findings
+    }
 }
 
 /// Runs the checks that look at the installed system. Each applies only where it means
@@ -121,7 +142,7 @@ public struct SystemIntegrity: Sendable {
             privilegesInstalled: { DeviceIdentity.current().privilegesVersion != nil },
             privilegesExtensionProblem: { PrivilegesExtensionProcess.problem() })
         if let managed {
-            let check = ManagedSettingsCheck(signedIn: { LoginRecords.signedInAtLoginWindow() })
+            let check = ManagedSettingsCheck.live(managed)
             system.managedSettings = { check.result(managed.refresh()) }
         }
         system.expiryEnforcement = config.expiryEnforcement
@@ -244,12 +265,14 @@ public struct SystemIntegrity: Sendable {
             ? IntegrityResult.ok
             : IntegrityResult(
                 ok: false, problem: "set outside MDM: \(local.joined(separator: ", "))",
-                findings: local.map { "\(AgentConfiguration.domain) \($0)" })
-        guard let managed = managedSettings?() else { return forced }
+                findings: local.map { "\(AgentConfiguration.domain) \(ManagedSettingsCheck.quoted($0))" })
+        guard var managed = managedSettings?() else { return forced }
         if forced.ok { return managed }
-        return IntegrityResult(
-            ok: false, problem: ([forced.problem] + [managed.problem]).compactMap { $0 }.joined(separator: "; "),
-            findings: Set((forced.findings ?? []) + (managed.findings ?? [])).sorted())
+        managed.problem = ([forced.problem] + [managed.problem]).compactMap { $0 }.joined(separator: "; ")
+        managed.findings = Set((forced.findings ?? []) + (managed.findings ?? [])).sorted()
+        managed.ok = false
+        managed.held = false
+        return managed
     }
 
     func sameFile(installed: URL, shipped: URL) -> IntegrityResult {

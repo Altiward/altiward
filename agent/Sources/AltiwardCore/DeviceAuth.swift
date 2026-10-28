@@ -305,6 +305,20 @@ public actor DeviceAuthenticator {
         var storage: KeyStorage
     }
 
+    static let enrolmentTokenDigestKey = "enrollment_token_digest"
+
+    /// The servers this Mac's key records are for, and the digest of the enrolment token its
+    /// key was made with; nil when it has no key record.
+    public static func enrolment(in store: AgentStore) -> EnrolmentRecord? {
+        let servers = [KeyStorage.software, .secureEnclave].compactMap { storage in
+            (try? store.value(forKey: storeKey(storage)))??.data(using: .utf8)
+                .flatMap { try? JSONDecoder().decode(Credential.self, from: $0) }?.serverURL
+        }
+        guard !servers.isEmpty else { return nil }
+        return EnrolmentRecord(
+            serverURLs: Set(servers), tokenDigest: (try? store.value(forKey: enrolmentTokenDigestKey)) ?? nil)
+    }
+
     private static func storeKey(_ storage: KeyStorage) -> String {
         switch storage {
         case .software: "device_credential"
@@ -1138,6 +1152,8 @@ public actor DeviceAuthenticator {
                     hardwareUUID: info.isReadable ? info.hardwareUUID : nil, madeAt: now()),
                 storage: storage)
             try save(fresh)
+            // What it enrols with, so stored settings that don't match aren't used at start.
+            try store.setValue(EnrolmentRecord.digest(enrollmentToken), forKey: Self.enrolmentTokenDigestKey)
             // Neither record is for this server, so the other one is for an old one.
             try store.setValue(nil, forKey: Self.storeKey(storage == .software ? .secureEnclave : .software))
             return fresh

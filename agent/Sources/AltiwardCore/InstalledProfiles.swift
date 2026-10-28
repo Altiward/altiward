@@ -47,7 +47,7 @@ public enum ProfilesReadError: Error, Equatable, Sendable, CustomStringConvertib
 /// looks like more lines of the listing.
 public enum InstalledProfiles {
     /// The domains whose payloads are kept; everything else is dropped as soon as it is parsed.
-    public static let domains: Set<String> = [AgentConfiguration.domain, PrivilegesSettings.domain]
+    public static let domains = Set(ManagedDomains.all)
     static let managedClientPreferences = "com.apple.ManagedClient.preferences"
     static let enrolmentPayloadType = "com.apple.mdm"
     static let deviceScope = "_computerlevel"
@@ -55,15 +55,15 @@ public enum InstalledProfiles {
     static let timeout: TimeInterval = 10
     static let maxOutput = 16 << 20
 
+    struct DomainSettings: Equatable {
+        var domain: String
+        var settings: [String: PlistValue]
+    }
+
     struct ShownPayload: Equatable {
         var type: String
         var uuid: String
-        var settings: [(domain: String, settings: [String: PlistValue])]
-
-        static func == (a: Self, b: Self) -> Bool {
-            a.type == b.type && a.uuid == b.uuid && a.settings.map(\.domain) == b.settings.map(\.domain)
-                && a.settings.map(\.settings) == b.settings.map(\.settings)
-        }
+        var settings: [DomainSettings]
     }
 
     struct ShownProfile: Equatable {
@@ -150,13 +150,13 @@ public enum InstalledProfiles {
         else {
             throw ProfilesReadError.malformed("a payload of profile \(profile) has no PayloadType or PayloadUUID")
         }
-        var found: [(domain: String, settings: [String: PlistValue])] = []
+        var found: [DomainSettings] = []
         if domains.contains(type) {
             let content = item["PayloadContent"] ?? [String: Any]()
             guard let settings = PlistValue.dictionary(content) else {
                 throw ProfilesReadError.malformed("payload \(uuid) has content that isn't a property-list dictionary")
             }
-            found.append((type, settings))
+            found.append(DomainSettings(domain: type, settings: settings))
         } else if type == managedClientPreferences {
             guard let content = (item["PayloadContent"] ?? [String: Any]()) as? [String: Any] else {
                 throw ProfilesReadError.malformed("payload \(uuid) has content that isn't a dictionary")
@@ -172,7 +172,7 @@ public enum InstalledProfiles {
                     guard let settings = f["mcx_preference_settings"].flatMap(PlistValue.dictionary) else {
                         throw ProfilesReadError.malformed("payload \(uuid) has a Forced entry without settings")
                     }
-                    found.append((domain, settings))
+                    found.append(DomainSettings(domain: domain, settings: settings))
                 }
             }
         }
@@ -194,8 +194,8 @@ public enum InstalledProfiles {
         let attribute = /^attribute: ([^:]+): ?(.*)$/
         let payloadField = /^payload\[(\d+)\]\s+(\S+)\s*= ?(.*)$/
         // "There are 5 system configuration profiles installed", or "There are no configuration
-        // profiles installed for user 'jdoe'".
-        let total = /^There are (\d+|no) (?:system )?configuration profiles installed( for user)?/
+        // profiles installed for user 'jdoe'"; a word before "configuration" is allowed for both.
+        let total = /^There are (\d+|no) (?:\w+ )?configuration profiles installed( for user)?/
 
         var groups: [Int: Group] = [:]
         var stated: Int?
@@ -275,9 +275,9 @@ public enum InstalledProfiles {
             }
             guard entry.installedByMDM else { continue }
             for p in profile.payloads {
-                for (domain, settings) in p.settings {
+                for d in p.settings {
                     payloads.append(
-                        MDMPayload(domain: domain, profileUUID: profile.uuid, payloadUUID: p.uuid, settings: settings))
+                        MDMPayload(domain: d.domain, profileUUID: profile.uuid, payloadUUID: p.uuid, settings: d.settings))
                 }
             }
         }

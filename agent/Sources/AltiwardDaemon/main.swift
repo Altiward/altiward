@@ -47,15 +47,25 @@ if command == "permanent-uses" {
     // Like privileges-audit: no store, no Secure Enclave key, nothing changed.
     let hours = arguments.dropFirst().first.flatMap(Double.init) ?? 24
     let since = Date().addingTimeInterval(-hours * 3600)
-    var admins = AgentConfiguration.load().permanentAdmins
+    var admins = AgentConfiguration.load(environment: [:]).permanentAdmins
     if Daemon.installed {
-        // As the daemon reads them, without its store: this command changes nothing.
-        if case .success(.enrolled(let payloads)) = InstalledProfiles.readDevice() {
-            let set = MDMPayloadSet(payloads, readAt: Date())
-            admins = AgentConfiguration.load(environment: [:], preferences: set.preferences(for: AgentConfiguration.domain))
-                .permanentAdmins
-        } else {
-            print("can't read MDM's settings from the installed profiles: using PermanentAdmins from the preferences")
+        // As the daemon reads them, without changing anything: the installed profiles, or the
+        // MDM settings the daemon last stored, read-only.
+        switch InstalledProfiles.readDevice() {
+        case .success(.enrolled(let payloads)):
+            admins = AgentConfiguration.load(
+                environment: [:], preferences: MDMPayloadSet(payloads, readAt: Date()).preferences(for: AgentConfiguration.domain)
+            ).permanentAdmins
+        case .success(.notEnrolled):
+            print("this Mac isn't enrolled in MDM: using PermanentAdmins from the preferences")
+        case .failure(let error):
+            if let stored = try? AgentStore.storedMDMPayloads(directory: AgentConfiguration.defaultDataDirectory) {
+                print("can't read the installed profiles (\(error)): using the MDM settings stored \(AltiwardJSON.format(stored.readAt))")
+                admins = AgentConfiguration.load(environment: [:], preferences: stored.preferences(for: AgentConfiguration.domain))
+                    .permanentAdmins
+            } else {
+                print("can't read the installed profiles (\(error)) and no MDM settings are stored: using the preferences")
+            }
         }
     }
     if admins.isEmpty {
@@ -84,31 +94,18 @@ if command == "permanent-uses" {
     exit(0)
 }
 
-/// The installed agent can't read the installed profiles and has no MDM settings stored.
-struct SettingsUnavailable: Error, CustomStringConvertible {
-    let state: ManagedSettingsState
-    var description: String {
-        "can't read MDM's settings from the installed profiles (\(state.readError?.description ?? "not read")), "
-            + "and none are stored"
-    }
-}
-
 do {
     var configuration = AgentConfiguration.load()
     var store: AgentStore?
     var managed: ManagedSettings?
     if Daemon.installed {
         let opened = try AgentStore.open(directory: AgentConfiguration.defaultDataDirectory)
-        let settings = ManagedSettings(store: opened)
-        var state = settings.refresh()
+        // Stored settings are used only with the server and token this Mac enrolled with.
+        let settings = ManagedSettings(store: opened, enrolment: DeviceAuthenticator.enrolment(in: opened))
         // Nothing to take settings from that an admin couldn't write: starting would hand the
         // agent, its key and its reports to whatever settings are in the preferences. Wait.
-        while state.mustWait {
-            guard command == "run" else { throw SettingsUnavailable(state: state) }
-            log.error("\(SettingsUnavailable(state: state).description, privacy: .public); trying again in 30 s")
-            try? await Task.sleep(for: .seconds(30))
-            state = settings.refresh()
-        }
+        let state = try await ManagedSettings.startupState(
+            settings, mayWait: command == "run", log: { log.error("\($0, privacy: .public)") })
         configuration = ManagedSettings.configuration(state)!
         (store, managed) = (opened, settings)
     }

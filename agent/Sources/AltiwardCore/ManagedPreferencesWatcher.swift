@@ -2,9 +2,11 @@ import CoreServices
 import Foundation
 import os
 
-/// Calls `handler` a few seconds after the last change under a folder (FSEvents), and when
-/// asked to with ``trigger(after:)``. For `/Library/Managed Preferences`: a setting forged
-/// there for one elevation would otherwise be put back before the next heartbeat looked.
+/// Watches a folder with FSEvents. On every batch of changes it calls `onChange` at once, and
+/// `handler` a few seconds after the last change, or when asked to with ``trigger(after:)``
+/// and ``schedule(at:)``. For `/Library/Managed Preferences`: `onChange` compares the files
+/// as they are now, `handler` reads the profiles too, so a setting forged there for one
+/// elevation is seen before it is put back.
 public final class ManagedPreferencesWatcher: Sendable {
     /// The quiet time after the last change before the handler runs, so a write in several
     /// steps, or macOS rewriting every file for a new profile, is checked once.
@@ -14,13 +16,17 @@ public final class ManagedPreferencesWatcher: Sendable {
     public static let longestWait: TimeInterval = 15
 
     private let queue = DispatchQueue(label: "com.altiward.agent.managed-preferences")
+    private let onChange: @Sendable () -> Void
     private let handler: @Sendable () -> Void
+    /// When a scheduled run is due, so the earliest stands.
+    private let scheduled = OSAllocatedUnfairLock<Date?>(initialState: nil)
     /// Counts triggers, so a scheduled run goes ahead only if no later trigger replaced it, and
     /// when the oldest trigger not yet handled came.
     private let pending = OSAllocatedUnfairLock<(generation: Int, since: Date?)>(initialState: (0, nil))
     private let stream = OSAllocatedUnfairLock<FSEventStreamWrapper?>(initialState: nil)
 
-    public init(handler: @escaping @Sendable () -> Void) {
+    public init(onChange: @escaping @Sendable () -> Void = {}, handler: @escaping @Sendable () -> Void) {
+        self.onChange = onChange
         self.handler = handler
     }
 
@@ -32,13 +38,16 @@ public final class ManagedPreferencesWatcher: Sendable {
         var context = FSEventStreamContext(version: 0, info: info, retain: nil, release: nil, copyDescription: nil)
         let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
             guard let info else { return }
-            Unmanaged<ManagedPreferencesWatcher>.fromOpaque(info).takeUnretainedValue()
-                .trigger(after: ManagedPreferencesWatcher.settle)
+            let watcher = Unmanaged<ManagedPreferencesWatcher>.fromOpaque(info).takeUnretainedValue()
+            watcher.onChange()
+            watcher.trigger(after: ManagedPreferencesWatcher.settle)
         }
-        let flags = UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagWatchRoot)
+        // NoDefer: the first change of a quiet spell is passed on at once, not after the latency.
+        let flags = UInt32(
+            kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagWatchRoot | kFSEventStreamCreateFlagNoDefer)
         guard
             let created = FSEventStreamCreate(
-                nil, callback, &context, [path] as CFArray, FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0.5,
+                nil, callback, &context, [path] as CFArray, FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0.1,
                 flags)
         else { return false }
         FSEventStreamSetDispatchQueue(created, queue)
@@ -67,6 +76,25 @@ public final class ManagedPreferencesWatcher: Sendable {
             let current = pending.withLock {
                 guard $0.generation == mine else { return false }
                 $0.since = nil
+                return true
+            }
+            if current { handler() }
+        }
+    }
+
+    /// Runs the handler at `date`, unless a run is already scheduled for earlier. Separate from
+    /// ``trigger(after:)``, so a later date never puts off a run that a change made due.
+    public func schedule(at date: Date) {
+        let take = scheduled.withLock {
+            if let at = $0, at <= date { return false }
+            $0 = date
+            return true
+        }
+        guard take else { return }
+        queue.asyncAfter(deadline: .now() + max(0, date.timeIntervalSinceNow)) { [scheduled, handler] in
+            let current = scheduled.withLock {
+                guard $0 == date else { return false }
+                $0 = nil
                 return true
             }
             if current { handler() }

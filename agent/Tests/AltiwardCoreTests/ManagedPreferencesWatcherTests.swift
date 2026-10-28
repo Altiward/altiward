@@ -35,4 +35,30 @@ struct ManagedPreferencesWatcherTests {
         try Data("x".utf8).write(to: dir.appendingPathComponent("jdoe/corp.sap.privileges.plist"))
         #expect(wait(ManagedPreferencesWatcher.settle + 5) { runs.withLock { $0 } >= 1 })
     }
+
+    /// Each change is passed on at once, before the handler's wait.
+    @Test func eachChangeIsPassedOnAtOnce() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("watch-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let changes = OSAllocatedUnfairLock(initialState: 0)
+        let runs = OSAllocatedUnfairLock(initialState: 0)
+        let watcher = ManagedPreferencesWatcher(
+            onChange: { changes.withLock { $0 += 1 } }, handler: { runs.withLock { $0 += 1 } })
+        #expect(watcher.start(path: dir.path))
+        Thread.sleep(forTimeInterval: 0.5)
+        try Data("x".utf8).write(to: dir.appendingPathComponent("com.altiward.agent.plist"))
+        #expect(wait(2) { changes.withLock { $0 } >= 1 })
+        #expect(runs.withLock { $0 } == 0)
+    }
+
+    /// A scheduled run keeps the earliest date, and isn't put off by a later one.
+    @Test func theEarliestScheduledRunStands() {
+        let runs = OSAllocatedUnfairLock(initialState: [Date]())
+        let watcher = ManagedPreferencesWatcher { runs.withLock { $0.append(Date()) } }
+        let start = Date()
+        watcher.schedule(at: start.addingTimeInterval(0.3))
+        watcher.schedule(at: start.addingTimeInterval(5))
+        #expect(wait(2) { runs.withLock { $0.count } == 1 })
+        #expect(runs.withLock { $0[0] }.timeIntervalSince(start) < 1.5)
+    }
 }

@@ -60,14 +60,9 @@ final class Daemon: Sendable {
     /// the watcher; this never runs `profiles`), once two reads in a row agree.
     static func restartIfSettingsChanged(from running: AgentConfiguration, managed: ManagedSettings?) {
         CFPreferencesAppSynchronize(AgentConfiguration.domain as CFString)
-        let next: AgentConfiguration
-        if let managed {
-            guard let settled = managed.settledConfiguration() else { return }
-            next = settled
-        } else {
-            next = .load()
-        }
-        let changed = running.changedSettings(next)
+        let changed = ManagedSettings.restartChanges(
+            running: running, installed: managed != nil, settled: managed?.settledConfiguration(),
+            preferences: { .load() })
         guard !changed.isEmpty else { return }
         log.notice("settings changed (\(changed.joined(separator: ", "), privacy: .public)); restarting to apply them")
         exit(0)
@@ -133,11 +128,34 @@ final class Daemon: Sendable {
         }
         monitor.start(queue: DispatchQueue(label: "com.altiward.agent.network"))
 
+        // A managed preferences file changed: compare the files with MDM's payloads at once,
+        // and read the profiles again once the writes stop, not at the next heartbeat.
+        let watcher = managed.map { managed in
+            ManagedPreferencesWatcher.forSettings(
+                tracker: tracker, managed: managed, onEvents: { [tracker, delivery] events in
+                    Self.logTampers(events)
+                    guard !events.isEmpty else { return }
+                    Task {
+                        Self.checkPersistence(tracker)
+                        await delivery.flush()
+                    }
+                })
+        }
+        if let watcher, !watcher.start() {
+            log.error("can't watch /Library/Managed Preferences; the heartbeat still checks it")
+        }
+        // A signed-in user's folder the heartbeat left alone, just after their sign-in, is
+        // compared when it is due.
+        let followUp: @Sendable () -> Void = { [managed] in
+            if let watcher, let due = managed?.takeFollowUp() { watcher.schedule(at: due) }
+        }
+
         let heartbeatInterval = configuration.heartbeatInterval
-        Task { [tracker, delivery, commands] in
+        Task { [tracker, delivery, commands, followUp] in
             while true {
                 do {
                     let events = try tracker.heartbeat()
+                    followUp()
                     Self.logTampers(events)
                     // Sign-ins the scan found, and prompts and screen sharing from the log.
                     Self.logPermanentUses(events.filter { $0.type == .adminPermanentUse })
@@ -223,23 +241,6 @@ final class Daemon: Sendable {
             }
         }
 
-        // A managed preferences file changed: compare them with MDM's payloads now, not at the
-        // next heartbeat, by when a setting forged for one elevation could be back.
-        let watcher = managed.map { managed in
-            ManagedPreferencesWatcher.forSettings(
-                tracker: tracker, managed: managed, onEvents: { [tracker, delivery] events in
-                    Self.logTampers(events)
-                    guard !events.isEmpty else { return }
-                    Task {
-                        Self.checkPersistence(tracker)
-                        await delivery.flush()
-                    }
-                })
-        }
-        if let watcher, !watcher.start() {
-            log.error("can't watch /Library/Managed Preferences; the heartbeat still checks it")
-        }
-
         let flushInterval = configuration.flushInterval
         Task { [delivery] in
             while true {
@@ -317,7 +318,7 @@ final class Daemon: Sendable {
 
     func printStatus() async throws {
         print("data directory: \(configuration.dataDirectory.path)")
-        print("settings: \(Self.settingsSource(managed?.latest))")
+        print("settings: \(ManagedSettingsState.sourceDescription(managed?.latest))")
         print("server: \(configuration.serverURL?.absoluteString ?? "(not configured)")")
         let deviceID = await authenticator?.deviceID
         print("device id: \(deviceID ?? "(not enrolled)")")
@@ -346,18 +347,6 @@ final class Daemon: Sendable {
         } else {
             print("persistence snapshot: (none yet)")
         }
-    }
-
-    /// Where the agent's settings come from, for `status`.
-    static func settingsSource(_ state: ManagedSettingsState?) -> String {
-        guard let state else { return "com.altiward.agent preferences (development)" }
-        if state.unmanaged { return "com.altiward.agent preferences: this Mac isn't enrolled in MDM" }
-        guard let payloads = state.payloads else { return "none: the installed profiles can't be read" }
-        let read = AltiwardJSON.format(payloads.readAt)
-        if let error = state.readError { return "MDM's profiles as read \(read); they can't be read now (\(error))" }
-        if state.notEnrolled { return "MDM's profiles as read \(read); no MDM enrolment shows now" }
-        if state.agentPayloadMissing { return "MDM's profiles as read \(read); no MDM profile sets them now" }
-        return "MDM's profiles, read \(read)"
     }
 
     static func printFlush(_ r: FlushResult) {
@@ -451,27 +440,34 @@ extension ManagedPreferencesWatcher {
     /// How long to wait before reading the profiles again while MDM's payloads are settling.
     static let recheck: TimeInterval = 30
 
-    /// A watcher that runs the settings check and passes on its events. While the payloads have
-    /// just changed it checks again every ``recheck`` seconds: a new configuration applies after
-    /// two equal reads, and differences held after a profile change are looked at again.
+    /// A watcher for the settings check. On each change it compares the files with the
+    /// payloads in use at once (``ManagedSettingsCheck/quick(_:)``); a few seconds after the
+    /// last change it reads the profiles and runs the full check, passing on its events. While
+    /// the payloads settle (``ManagedSettingsState/needsRecheck(_:since:now:)``) it reads them
+    /// again every ``recheck`` seconds, and it runs when a signed-in user's folder is due.
     static func forSettings(
         tracker: ElevationTracker, managed: ManagedSettings, onEvents: @escaping @Sendable ([AltiwardEvent]) -> Void
     ) -> ManagedPreferencesWatcher {
+        let check = ManagedSettingsCheck.live(managed)
         let me = OSAllocatedUnfairLock<ManagedPreferencesWatcher?>(initialState: nil)
-        let watcher = ManagedPreferencesWatcher {
-            do {
-                onEvents(try tracker.checkManagedSettings())
-            } catch {
-                log.error("settings check failed: \(String(describing: error), privacy: .public)")
-            }
-            let state = managed.latest
-            let settling =
-                state.readError == nil && state.payloads != nil
-                && (!state.stable
-                    || state.changedAt.map { Date().timeIntervalSince($0) < ManagedSettingsCheck.profileChangeGrace }
-                        ?? false)
-            if settling { me.withLock { $0 }?.trigger(after: recheck) }
-        }
+        /// When the current run of rechecks began.
+        let rechecking = OSAllocatedUnfairLock<Date?>(initialState: nil)
+        let watcher = ManagedPreferencesWatcher(
+            onChange: { check.quick(managed.latest) },
+            handler: {
+                do {
+                    onEvents(try tracker.checkManagedSettings())
+                } catch {
+                    log.error("settings check failed: \(String(describing: error), privacy: .public)")
+                }
+                let now = Date()
+                let since = rechecking.withLock { $0 ?? now }
+                let again = ManagedSettingsState.needsRecheck(managed.latest, since: since, now: now)
+                rechecking.withLock { $0 = again ? since : nil }
+                let watcher = me.withLock { $0 }
+                if again { watcher?.schedule(at: now.addingTimeInterval(recheck)) }
+                if let due = managed.takeFollowUp() { watcher?.schedule(at: due) }
+            })
         me.withLock { $0 = watcher }
         return watcher
     }

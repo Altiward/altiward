@@ -21,7 +21,7 @@
 	<key>OutOfBandGraceMinutes</key>
 	<integer>5</integer>
 	<key>PayloadUUID</key>
-	<string>A34D3A14-3839-4937-AEFD-14C4CB972C36</string>
+	<string>4B4B4B4B-0004-4000-8000-000000000004</string>
 	<key>PermanentAdmins</key>
 	<array>
 		<string>breakglass</string>

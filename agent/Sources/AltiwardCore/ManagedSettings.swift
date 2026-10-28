@@ -1,7 +1,13 @@
+import CryptoKit
 import Foundation
 import os
 
 private let log = Logger(subsystem: "com.altiward.agent", category: "settings")
+
+/// The preference domains whose MDM payloads the agent reads and compares.
+public enum ManagedDomains {
+    public static let all = [AgentConfiguration.domain, PrivilegesSettings.domain]
+}
 
 /// The payloads MDM installed for the domains Altiward compares, as read at one time.
 public struct MDMPayloadSet: Sendable, Equatable {
@@ -39,6 +45,38 @@ public struct MDMPayloadSet: Sendable, Equatable {
     }
 }
 
+/// What this Mac enrolled with: the server of each key record, and a digest of the enrolment
+/// token, for checking stored settings against at start.
+public struct EnrolmentRecord: Sendable, Equatable {
+    public var serverURLs: Set<String>
+    /// SHA-256 of the token, hex; nil for an enrolment from before the agent kept it.
+    public var tokenDigest: String?
+
+    public init(serverURLs: Set<String>, tokenDigest: String?) {
+        self.serverURLs = serverURLs
+        self.tokenDigest = tokenDigest
+    }
+
+    public static func digest(_ token: String) -> String {
+        SHA256.hash(data: Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Why stored settings can't be used with this enrolment; nil when they can. A stored set
+    /// is used only while the profiles can't be read, so it must lead to the server and token
+    /// this Mac enrolled with.
+    public func refusal(of stored: MDMPayloadSet) -> String? {
+        guard !serverURLs.isEmpty else { return nil }
+        let c = AgentConfiguration.load(environment: [:], preferences: stored.preferences(for: AgentConfiguration.domain))
+        guard let url = c.serverURL?.absoluteString, serverURLs.contains(url) else {
+            return "the stored ServerURL isn't the server this Mac enrolled with"
+        }
+        if let tokenDigest, let token = c.enrollmentToken, Self.digest(token) != tokenDigest {
+            return "the stored EnrollmentToken isn't the one this Mac enrolled with"
+        }
+        return nil
+    }
+}
+
 /// What the agent knows of MDM's payloads after its latest read of the installed profiles.
 public struct ManagedSettingsState: Sendable, Equatable {
     /// The payloads in use: the latest clean read, or the stored set from an earlier one.
@@ -50,38 +88,82 @@ public struct ManagedSettingsState: Sendable, Equatable {
     /// The latest read worked and no MDM profile set Altiward's settings, so the earlier set
     /// that did is still in use.
     public var agentPayloadMissing = false
-    /// When the payloads in use last changed from one read to the next; nil when they haven't
-    /// changed since the agent started.
+    /// When this agent last saw MDM's payloads change between two of its own clean reads; nil
+    /// when it hasn't. A difference from the stored set doesn't count.
     public var changedAt: Date?
+    /// The payloads before that change, for telling files macOS hasn't rewritten yet from new
+    /// content.
+    public var previous: MDMPayloadSet?
     /// The latest two reads both worked and gave these payloads.
     public var stable = false
+    /// Why the stored set wasn't used at start.
+    public var storedRefused: String?
 
     public init(
         payloads: MDMPayloadSet? = nil, readError: ProfilesReadError? = nil, notEnrolled: Bool = false,
-        agentPayloadMissing: Bool = false, changedAt: Date? = nil, stable: Bool = false
+        agentPayloadMissing: Bool = false, changedAt: Date? = nil, previous: MDMPayloadSet? = nil,
+        stable: Bool = false, storedRefused: String? = nil
     ) {
         self.payloads = payloads
         self.readError = readError
         self.notEnrolled = notEnrolled
         self.agentPayloadMissing = agentPayloadMissing
         self.changedAt = changedAt
+        self.previous = previous
         self.stable = stable
+        self.storedRefused = storedRefused
     }
 
     /// Nothing to take the agent's settings from that an admin couldn't have written: no payloads
-    /// read now or stored, and the profiles can't be read. The installed agent waits.
+    /// read now or usable from the store, and the profiles can't be read. The installed agent waits.
     public var mustWait: Bool { payloads == nil && !notEnrolled }
 
     /// No MDM enrolment and no payloads ever read: the agent's settings come from the
     /// preferences, and the settings check fails.
     public var unmanaged: Bool { payloads == nil && notEnrolled }
+
+    /// Whether MDM's payloads just changed, so differences in the files may be macOS still
+    /// rewriting them.
+    public func inProfileChange(at now: Date) -> Bool {
+        guard let changedAt, previous != nil else { return false }
+        return now.timeIntervalSince(changedAt) < ManagedSettingsCheck.profileChangeGrace
+    }
+
+    /// Whether to read the profiles again soon, while the payloads settle: a clean read that
+    /// isn't confirmed by a second yet, or differences held after a profile change. Never with
+    /// a read that failed, showed no enrolment or lost Altiward's payload (the heartbeat looks
+    /// again), and never longer than ``ManagedSettingsCheck/profileChangeGrace`` after
+    /// `since`, when the rechecks began.
+    public static func needsRecheck(_ s: ManagedSettingsState, since: Date, now: Date) -> Bool {
+        guard s.readError == nil, !s.notEnrolled, !s.agentPayloadMissing, s.payloads != nil,
+            now.timeIntervalSince(since) < ManagedSettingsCheck.profileChangeGrace
+        else { return false }
+        return !s.stable || s.inProfileChange(at: now)
+    }
+
+    /// Where the agent's settings come from, for `altiward-agent status`. Nil `state`:
+    /// development.
+    public static func sourceDescription(_ state: ManagedSettingsState?) -> String {
+        guard let state else { return "com.altiward.agent preferences (development)" }
+        if state.unmanaged { return "com.altiward.agent preferences: this Mac isn't enrolled in MDM" }
+        guard let payloads = state.payloads else {
+            return "none: the installed profiles can't be read"
+                + (state.storedRefused.map { ", and \($0)" } ?? ", and none are stored")
+        }
+        let read = AltiwardJSON.format(payloads.readAt)
+        if let error = state.readError { return "MDM's profiles as read \(read); they can't be read now (\(error))" }
+        if state.notEnrolled { return "MDM's profiles as read \(read); no MDM enrolment shows now" }
+        if state.agentPayloadMissing { return "MDM's profiles as read \(read); no MDM profile sets them now" }
+        return "MDM's profiles, read \(read)"
+    }
 }
 
 /// The installed agent's view of MDM's payloads for `com.altiward.agent` and
 /// `corp.sap.privileges`, shared by everything that needs them so `profiles` runs only on
-/// ``refresh()``: on the heartbeat and when a managed preferences file changes. The last
+/// ``refresh()``: on the heartbeat and after a managed preferences file changes. The last
 /// clean read is kept in the store, so a `profiles` that stops working doesn't hand the agent
-/// back to settings an admin can write.
+/// back to settings an admin can write. It also keeps what the settings check found between
+/// reads (``ManagedSettingsCheck``).
 public final class ManagedSettings: Sendable {
     let store: AgentStore
     let readDevice: @Sendable () -> Result<ProfilesReading, ProfilesReadError>
@@ -91,24 +173,47 @@ public final class ManagedSettings: Sendable {
     private let state: OSAllocatedUnfairLock<ManagedSettingsState>
     /// The latest read's payloads when it worked, for ``ManagedSettingsState/stable``.
     private let lastRead = OSAllocatedUnfairLock<MDMPayloadSet?>(initialState: nil)
+    /// The latest clean read in this process, failed reads or not since.
+    private let lastClean = OSAllocatedUnfairLock<MDMPayloadSet?>(initialState: nil)
 
+    struct Memo: Sendable {
+        /// Managed preferences that differed from the payloads when a file changed, to judge
+        /// at the next read of the profiles. At most ``maxCaptures``.
+        var captures: [ManagedFilesSnapshot] = []
+        /// When a signed-in user's folder is due to be compared.
+        var followUp: Date?
+        /// Each user's own MDM payloads (user channel), as last read.
+        var userPayloads: [String: [MDMPayload]] = [:]
+    }
+
+    static let maxCaptures = 5
+    let memo = OSAllocatedUnfairLock(initialState: Memo())
+
+    /// `enrolment`: what this Mac enrolled with. A stored set that doesn't match it isn't used.
     public init(
         store: AgentStore,
         readDevice: @escaping @Sendable () -> Result<ProfilesReading, ProfilesReadError> = InstalledProfiles.readDevice,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        enrolment: EnrolmentRecord? = nil
     ) {
         self.store = store
         self.readDevice = readDevice
         self.now = now
-        var stored: MDMPayloadSet?
+        var initial = ManagedSettingsState(readError: .malformed("the installed profiles haven't been read yet"))
         do {
-            stored = try store.mdmPayloads()
+            if let stored = try store.mdmPayloads() {
+                if let refusal = enrolment?.refusal(of: stored) {
+                    initial.storedRefused = refusal
+                    log.error("not using the stored MDM settings: \(refusal, privacy: .public)")
+                } else {
+                    initial.payloads = stored
+                }
+            }
         } catch {
+            initial.storedRefused = "the stored MDM settings can't be read"
             log.error("can't read the stored MDM settings: \(String(describing: error), privacy: .public)")
         }
-        state = OSAllocatedUnfairLock(
-            initialState: ManagedSettingsState(
-                payloads: stored, readError: .malformed("the installed profiles haven't been read yet")))
+        state = OSAllocatedUnfairLock(initialState: initial)
     }
 
     /// The state after the latest ``refresh()``, without reading the profiles.
@@ -144,13 +249,24 @@ public final class ManagedSettings: Sendable {
                 defer { last = set }
                 return last
             }
+            let clean = lastClean.withLock { last in
+                defer { last = set }
+                return last
+            }
+            // Only a change this agent saw between two of its own reads opens the grace for
+            // files macOS hasn't rewritten yet: not a difference from the stored set, which
+            // anyone with root could have edited.
+            if let clean, !set.sameSettings(as: clean) {
+                next.changedAt = now
+                next.previous = clean
+            }
             if !set.setsAgent, next.payloads?.setsAgent == true {
                 next.agentPayloadMissing = true
                 next.stable = false
             } else {
-                if !set.sameSettings(as: next.payloads) { next.changedAt = now }
                 next.stable = set.sameSettings(as: previous)
                 next.payloads = set
+                next.storedRefused = nil
                 do {
                     try store.saveMDMPayloads(set)
                 } catch {
@@ -181,262 +297,78 @@ public final class ManagedSettings: Sendable {
         return Self.configuration(s)
     }
 
+    /// The settings that differ from those the daemon runs with, by profile key: in the
+    /// installed agent (`settled` given, or nil while reads don't agree) MDM's settled payloads,
+    /// otherwise the preferences.
+    public static func restartChanges(
+        running: AgentConfiguration, installed: Bool, settled: AgentConfiguration?,
+        preferences: () -> AgentConfiguration
+    ) -> [String] {
+        if installed {
+            guard let settled else { return [] }
+            return running.changedSettings(settled)
+        }
+        return running.changedSettings(preferences())
+    }
+
     /// The Privileges settings the agent's own logic uses: from MDM's payloads, or the
     /// preferences when there are none.
     public func privilegesSettings() -> PrivilegesSettings {
         guard let payloads = latest.payloads else { return PrivilegesSettings.current() }
         return PrivilegesSettings.settings(from: payloads.preferences(for: PrivilegesSettings.domain))
     }
-}
 
-// MARK: The managed preferences files
-
-/// Reads the files macOS answers managed preferences from: `/Library/Managed Preferences/
-/// <domain>.plist` for the device, and a user folder's copy of it and that folder's
-/// `complete.plist`, which ManagedClient writes for each user who signs in. Root can write
-/// all of them, which is why they are compared with MDM's payloads.
-public struct ManagedPreferenceFiles: Sendable {
-    public enum Read: Sendable, Equatable {
-        case missing
-        case unreadable
-        case settings([String: PlistValue])
-    }
-
-    public var root: URL
-
-    public init(root: URL = URL(fileURLWithPath: "/Library/Managed Preferences")) {
-        self.root = root
-    }
-
-    public func devicePath(_ domain: String) -> String { root.appendingPathComponent("\(domain).plist").path }
-    public func userPath(_ user: String, _ domain: String) -> String {
-        root.appendingPathComponent(user).appendingPathComponent("\(domain).plist").path
-    }
-    public func completePath(_ user: String) -> String {
-        root.appendingPathComponent(user).appendingPathComponent("complete.plist").path
-    }
-
-    func file(_ path: String) -> Read {
-        guard FileManager.default.fileExists(atPath: path) else { return .missing }
-        guard let data = FileManager.default.contents(atPath: path),
-            let object = try? PropertyListSerialization.propertyList(from: data, format: nil),
-            let settings = PlistValue.dictionary(object)
-        else { return .unreadable }
-        return .settings(settings)
-    }
-
-    /// A domain's entries in `complete.plist`, which holds `domain => key => {…, value}`.
-    func complete(_ path: String, domain: String) -> Read {
-        let read = file(path)
-        guard case .settings(let all) = read else { return read }
-        guard let entry = all[domain] else { return .missing }
-        guard case .dictionary(let keys) = entry else { return .unreadable }
-        var settings: [String: PlistValue] = [:]
-        for (key, item) in keys {
-            guard case .dictionary(let fields) = item, let value = fields["value"] else { return .unreadable }
-            settings[key] = value
+    /// Reads the profiles until there is something to take settings from. Only the daemon
+    /// (`mayWait`) waits, reading again every `retry` seconds; a command throws instead.
+    public static func startupState(
+        _ settings: ManagedSettings, mayWait: Bool, retry: TimeInterval = 30,
+        sleep: @Sendable (TimeInterval) async -> Void = { try? await Task.sleep(for: .seconds($0)) },
+        log: (String) -> Void
+    ) async throws -> ManagedSettingsState {
+        var state = settings.refresh()
+        while state.mustWait {
+            guard mayWait else { throw SettingsUnavailable(state: state) }
+            log("\(SettingsUnavailable(state: state).description); trying again in \(Int(retry)) s")
+            await sleep(retry)
+            state = settings.refresh()
         }
-        return .settings(settings)
+        return state
+    }
+
+    // MARK: Between reads
+
+    func capture(_ snapshot: ManagedFilesSnapshot) {
+        memo.withLock { m in
+            m.captures.append(snapshot)
+            if m.captures.count > Self.maxCaptures { m.captures.removeFirst(m.captures.count - Self.maxCaptures) }
+        }
+    }
+
+    func takeCaptures() -> [ManagedFilesSnapshot] {
+        memo.withLock { m in
+            defer { m.captures = [] }
+            return m.captures
+        }
+    }
+
+    func noteFollowUp(_ date: Date) {
+        memo.withLock { $0.followUp = min($0.followUp ?? date, date) }
+    }
+
+    /// When a signed-in user's folder is next due to be compared, once.
+    public func takeFollowUp() -> Date? {
+        memo.withLock { m in
+            defer { m.followUp = nil }
+            return m.followUp
+        }
     }
 }
 
-/// A setting that differs between a managed preferences file and MDM's payloads. Names only:
-/// values such as `EnrollmentToken` are secrets.
-public struct SettingsMismatch: Sendable, Equatable, Comparable {
-    public enum Kind: String, Sendable {
-        /// MDM sets the key to another value.
-        case changed
-        /// MDM sets the key; the file doesn't have it.
-        case removed
-        /// The file has a key no MDM payload sets.
-        case added
-        /// The file can't be read as settings.
-        case unreadable
-    }
-
-    public var path: String
-    public var domain: String
-    /// Nil when the whole file is unreadable.
-    public var key: String?
-    public var kind: Kind
-
-    public static func < (a: Self, b: Self) -> Bool {
-        (a.path, a.domain, a.key ?? "", a.kind.rawValue) < (b.path, b.domain, b.key ?? "", b.kind.rawValue)
-    }
-
-    /// Compares a file's settings for `domain` with the payloads MDM installed for it, both
-    /// ways: every key a payload sets must be in the file with a value equal to one payload's,
-    /// and every key in the file must be one a payload sets. `Payload*` keys are left out on
-    /// both sides, but the file's `PayloadUUID` must be one of the payloads'.
-    static func compare(_ file: ManagedPreferenceFiles.Read, path: String, domain: String, payloads: [MDMPayload])
-        -> [SettingsMismatch]
-    {
-        let settings: [String: PlistValue]
-        switch file {
-        case .missing: settings = [:]
-        case .unreadable: return [SettingsMismatch(path: path, domain: domain, key: nil, kind: .unreadable)]
-        case .settings(let s): settings = s
-        }
-        var found: [SettingsMismatch] = []
-        let expected = payloads.reduce(into: [String: [PlistValue]]()) { all, p in
-            for (key, value) in p.settings { all[key, default: []].append(value) }
-        }
-        for (key, values) in expected {
-            guard let value = settings[key] else {
-                found.append(SettingsMismatch(path: path, domain: domain, key: key, kind: .removed))
-                continue
-            }
-            if !values.contains(value) {
-                found.append(SettingsMismatch(path: path, domain: domain, key: key, kind: .changed))
-            }
-        }
-        for key in settings.keys where !key.hasPrefix("Payload") && expected[key] == nil {
-            found.append(SettingsMismatch(path: path, domain: domain, key: key, kind: .added))
-        }
-        if let uuid = settings["PayloadUUID"] {
-            let known = Set(payloads.map(\.payloadUUID))
-            guard case .string(let s) = uuid, known.contains(s.uppercased()) else {
-                found.append(
-                    SettingsMismatch(
-                        path: path, domain: domain, key: "PayloadUUID", kind: payloads.isEmpty ? .added : .changed))
-                return found.sorted()
-            }
-        }
-        return found.sorted()
-    }
-}
-
-/// The `settings_managed` comparison in the installed agent: the device's managed preferences
-/// files always, and the copies in the folders of users signed in at the login window (after
-/// ``signInGrace``, while ManagedClient writes them). Other users' folders are left alone: a
-/// folder keeps the settings of its user's last sign-in, and takes the current ones at the next.
-public struct ManagedSettingsCheck: Sendable {
-    /// How long after a sign-in its folder is left alone.
-    public static let signInGrace: TimeInterval = 120
-    /// How long after MDM's payloads change differences are held, while macOS rewrites the files.
-    public static let profileChangeGrace: TimeInterval = 300
-
-    public var files: ManagedPreferenceFiles
-    /// Users signed in at the login window now, with when they signed in.
-    public var signedIn: @Sendable () -> [String: Date]
-    /// MDM payloads installed for one user (user channel), read only when a user's folder
-    /// differs from the device's payloads.
-    public var userPayloads: @Sendable (String) -> Result<[MDMPayload], ProfilesReadError>
-    public var now: @Sendable () -> Date
-
-    public init(
-        files: ManagedPreferenceFiles = ManagedPreferenceFiles(),
-        signedIn: @escaping @Sendable () -> [String: Date],
-        userPayloads: @escaping @Sendable (String) -> Result<[MDMPayload], ProfilesReadError> = InstalledProfiles.readUser,
-        now: @escaping @Sendable () -> Date = { Date() }
-    ) {
-        self.files = files
-        self.signedIn = signedIn
-        self.userPayloads = userPayloads
-        self.now = now
-    }
-
-    public static let domains = [AgentConfiguration.domain, PrivilegesSettings.domain]
-
-    public func result(_ state: ManagedSettingsState) -> IntegrityResult {
-        guard let payloads = state.payloads else {
-            if state.notEnrolled {
-                return IntegrityResult(
-                    ok: false, problem: "this Mac isn't enrolled in MDM, so no MDM profile sets Altiward's settings",
-                    findings: ["not enrolled in MDM"])
-            }
-            return IntegrityResult(
-                ok: false,
-                problem: "can't read the installed profiles (\(state.readError?.description ?? "not read")), "
-                    + "and no MDM settings are stored",
-                findings: ["profiles unreadable"])
-        }
-
-        var notes: [String] = []
-        var findings: Set<String> = []
-        let stored = "the MDM settings read \(AltiwardJSON.format(payloads.readAt))"
-        if let error = state.readError {
-            notes.append("can't read the installed profiles (\(error)), so compared with \(stored)")
-            findings.insert("profiles unreadable")
-        } else if state.notEnrolled {
-            notes.append("the installed profiles show no MDM enrolment now, so compared with \(stored)")
-            findings.insert("not enrolled in MDM")
-        } else if state.agentPayloadMissing {
-            notes.append("no MDM profile sets com.altiward.agent now, so the agent keeps \(stored)")
-            findings.insert("no com.altiward.agent payload")
-        }
-        if !payloads.setsAgent {
-            notes.append("no MDM profile sets com.altiward.agent")
-            findings.insert("no com.altiward.agent payload")
-        }
-
-        let mismatches = self.mismatches(payloads)
-        findings.formUnion(mismatches.map { "\($0.domain) \($0.key ?? "(file)")" })
-        if !mismatches.isEmpty {
-            notes.append("managed settings differ from MDM's profiles: " + Self.describe(mismatches))
-        }
-        guard !notes.isEmpty else { return .ok }
-        // Only differences, just after MDM changed its payloads: macOS may still be rewriting the files.
-        if notes.count == 1, !mismatches.isEmpty, let changed = state.changedAt,
-            now().timeIntervalSince(changed) < Self.profileChangeGrace
-        {
-            return IntegrityResult(ok: true, problem: nil, held: true)
-        }
-        return IntegrityResult(ok: false, problem: notes.joined(separator: "; "), findings: findings.sorted())
-    }
-
-    func mismatches(_ payloads: MDMPayloadSet) -> [SettingsMismatch] {
-        var found: [SettingsMismatch] = []
-        for domain in Self.domains {
-            found += SettingsMismatch.compare(
-                files.file(files.devicePath(domain)), path: files.devicePath(domain), domain: domain,
-                payloads: payloads.payloads(for: domain))
-        }
-        let now = now()
-        for (user, since) in signedIn().sorted(by: { $0.key < $1.key })
-        where now.timeIntervalSince(since) >= Self.signInGrace && Self.plainName(user) {
-            var forUser = userMismatches(user, payloads.payloads)
-            if !forUser.isEmpty, case .success(let own) = userPayloads(user), !own.isEmpty {
-                forUser = userMismatches(user, payloads.payloads + own)
-            }
-            found += forUser
-        }
-        return found
-    }
-
-    private func userMismatches(_ user: String, _ payloads: [MDMPayload]) -> [SettingsMismatch] {
-        Self.domains.flatMap { domain in
-            let mine = payloads.filter { $0.domain == domain }
-            return SettingsMismatch.compare(
-                files.file(files.userPath(user, domain)), path: files.userPath(user, domain), domain: domain,
-                payloads: mine)
-                + SettingsMismatch.compare(
-                    files.complete(files.completePath(user), domain: domain), path: files.completePath(user),
-                    domain: domain, payloads: mine)
-        }
-    }
-
-    /// A short name that is safe as a folder name.
-    static func plainName(_ user: String) -> Bool {
-        !user.isEmpty && user != "." && user != ".." && !user.contains("/")
-    }
-
-    /// "com.altiward.agent ServerURL (changed), corp.sap.privileges EnableSystemExtension
-    /// (removed) in /Library/Managed Preferences; … in /Library/Managed Preferences/jdoe/complete.plist"
-    static func describe(_ mismatches: [SettingsMismatch]) -> String {
-        var byPath: [(String, [SettingsMismatch])] = []
-        for m in mismatches.sorted() {
-            let folder = (m.path as NSString).lastPathComponent == "complete.plist"
-                ? m.path : (m.path as NSString).deletingLastPathComponent
-            if let i = byPath.firstIndex(where: { $0.0 == folder }) {
-                byPath[i].1.append(m)
-            } else {
-                byPath.append((folder, [m]))
-            }
-        }
-        return byPath.map { folder, items in
-            items.map { "\($0.domain) \($0.key ?? "file") (\($0.kind.rawValue))" }.joined(separator: ", ")
-                + " in \(folder)"
-        }.joined(separator: "; ")
+/// The installed agent can't read the installed profiles and has no usable MDM settings stored.
+public struct SettingsUnavailable: Error, CustomStringConvertible {
+    public let state: ManagedSettingsState
+    public var description: String {
+        "can't read MDM's settings from the installed profiles (\(state.readError?.description ?? "not read")), "
+            + (state.storedRefused.map { "and \($0)" } ?? "and none are stored")
     }
 }

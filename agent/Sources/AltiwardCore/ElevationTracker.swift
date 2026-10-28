@@ -911,14 +911,14 @@ extension ElevationTracker {
         }
     }
 
-    /// The integrity map in `agent.health`: a held check shows the state it keeps, and is
-    /// left out when it has none yet.
+    /// The integrity map in `agent.health`: a held check, or one whose result was older than
+    /// the one recorded, shows the state it keeps, and is left out when it has none yet.
     func healthIntegrity(_ integrity: [IntegrityCheck: IntegrityResult]) throws -> [String: JSONValue] {
         let stored = try store.value(forKey: Self.integrityKey)
             .flatMap { try? JSONDecoder().decode([String: Bool].self, from: Data($0.utf8)) } ?? [:]
         var map: [String: JSONValue] = [:]
         for (check, result) in integrity {
-            if result.held {
+            if result.held || result.observedAt != nil {
                 if let kept = stored[check.rawValue] { map[check.rawValue] = .bool(kept) }
             } else {
                 map[check.rawValue] = .bool(result.ok)

@@ -38,8 +38,8 @@ struct InstalledProfilesTests {
     @Test func readsAltiwardsAndPrivilegesPayloadsFromMDMsProfiles() throws {
         let found = try payloads()
         #expect(found.map(\.domain) == ["corp.sap.privileges", "com.altiward.agent"])
-        #expect(found.map(\.payloadUUID) == ["FD46A57A-0BA7-4987-9AE6-953FB98BDB9D", "A34D3A14-3839-4937-AEFD-14C4CB972C36"])
-        #expect(found[1].profileUUID == "7F93C4D9-D25C-440A-A47D-7AC58873569C")
+        #expect(found.map(\.payloadUUID) == ["3B3B3B3B-0003-4000-8000-000000000003", "4B4B4B4B-0004-4000-8000-000000000004"])
+        #expect(found[1].profileUUID == "4A4A4A4A-0004-4000-8000-000000000004")
         let agent = found[1].settings
         #expect(agent["ServerURL"] == .string("https://altiward-agents.example.com"))
         #expect(agent["HeartbeatInterval"] == .integer(60))
@@ -79,9 +79,9 @@ struct InstalledProfilesTests {
         #expect(
             malformed(
                 list: list.replacingOccurrences(
-                    of: "_computerlevel[3]            payload[1] uuid\t\t\t= FD46A57A",
+                    of: "_computerlevel[3]            payload[1] uuid\t\t\t= 3B3B3B3B",
                     with: "_computerlevel[3]            payload[1] uuid = 00000000\n"
-                        + "_computerlevel[3]            payload[1] uuid\t\t\t= FD46A57A")))
+                        + "_computerlevel[3]            payload[1] uuid\t\t\t= 3B3B3B3B")))
         // No installedByMDM, or an answer that isn't TRUE or FALSE.
         #expect(malformed(list: list.replacingOccurrences(of: "_computerlevel[4] attribute: installedByMDM: TRUE\n", with: "")))
         #expect(
@@ -100,15 +100,15 @@ struct InstalledProfilesTests {
         #expect(malformed(list: list + "There are 5 system configuration profiles installed\n"))
         // A payload listed under another profile than the one showing it.
         let moved = list.replacingOccurrences(
-            of: "_computerlevel[4]            payload[1] uuid\t\t\t= A34D3A14-3839-4937-AEFD-14C4CB972C36",
-            with: "_computerlevel[3]            payload[2] uuid\t\t\t= A34D3A14-3839-4937-AEFD-14C4CB972C36")
+            of: "_computerlevel[4]            payload[1] uuid\t\t\t= 4B4B4B4B-0004-4000-8000-000000000004",
+            with: "_computerlevel[3]            payload[2] uuid\t\t\t= 4B4B4B4B-0004-4000-8000-000000000004")
         #expect(moved != list)
         #expect(malformed(list: moved))
         // The same profile UUID twice.
         #expect(
             malformed(
                 list: list.replacingOccurrences(
-                    of: "profileUUID: 57b1ff79-73d7-49cf-89b0-e5c8031a8e21", with: "profileUUID: 7f93c4d9-d25c-440a-a47d-7ac58873569c")))
+                    of: "profileUUID: 3a3a3a3a-0003-4000-8000-000000000003", with: "profileUUID: 4a4a4a4a-0004-4000-8000-000000000004")))
     }
 
     @Test func profilesShowMustMatchTheListing() throws {
@@ -122,7 +122,7 @@ struct InstalledProfilesTests {
         // The same payload UUID in two profiles.
         profiles.removeLast()
         var items = profiles[3]["ProfileItems"] as! [[String: Any]]
-        items[0]["PayloadUUID"] = "FD46A57A-0BA7-4987-9AE6-953FB98BDB9D"
+        items[0]["PayloadUUID"] = "3B3B3B3B-0003-4000-8000-000000000003"
         profiles[3]["ProfileItems"] = items
         show["_computerlevel"] = profiles
         #expect(malformed(show: try PropertyListSerialization.data(fromPropertyList: show, format: .xml, options: 0)))
@@ -205,6 +205,11 @@ struct InstalledProfilesTests {
         // None installed: what the tool prints for a user without profiles.
         #expect(
             try InstalledProfiles.listed("There are no configuration profiles installed for user 'jdoe'\n", user: "jdoe").isEmpty)
+        // A word before "configuration profiles", as the device's count line has.
+        #expect(
+            try InstalledProfiles.listed(
+                list.replacingOccurrences(of: "There are 1 configuration", with: "There are 1 user configuration"), user: "jdoe"
+            ).count == 1)
         #expect(try InstalledProfiles.shown(Data("<plist version=\"1.0\"><dict/></plist>".utf8), user: "jdoe").isEmpty)
     }
 

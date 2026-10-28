@@ -10,8 +10,8 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_com.altiward.agent_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_com.altiward.agent_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_com.altiward.agent_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_com.altiward.agent_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
 			<integer>60</integer>
@@ -22,8 +22,8 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_com.altiward.agent_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_com.altiward.agent_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_com.altiward.agent_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_com.altiward.agent_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
 			<string>token-not-shown</string>
@@ -34,8 +34,8 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_com.altiward.agent_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_com.altiward.agent_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_com.altiward.agent_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_com.altiward.agent_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
 			<string>enforce</string>
@@ -46,8 +46,8 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_com.altiward.agent_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_com.altiward.agent_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_com.altiward.agent_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_com.altiward.agent_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
 			<integer>1</integer>
@@ -58,8 +58,8 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_com.altiward.agent_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_com.altiward.agent_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_com.altiward.agent_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_com.altiward.agent_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
 			<integer>60</integer>
@@ -70,8 +70,8 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_com.altiward.agent_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_com.altiward.agent_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_com.altiward.agent_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_com.altiward.agent_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
 			<string>identifier "com.altiward.hook" and anchor apple generic and certificate leaf[subject.OU] = "JHKW5KFQH7"</string>
@@ -82,8 +82,8 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_com.altiward.agent_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_com.altiward.agent_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_com.altiward.agent_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_com.altiward.agent_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
 			<string>00000000-0000-4000-8000-000000000000</string>
@@ -94,8 +94,8 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_com.altiward.agent_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_com.altiward.agent_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_com.altiward.agent_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_com.altiward.agent_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
 			<string>alert</string>
@@ -106,8 +106,8 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_com.altiward.agent_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_com.altiward.agent_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_com.altiward.agent_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_com.altiward.agent_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
 			<integer>5</integer>
@@ -118,11 +118,11 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_com.altiward.agent_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_com.altiward.agent_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_com.altiward.agent_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_com.altiward.agent_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
-			<string>A34D3A14-3839-4937-AEFD-14C4CB972C36</string>
+			<string>4B4B4B4B-0004-4000-8000-000000000004</string>
 		</dict>
 		<key>PermanentAdmins</key>
 		<dict>
@@ -130,8 +130,8 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_com.altiward.agent_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_com.altiward.agent_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_com.altiward.agent_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_com.altiward.agent_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
 			<array>
@@ -144,8 +144,8 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_com.altiward.agent_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_com.altiward.agent_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_com.altiward.agent_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_com.altiward.agent_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
 			<string>https://altiward-agents.example.com</string>
@@ -156,8 +156,8 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_com.altiward.agent_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_com.altiward.agent_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_com.altiward.agent_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_com.altiward.agent_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
 			<dict>
@@ -176,8 +176,8 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_corp.sap.privileges_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_corp.sap.privileges_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_corp.sap.privileges_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_corp.sap.privileges_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
 			<false/>
@@ -188,8 +188,8 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_corp.sap.privileges_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_corp.sap.privileges_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_corp.sap.privileges_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_corp.sap.privileges_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
 			<true/>
@@ -200,8 +200,8 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_corp.sap.privileges_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_corp.sap.privileges_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_corp.sap.privileges_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_corp.sap.privileges_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
 			<integer>60</integer>
@@ -212,8 +212,8 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_corp.sap.privileges_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_corp.sap.privileges_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_corp.sap.privileges_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_corp.sap.privileges_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
 			<true/>
@@ -224,11 +224,11 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_corp.sap.privileges_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_corp.sap.privileges_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_corp.sap.privileges_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_corp.sap.privileges_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
-			<string>FD46A57A-0BA7-4987-9AE6-953FB98BDB9D</string>
+			<string>3B3B3B3B-0003-4000-8000-000000000003</string>
 		</dict>
 		<key>PostChangeActionOnGrantOnly</key>
 		<dict>
@@ -236,8 +236,8 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_corp.sap.privileges_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_corp.sap.privileges_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_corp.sap.privileges_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_corp.sap.privileges_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
 			<false/>
@@ -248,8 +248,8 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_corp.sap.privileges_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_corp.sap.privileges_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_corp.sap.privileges_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_corp.sap.privileges_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
 			<string>checksum-not-shown</string>
@@ -260,8 +260,8 @@
 			<string>always</string>
 			<key>source</key>
 			<array>
-				<string>mcx_computer_corp.sap.privileges_478e44d7-3866-43b5-b357-8c98e9a22adf</string>
-				<string>mcx_computer_corp.sap.privileges_81d01837-6f04-49ed-b398-1129532cd3eb</string>
+				<string>mcx_computer_corp.sap.privileges_7a7a7a7a-0007-4000-8000-000000000007</string>
+				<string>mcx_computer_corp.sap.privileges_7b7b7b7b-0007-4000-8000-000000000007</string>
 			</array>
 			<key>value</key>
 			<string>/Library/Application Support/Altiward/Altiward.app/Contents/MacOS/Altiward</string>
