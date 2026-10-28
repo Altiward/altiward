@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Altiward/altiward/backend/internal/event"
+	"github.com/Altiward/altiward/backend/internal/session"
 	"github.com/Altiward/altiward/backend/internal/testfixture"
 )
 
@@ -54,9 +55,18 @@ func TestPostgresUpgradesFromEveryMigration(t *testing.T) {
 			defer s.Close()
 
 			// Old rows read back through today's code.
+			// A database that predates 0008 also has the two Macs seeded for its backfill.
+			beforeRetention := !slices.Contains(names[:applied], retentionMigration)
+			wantDevices, wantAudit := 1, 2
+			if beforeRetention {
+				wantDevices, wantAudit = 3, 3
+			}
 			devices, err := s.ListDevices(ctx, "acme")
-			if err != nil || len(devices) != 1 || devices[0].AdminMembers[0] != "itadmin" || devices[0].Silent() {
-				t.Fatalf("old device: %+v, %v", devices, err)
+			if err != nil || len(devices) != wantDevices {
+				t.Fatalf("old devices: %+v, %v", devices, err)
+			}
+			if old := deviceBySerial(devices, "C02OLD000001"); old.AdminMembers[0] != "itadmin" || old.Silent() {
+				t.Fatalf("old device: %+v", old)
 			}
 			sess, evs, err := s.GetSession(ctx, "acme", oldSessionID)
 			if err != nil || sess.LocalUser != "jdoe" || len(evs) != 1 {
@@ -100,7 +110,7 @@ func TestPostgresUpgradesFromEveryMigration(t *testing.T) {
 				t.Fatalf("settings after upgrade: %v", err)
 			}
 			audit, err := s.ListAudit(ctx, "acme", AuditFilter{})
-			if err != nil || len(audit) != 2 || audit[0].Action != AuditChangeSettings {
+			if err != nil || len(audit) != wantAudit || audit[0].Action != AuditChangeSettings {
 				t.Fatalf("audit after upgrade: %+v, %v", audit, err)
 			}
 			if in, err := s.Installation(ctx); err != nil || in.CreatedAt.IsZero() {
@@ -126,9 +136,44 @@ func TestPostgresUpgradesFromEveryMigration(t *testing.T) {
 			}, now); err != nil {
 				t.Fatalf("Intune sync after upgrade: %v", err)
 			}
+			if beforeRetention {
+				// 0008 retires a Mac whose keys an admin revoked, at the time of that revocation,
+				// and leaves alone one whose key a contest revoked. The flag isn't on the Mac
+				// yet (ListDevices doesn't return it), so read it from the table.
+				retired := map[string]*time.Time{}
+				rows, err := s.pool.Query(ctx, `SELECT serial, retired_at FROM devices WHERE tenant_id = 'acme'`)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for rows.Next() {
+					var serial string
+					var at *time.Time
+					if err := rows.Scan(&serial, &at); err != nil {
+						t.Fatal(err)
+					}
+					retired[serial] = at
+				}
+				rows.Close()
+				if at := retired[adminRetiredSerial]; at == nil || !at.Equal(now.Add(-48*time.Hour)) {
+					t.Fatalf("admin-revoked Mac retired_at = %v, want %v", at, now.Add(-48*time.Hour))
+				}
+				if retired[contestedSerial] != nil || retired["C02OLD000001"] != nil {
+					t.Fatalf("retired_at = %v, want only the admin-revoked Mac retired", retired)
+				}
+			}
+			// Deleting history younger than 90 days is refused by the database itself, whatever
+			// the application does. The seeded event is dated by the test's clock, so make it
+			// fresh by the database's.
+			if _, err := s.pool.Exec(ctx, `UPDATE events SET received_at = now()`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.pool.Exec(ctx, `DELETE FROM events WHERE tenant_id = 'acme'`); err == nil ||
+				!strings.Contains(err.Error(), "younger than 90 days") {
+				t.Fatalf("delete of a fresh event: %v", err)
+			}
 			st, err := s.Stats(ctx, now)
 			if err != nil || len(st.MigrationsPending) != 0 || len(st.MigrationsApplied) != len(names) ||
-				st.Devices != 1 || st.AuditEntries != 2 || st.InstalledAt == nil ||
+				st.Devices != int64(wantDevices) || st.AuditEntries != int64(wantAudit) || st.InstalledAt == nil ||
 				len(st.MDM) != 1 || st.MDM[0].TenantID != "acme" || st.MDM[0].Devices != 1 {
 				t.Fatalf("stats after upgrade: %+v, %v", st, err)
 			}
@@ -137,10 +182,25 @@ func TestPostgresUpgradesFromEveryMigration(t *testing.T) {
 }
 
 const (
-	oldSessionID   = "5b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d"
-	oldMDMDeviceID = "9a0b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d"
-	mdmMigration   = "migrations/0007_mdm.sql"
+	adminRetiredSerial = "C02OLDRET001"
+	contestedSerial    = "C02OLDCON001"
+	adminRevokedKey    = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+	contestRevokedKey  = "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e"
+	oldSessionID       = "5b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d"
+	oldMDMDeviceID     = "9a0b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d"
+	mdmMigration       = "migrations/0007_mdm.sql"
+
+	retentionMigration = "migrations/0008_retention.sql"
 )
+
+func deviceBySerial(devices []session.Device, serial string) session.Device {
+	for _, d := range devices {
+		if d.Serial == serial {
+			return d
+		}
+	}
+	return session.Device{}
+}
 
 // inSchema returns url pointing at a fresh schema, dropped when the test ends.
 func inSchema(t *testing.T, url, schema string) string {
@@ -190,7 +250,8 @@ func applyFirst(t *testing.T, pool *pgxpool.Pool, names []string) {
 // sets, so a field added later must decode from its absence: a device, an open session
 // with its event and that event's export, a credential and an audit entry. A table a later
 // migration adds is seeded only when that migration is in applied, the migrations already
-// run: from 0007, a copy of one Mac from Intune and its sync.
+// run: from 0007, a copy of one Mac from Intune and its sync. Before 0008, two Macs with
+// revoked keys for its retired_at backfill.
 func seedOldData(t *testing.T, pool *pgxpool.Pool, now time.Time, applied []string) {
 	t.Helper()
 	ctx := context.Background()
@@ -232,6 +293,25 @@ func seedOldData(t *testing.T, pool *pgxpool.Pool, now time.Time, applied []stri
 				[]any{oldMDMDeviceID}},
 			seed{`INSERT INTO mdm_sync (tenant_id, source, last_success_at, devices) VALUES ('acme', 'intune', $1, 1)`, []any{seen}},
 		)
+	}
+	// Before 0008, two Macs whose only key is revoked: one by an admin (the console wrote a
+	// revoke_enrollment entry) and one by a contest (no entry). 0008 backfills retired_at
+	// for the first only. From 0008 on, the flag is written as it happens, so there is
+	// nothing to backfill and these aren't seeded.
+	if !slices.Contains(applied, retentionMigration) {
+		revokedAt := now.Add(-48 * time.Hour).Format(time.RFC3339)
+		for _, m := range []struct{ serial, key string }{{adminRetiredSerial, adminRevokedKey}, {contestedSerial, contestRevokedKey}} {
+			seeds = append(seeds,
+				seed{`INSERT INTO devices (tenant_id, serial, state, last_seen_at) VALUES ('acme', $1, $2, $3)`,
+					[]any{m.serial, fmt.Sprintf(`{"tenant_id":"acme","serial":%q}`, m.serial), seen}},
+				seed{`INSERT INTO device_credentials (device_id, tenant_id, serial, hardware_uuid, public_key,
+					key_digest, status, created_at, activated_at, revoked_at) VALUES ($1, 'acme', $2, 'HW-RET', '\x00',
+					decode(md5($4), 'hex'), 'revoked', $3, $3, $3)`, []any{m.key, m.serial, revokedAt, m.key}},
+			)
+		}
+		seeds = append(seeds, seed{`INSERT INTO audit_log (tenant_id, id, at, actor, action, target, detail)
+			VALUES ('acme', 'c3d4e5f6-a7b8-4c9d-8e0f-1a2b3c4d5e6f', $1, 'token:3f2a9c1b', 'revoke_enrollment', $2, '{}')`,
+			[]any{revokedAt, adminRevokedKey}})
 	}
 	for _, q := range seeds {
 		if _, err := pool.Exec(ctx, q.sql, q.args...); err != nil {

@@ -68,7 +68,7 @@ func NewMemory(exportSinks []string) *Memory {
 		staleUseReported: map[string]time.Time{},
 
 		consoleSessions: map[string]ConsoleSession{},
-		installation:    Installation{CreatedAt: time.Now().UTC()},
+		installation:    newMemoryInstallation(),
 
 		mdm: map[key]*memMDM{},
 	}
