@@ -289,7 +289,9 @@ tr[aria-selected="true"] .gauge .ceiling { background: var(--ink); }
 .group { margin-top: var(--space-6); }
 .group h3 { font-size: 13px; line-height: 18px; font-weight: 600; color: var(--muted); margin: 0 0 var(--space-2); }
 .box { background: var(--surface-100); border: 1px solid var(--hairline); border-radius: var(--radius-md); padding: 0 var(--space-3); }
-.box dl { display: grid; grid-template-columns: max-content 1fr; margin: 0; font-size: 13px; line-height: 18px; }
+/* The label takes its full width when there is room and wraps between words when there
+   isn't; the value keeps room for a short word, such as "Passing", whole. */
+.box dl { display: grid; grid-template-columns: minmax(min-content, max-content) minmax(8em, 1fr); margin: 0; font-size: 13px; line-height: 18px; }
 .box dt, .box dd { padding: var(--space-2) 0; border-bottom: 1px solid var(--hairline); margin: 0; }
 .box dt { color: var(--muted); }
 .box dd { text-align: right; overflow-wrap: anywhere; padding-left: var(--space-3); }
