@@ -391,10 +391,10 @@ func enrollment(e store.StoredEvent, tenantID string) Record {
 	switch state {
 	case event.EnrollmentStatePending:
 		severity, alert = SeverityMedium, true
-		// A Mac's first key, or its first since its keys were revoked, has no previous key:
-		// approval for new Macs, or an Intune check, held it.
+		// Without a previous key this is a Mac's first key, held by approval for new Macs or
+		// an Intune check, or a retired Mac's new key, which always waits: say neither.
 		if detailString(e.Detail, "previous_device_id") == "" {
-			msg = fmt.Sprintf("%s enrolled as a new Mac, waiting for approval", e.Device.Serial)
+			msg = fmt.Sprintf("%s enrolled a new key, waiting for approval", e.Device.Serial)
 		} else {
 			msg = fmt.Sprintf("%s enrolled again with a new key, waiting for approval", e.Device.Serial)
 		}
