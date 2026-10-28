@@ -129,6 +129,8 @@ const integrityChecks: Record<string, string> = {
   privileges_renewal: "Privileges renewals off",
   privileges_give_back_hook: "Privileges reports give-backs",
   privileges_revoke_exclusions: "Privileges spares permanent admins",
+  platform_sso_link: "Platform SSO link added or removed",
+  platform_sso_link_changed: "Platform SSO link changed",
 };
 
 /** Words for the agent's tamper checks, sentence case. */

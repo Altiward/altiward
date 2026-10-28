@@ -330,6 +330,8 @@ struct PersistenceBaseline: Codable {
         var user: String
         var sessionID: String
         var source: ElevationSource
+        /// The session's UPN (``OpenSession/upn``); nil in a baseline an older agent stored.
+        var upn: PinnedUPN?
     }
 
     var takenAt: Date
@@ -390,7 +392,7 @@ extension ElevationTracker {
                             AltiwardEvent(
                                 type: .persistenceDetected, sessionID: session.sessionID, timestamp: now,
                                 device: device,
-                                user: UserInfo(localName: session.user, upn: env.config.upn(for: session.user)),
+                                user: UserInfo(localName: session.user, upn: upn(session.upn ?? .unknown, of: session.user)),
                                 elevation: ElevationInfo(source: session.source),
                                 detail: [
                                     "findings": .array(findings), "since": .date(baseline.takenAt),
@@ -423,7 +425,7 @@ extension ElevationTracker {
     }
 
     private static func ref(_ s: OpenSession) -> PersistenceBaseline.SessionRef {
-        .init(user: s.user, sessionID: s.sessionID, source: s.source)
+        .init(user: s.user, sessionID: s.sessionID, source: s.source, upn: s.upn)
     }
 
     /// What is new or changed in `current`, in a stable order, within ``findingsBudget``.

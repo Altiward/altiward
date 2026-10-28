@@ -119,8 +119,8 @@ struct AgentStoreTests {
     @Test func freshStoreHasCurrentSchemaVersion() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("altiward-fresh-\(UUID().uuidString)")
         _ = try AgentStore.open(directory: dir)
-        #expect(try userVersion(of: dir) == 3)
-        #expect(AgentStore.schemaVersion == 3)
+        #expect(try userVersion(of: dir) == 4)
+        #expect(AgentStore.schemaVersion == 4)
     }
 
     /// 0.1.0 wrote no version. Its stores must open with their data and get the current version.
@@ -181,7 +181,7 @@ struct AgentStoreTests {
                     user: "jdoe", sessionID: "s1", source: .privileges, startedAt: start,
                     expiresAt: start.addingTimeInterval(1200), overdueReported: true))
         #expect(try store.value(forKey: "device_credential") == "secret")
-        #expect(try userVersion(of: dir) == 3)
+        #expect(try userVersion(of: dir) == 4)
     }
 
     /// Agent 0.2's stores are at version 1: they keep their data and gain `permanent_uses`.
@@ -193,8 +193,8 @@ struct AgentStoreTests {
         #expect(try userVersion(of: dir) == 1)
 
         let store = try AgentStore.open(directory: dir)
-        #expect(AgentStore.schemaVersion == 3)
-        #expect(try userVersion(of: dir) == 3)
+        #expect(AgentStore.schemaVersion == 4)
+        #expect(try userVersion(of: dir) == 4)
         #expect(try store.value(forKey: "device_credential") == "secret")
         let tables = try SQLiteConnection(path: dir.appendingPathComponent("agent.sqlite").path)
             .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'permanent_uses'")
@@ -230,7 +230,7 @@ struct AgentStoreTests {
     }
 
     /// Agent 0.3's stores are at version 2: they keep their data and gain `pending_claims`.
-    @Test func aVersion2StoreUpgradesToVersion3() throws {
+    @Test func aVersion2StoreUpgrades() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("altiward-v2-\(UUID().uuidString)")
         try writeVersion2Store(in: dir)
         try SQLiteConnection(path: dir.appendingPathComponent("agent.sqlite").path)
@@ -238,10 +238,38 @@ struct AgentStoreTests {
         #expect(try userVersion(of: dir) == 2)
 
         let store = try AgentStore.open(directory: dir)
-        #expect(AgentStore.schemaVersion == 3)
-        #expect(try userVersion(of: dir) == 3)
+        #expect(AgentStore.schemaVersion == 4)
+        #expect(try userVersion(of: dir) == 4)
         #expect(try store.value(forKey: "device_credential") == "secret")
         #expect(try store.pendingClaims().isEmpty)
+    }
+
+    /// Agent 1.1's stores are at version 3: a session and a held claim open during the upgrade
+    /// keep their rows, with no UPN, so their events read it when they are made.
+    @Test func aVersion3StoreGainsUPNColumns() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("altiward-v3-\(UUID().uuidString)")
+        try writeVersion3Store(in: dir)
+        let start = Date(timeIntervalSince1970: 1_792_000_000)
+        try SQLiteConnection(path: dir.appendingPathComponent("agent.sqlite").path).execute(
+            """
+            INSERT INTO open_sessions (user, session_id, source, started_at, expires_at, overdue_reported)
+            VALUES ('jdoe', 's1', 'privileges', \(start.timeIntervalSince1970), NULL, 0);
+            INSERT INTO pending_claims (claim_id, user, reason, invoked_at, caller_uid)
+            VALUES ('c1', 'asmith', NULL, \(start.timeIntervalSince1970), 502);
+            """)
+
+        let store = try AgentStore.open(directory: dir)
+        #expect(try userVersion(of: dir) == 4)
+        #expect(
+            try store.openSession(user: "jdoe")
+                == OpenSession(user: "jdoe", sessionID: "s1", source: .privileges, startedAt: start, expiresAt: nil))
+        #expect(try store.pendingClaims().map(\.upn) == [.unknown])
+
+        try store.upsertOpenSession(
+            OpenSession(
+                user: "jdoe", sessionID: "s1", source: .privileges, startedAt: start, expiresAt: nil,
+                upn: .read("jane.doe@example.com")))
+        #expect(try store.openSession(user: "jdoe")?.upn == .read("jane.doe@example.com"))
     }
 
     @Test func pendingClaimsRoundTrip() throws {
@@ -254,7 +282,7 @@ struct AgentStoreTests {
         let earlier = PendingClaim(
             claimID: "c1",
             invocation: HookInvocation(user: "jdoe", state: .admin, reason: "probe reason", invokedAt: start),
-            callerUID: 501)
+            callerUID: 501, upn: .read("jane.doe@example.com"))
         // Added out of order: the oldest invocation still comes first.
         try store.addPendingClaim(later)
         try store.addPendingClaim(earlier)
@@ -275,12 +303,12 @@ struct AgentStoreTests {
             try store.setValue("secret", forKey: "device_credential")
         }
         let path = dir.appendingPathComponent("agent.sqlite").path
-        try SQLiteConnection(path: path).execute("PRAGMA user_version = 4")
+        try SQLiteConnection(path: path).execute("PRAGMA user_version = 5")
 
-        #expect(throws: AgentStoreError.newerSchema(found: 4, supported: 3)) {
+        #expect(throws: AgentStoreError.newerSchema(found: 5, supported: 4)) {
             try AgentStore.open(directory: dir)
         }
-        #expect(try userVersion(of: dir) == 4)
+        #expect(try userVersion(of: dir) == 5)
         #expect(try SQLiteConnection(path: path).query("SELECT value FROM kv").first?.text(0) == "secret")
     }
 

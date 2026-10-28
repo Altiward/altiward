@@ -70,6 +70,9 @@ public struct AgentEnvironment: Sendable {
     public var privilegesRenewals: @Sendable (_ since: Date) -> [PrivilegesRenewalLine]
     /// The UUIDs of SAP's agent executable on disk, one for each architecture.
     public var privilegesAgentImageUUIDs: @Sendable () -> Set<String>
+    /// The account Platform SSO links to each Mac account, by short name; nil when the
+    /// directory can't be read (``PlatformSSO/allLinks()``).
+    public var platformSSOLinks: @Sendable () -> [String: String]?
 
     public init(
         device: @escaping @Sendable () -> DeviceInfo,
@@ -98,7 +101,8 @@ public struct AgentEnvironment: Sendable {
         privilegesExtensionPID: @escaping @Sendable () -> Int32? = { nil },
         userID: @escaping @Sendable (_ shortName: String) -> UInt32? = { _ in nil },
         privilegesRenewals: @escaping @Sendable (_ since: Date) -> [PrivilegesRenewalLine] = { _ in [] },
-        privilegesAgentImageUUIDs: @escaping @Sendable () -> Set<String> = { [] }
+        privilegesAgentImageUUIDs: @escaping @Sendable () -> Set<String> = { [] },
+        platformSSOLinks: @escaping @Sendable () -> [String: String]? = { [:] }
     ) {
         self.device = device
         self.privileges = privileges
@@ -125,6 +129,7 @@ public struct AgentEnvironment: Sendable {
         self.userID = userID
         self.privilegesRenewals = privilegesRenewals
         self.privilegesAgentImageUUIDs = privilegesAgentImageUUIDs
+        self.platformSSOLinks = platformSSOLinks
     }
 
     /// The real system.
@@ -155,7 +160,8 @@ public struct AgentEnvironment: Sendable {
             privilegesExtensionPID: { PrivilegesExtensionProcess.pid() },
             userID: { ProcessIdentity.uid(of: $0) },
             privilegesRenewals: { PrivilegesAgentLog.renewals(since: $0) },
-            privilegesAgentImageUUIDs: { MachOImage.uuids(atPath: PrivilegesAgentLog.executable) })
+            privilegesAgentImageUUIDs: { MachOImage.uuids(atPath: PrivilegesAgentLog.executable) },
+            platformSSOLinks: { PlatformSSO.allLinks() })
     }
 }
 
@@ -166,6 +172,8 @@ public final class ElevationTracker: Sendable {
     let store: AgentStore
     let env: AgentEnvironment
     let persistenceLock = NSLock()
+    /// One Platform SSO link check at a time, so an older read never overwrites a newer record.
+    let platformSSOLock = NSLock()
     /// Admins with no open session, and when ``checkUntrackedAdmins()`` first saw them so.
     let untrackedSince = OSAllocatedUnfairLock<[String: Date]>(initialState: [:])
     /// When each caller's recent grant claims arrived, by uid (``submit(_:callerUID:)``).
@@ -267,7 +275,8 @@ public final class ElevationTracker: Sendable {
         endingOnly: Bool = false, alsoQueue: (AltiwardEvent) -> AltiwardEvent?
     ) throws -> AltiwardEvent {
         let device = env.device()
-        let user = UserInfo(localName: invocation.user, upn: env.config.upn(for: invocation.user))
+        // Now, as the claim arrives: a grant's session keeps it.
+        let pin = pinNow(for: invocation.user)
         // Read before the transaction: it can wait a moment for Privileges to write it. A
         // fixed ExpirationInterval decides the expiry without it.
         let timer =
@@ -280,7 +289,7 @@ public final class ElevationTracker: Sendable {
             case .admin:
                 let granted = try applyGrant(
                     invocation, callerUID: callerUID, grantedAt: invocation.invokedAt, timer: timer,
-                    extraDetail: grantDetail, skipLateCheck: false, device: device)
+                    extraDetail: grantDetail, skipLateCheck: false, upn: pin, device: device)
                 if let replaced = granted.replaced { try store.enqueue(replaced) }
                 event = granted.event
             case .user:
@@ -300,7 +309,8 @@ public final class ElevationTracker: Sendable {
                 try store.closeSession(user: invocation.user)
                 event = AltiwardEvent(
                     type: .elevationRevoked, sessionID: existing?.sessionID ?? newID(),
-                    timestamp: invocation.invokedAt, device: device, user: user,
+                    timestamp: invocation.invokedAt, device: device,
+                    user: existing.map(sessionUser) ?? UserInfo(localName: invocation.user, upn: upn(pin, of: invocation.user)),
                     elevation: ElevationInfo(reason: invocation.reason, source: existing?.source ?? .privileges),
                     detail: detail)
             }
@@ -335,12 +345,12 @@ public final class ElevationTracker: Sendable {
     /// the transaction. The events carry the claim's arrival (`invokedAt`). `extraDetail` is
     /// added to the grant's detail. `skipLateCheck` is for a grant Privileges' log confirmed,
     /// which replaces an out-of-band session however long it has been open; a grant on a Mac
-    /// without SAP Privileges is still refused in `enforce` mode.
+    /// without SAP Privileges is still refused in `enforce` mode. `upn` is the user's UPN when
+    /// the claim arrived; a new session keeps it, and a renewal keeps the session's.
     func applyGrant(
         _ invocation: HookInvocation, callerUID: UInt32?, grantedAt: Date, timer: Date?,
-        extraDetail: [String: JSONValue], skipLateCheck: Bool, device: DeviceInfo
+        extraDetail: [String: JSONValue], skipLateCheck: Bool, upn claimPin: PinnedUPN, device: DeviceInfo
     ) throws -> (event: AltiwardEvent, replaced: AltiwardEvent?) {
-        let user = UserInfo(localName: invocation.user, upn: env.config.upn(for: invocation.user))
         // Read inside the transaction, so a grant can't commit between the read and the decision.
         let observedAdmin = env.admins.isAdmin(user: invocation.user)
         var detail = hookDetail(invocation, observedAdmin: observedAdmin, callerUID: callerUID)
@@ -350,6 +360,8 @@ public final class ElevationTracker: Sendable {
         // A grant while a Privileges session is open renews that session.
         let renewing = existing?.source == .privileges ? existing : nil
         let sessionID = renewing?.sessionID ?? newID()
+        let pin = renewing?.upn ?? claimPin
+        let user = UserInfo(localName: invocation.user, upn: upn(pin, of: invocation.user))
         let limit = env.privileges().expiry(grantedAt: grantedAt, timer: timer)
         let expiresAt = limit?.date
         detail["renewed"] = .bool(renewing != nil)
@@ -361,7 +373,7 @@ public final class ElevationTracker: Sendable {
             detail["replaced_out_of_band"] = true
             replacedEvent = AltiwardEvent(
                 type: .elevationRevoked, sessionID: replaced.sessionID,
-                timestamp: invocation.invokedAt, device: device, user: user,
+                timestamp: invocation.invokedAt, device: device, user: sessionUser(replaced),
                 elevation: ElevationInfo(source: .outOfBand),
                 detail: [
                     "trigger": "privileges_grant", "observed_admin": .bool(observedAdmin),
@@ -375,7 +387,7 @@ public final class ElevationTracker: Sendable {
             OpenSession(
                 user: invocation.user, sessionID: sessionID, source: .privileges,
                 startedAt: renewing?.startedAt ?? invocation.invokedAt, expiresAt: expiresAt,
-                overdueReported: unchanged && renewing?.overdueReported == true))
+                overdueReported: unchanged && renewing?.overdueReported == true, upn: pin))
         let event = AltiwardEvent(
             type: .elevationGranted, sessionID: sessionID, timestamp: invocation.invokedAt,
             device: device, user: user,
@@ -458,7 +470,7 @@ public final class ElevationTracker: Sendable {
                 events.append(
                     AltiwardEvent(
                         type: .elevationRevoked, sessionID: session.sessionID, timestamp: now, device: device,
-                        user: UserInfo(localName: session.user, upn: env.config.upn(for: session.user)),
+                        user: sessionUser(session),
                         elevation: ElevationInfo(source: session.source),
                         detail: [
                             "trigger": "heartbeat", "observed_admin": false, "verified": true,
@@ -477,7 +489,7 @@ public final class ElevationTracker: Sendable {
                 events.append(
                     AltiwardEvent(
                         type: .elevationRevoked, sessionID: session.sessionID, timestamp: now, device: device,
-                        user: UserInfo(localName: session.user, upn: env.config.upn(for: session.user)),
+                        user: sessionUser(session),
                         elevation: ElevationInfo(source: session.source),
                         detail: ["trigger": "permanent_admin", "observed_admin": true, "verified": true]))
             }
@@ -609,7 +621,7 @@ public final class ElevationTracker: Sendable {
         where session.source == .privileges && !env.config.permanentAdmins.contains(session.user)
         {
             guard let expiresAt = session.expiresAt, now >= expiresAt.addingTimeInterval(grace) else { continue }
-            let user = UserInfo(localName: session.user, upn: env.config.upn(for: session.user))
+            let user = sessionUser(session)
             let elevation = ElevationInfo(expires: expiresAt, source: session.source)
             var detail: [String: JSONValue] = [
                 "trigger": "heartbeat", "expired_at": .date(expiresAt), "grace_seconds": .number(grace),
@@ -707,7 +719,7 @@ public final class ElevationTracker: Sendable {
             events.append(
                 AltiwardEvent(
                     type: .adminOutOfBandRemoved, sessionID: session.sessionID, timestamp: now, device: device,
-                    user: UserInfo(localName: session.user, upn: env.config.upn(for: session.user)),
+                    user: sessionUser(session),
                     elevation: ElevationInfo(source: .outOfBand),
                     detail: [
                         "trigger": "heartbeat", "first_observed": .date(session.startedAt),
@@ -766,19 +778,25 @@ public final class ElevationTracker: Sendable {
     /// Opens an out-of-band session for `user` and returns its `admin.out_of_band` event,
     /// for the caller to enqueue. `audit` says which process added them, when Privileges'
     /// system extension logged it. The session starts at `startedAt`, when the rights were
-    /// first seen, or `now` when that isn't given; the grace period counts from it.
+    /// first seen, or `now` when that isn't given; the grace period counts from it. The session
+    /// keeps `upn`, the UPN read when a refused claim arrived, or else the one recorded now.
     func openOutOfBand(
-        _ user: String, now: Date, startedAt: Date? = nil, device: DeviceInfo, audit: [PrivilegesAuditRecord]
+        _ user: String, now: Date, startedAt: Date? = nil, upn pin: PinnedUPN = .unknown, device: DeviceInfo,
+        audit: [PrivilegesAuditRecord]
     ) throws -> AltiwardEvent {
         let sessionID = newID()
         let firstObserved = startedAt ?? now
+        let pin = pin == .unknown ? pinNow(for: user) : pin
+        let upn = upn(pin, of: user)
         try store.upsertOpenSession(
-            OpenSession(user: user, sessionID: sessionID, source: .outOfBand, startedAt: firstObserved, expiresAt: nil))
+            OpenSession(
+                user: user, sessionID: sessionID, source: .outOfBand, startedAt: firstObserved, expiresAt: nil,
+                upn: pin))
         var detail: [String: JSONValue] = ["first_observed": .date(firstObserved)]
         if let instigator = try instigator(of: user, in: audit) { detail["instigator"] = instigator }
         return AltiwardEvent(
             type: .adminOutOfBand, sessionID: sessionID, timestamp: now, device: device,
-            user: UserInfo(localName: user, upn: env.config.upn(for: user)),
+            user: UserInfo(localName: user, upn: upn),
             elevation: ElevationInfo(source: .outOfBand),
             detail: detail)
     }
@@ -859,7 +877,7 @@ public final class ElevationTracker: Sendable {
             try store.enqueue(
                 AltiwardEvent(
                     type: .elevationRevoked, sessionID: open?.sessionID ?? newID(), timestamp: now, device: device,
-                    user: UserInfo(localName: user, upn: env.config.upn(for: user)),
+                    user: open.map(sessionUser) ?? UserInfo(localName: user, upn: upn(for: user)),
                     elevation: ElevationInfo(source: open?.source ?? .outOfBand), detail: detail),
                 now: now)
         }

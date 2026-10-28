@@ -243,11 +243,11 @@ extension ElevationTracker {
             try store.upsertOpenSession(
                 OpenSession(
                     user: open.user, sessionID: open.sessionID, source: open.source, startedAt: open.startedAt,
-                    expiresAt: expires))
+                    expiresAt: expires, upn: open.upn))
             events.append(
                 AltiwardEvent(
                     type: .elevationGranted, sessionID: open.sessionID, timestamp: line.date, device: device,
-                    user: UserInfo(localName: line.user, upn: env.config.upn(for: line.user)),
+                    user: sessionUser(open),
                     elevation: ElevationInfo(expires: expires, source: .privileges),
                     detail: [
                         "trigger": "privileges_renewal", "renewed": true, "observed_admin": true, "verified": true,

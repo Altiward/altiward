@@ -186,6 +186,19 @@ Create these in your MDM and scope them to a pilot group first.
      > manages if it isn't in `PermanentAdmins`. Read [Enforcement](#enforcement) before
      > turning it on.
 
+   - `UserPrincipalNames` (optional): each local account's UPN, which events carry so your
+     SIEM can tie an elevation to the person. On a Mac registered for Platform SSO, the
+     agent takes the UPN from the Entra ID account Platform SSO links to each Mac account,
+     so you can leave this out. It reads the link from the Mac's local directory: the
+     account Platform SSO signed in with, normally the person's UPN. An entry here wins over
+     the link, but only from MDM: a map set with `defaults write` is ignored and reported as
+     tampering. Map an account here if you need certainty about its UPN:
+     an admin can change a Platform SSO link (see below).
+   - `PlatformSSOIdentity` (optional): set it to `false` if your data protection rules allow
+     only UPNs you supply. The agent then reads no Platform SSO links: UPNs come only from
+     `UserPrincipalNames`, and a changed link is no longer reported. Only MDM can turn it
+     off; a value set with `defaults write` is ignored and reported as tampering.
+
    The example explains every other key. `HeartbeatInterval` is 5 minutes by default and at
    most 3600 seconds (a larger value counts as an hour), so a running agent checks in at
    least hourly. Two keys let the agent act, not only report: `ExpiryEnforcement`, for
@@ -195,8 +208,25 @@ Create these in your MDM and scope them to a pilot group first.
 
    Deliver the profile through MDM rather than `defaults write`: Altiward reports
    `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`,
-   `OutOfBandEnforcement`, `OutOfBandGraceMinutes` or `HookCodeRequirement` set outside MDM
-   as tampering (it doesn't check the other keys).
+   `OutOfBandEnforcement`, `OutOfBandGraceMinutes`, `UserPrincipalNames`,
+   `PlatformSSOIdentity` or `HookCodeRequirement` set outside MDM as tampering (it doesn't
+   check the other keys).
+
+   **Where a UPN comes from.** The agent keeps its own record of each Mac account's
+   Platform SSO link, and events take the UPN from that record, never straight from the
+   Mac. It reads the links when it starts, on every heartbeat and after each grant and
+   give-back, and reports each change it finds since its last read, with or without anyone
+   elevated, as tampering (its very first read, at install or upgrade, only records):
+   **Platform SSO link changed** (High) when an account moves from one person's account to
+   another's, and **Platform SSO link added or removed** (Medium) otherwise. A change of
+   case alone is recorded without a report. A link added is
+   also High when the account was last linked to someone else (unlinked and linked again,
+   or deleted and made again), when another Mac account has the same link, or when someone
+   held admin rights at the time. A person registering for Platform SSO adds a link, once.
+   A person's UPN changing in Entra ID is the usual innocent cause of a changed link: their
+   Entra ID audit log shows it. Turning `PlatformSSOIdentity` off and on again reports every
+   link as added. An elevation keeps the UPN on record when its grant arrived, or none if
+   there was none, so a link changed during the elevation can't move it onto someone else.
 2. **Login items profile** (`altiward-login-items.mobileconfig`), so people can't turn
    the agent off and don't see a background-item notice.
 3. **SAP Privileges:** download `corp.sap.privileges.plist` from the **same agent release
@@ -1527,7 +1557,7 @@ Logs aren't included. If a maintainer asks for them:
 | `upgrade.sh` says a file doesn't match `SHA256SUMS` | The download is incomplete or was changed: download the release again |
 | A Mac shows **Not checking in** while it's on and online | Something between the Mac and the server answers or drops its key rotation request, so it holds its reports. `altiward-agent status` shows `key rotation:` and the last answer ([Key rotation](#key-rotation)) |
 | A Mac shows **Not checking in** | It has been off, offline or unable to reach the agent hostname for longer than the limit. Its events wait on the Mac and arrive when it reconnects. If laptops show this when they're away from the office, the agent hostname isn't reachable from the internet ([Two hostnames](#what-youre-installing)). |
-| **Needs attention** on a Mac | An integrity check failed, for example the agent's files changed, or `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`, `OutOfBandEnforcement`, `OutOfBandGraceMinutes` or `HookCodeRequirement` was set outside MDM. The Mac's details say which. |
+| **Needs attention** on a Mac | An integrity check failed, for example the agent's files changed, or `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`, `OutOfBandEnforcement`, `OutOfBandGraceMinutes`, `UserPrincipalNames`, `PlatformSSOIdentity` or `HookCodeRequirement` was set outside MDM. The Mac's details say which. |
 
 For anything else, run the [diagnostics report](#diagnostics-for-a-bug-report) and check its
 `problems` list.

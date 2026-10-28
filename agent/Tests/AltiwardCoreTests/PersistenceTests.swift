@@ -284,6 +284,32 @@ struct PersistenceTests {
             ])
     }
 
+    /// Persistence found during a session is reported with the UPN the session started with.
+    @Test func persistenceFindingsCarryTheSessionsUPN() throws {
+        let t = tracker()
+        try store.upsertOpenSession(
+            OpenSession(
+                user: "jdoe", sessionID: newID(), source: .privileges, startedAt: clock.now, expiresAt: nil,
+                upn: .read("jane.doe@example.com")))
+        try t.checkPersistence()
+        try write("/Users/jdoe/.ssh/authorized_keys", Self.key + "\n")
+        #expect(try #require(try t.checkPersistence().first).user?.upn == "jane.doe@example.com")
+    }
+
+    @Test(arguments: [PinnedUPN.unknown, .read(nil), .read("jane.doe@example.com")])
+    func sessionPinsRoundTripInTheBaseline(pin: PinnedUPN) throws {
+        let ref = PersistenceBaseline.SessionRef(user: "jdoe", sessionID: "s1", source: .privileges, upn: pin)
+        let data = try AltiwardJSON.encoder().encode(ref)
+        #expect(try AltiwardJSON.decoder().decode(PersistenceBaseline.SessionRef.self, from: data).upn == pin)
+    }
+
+    /// A baseline an older agent stored, with no UPN on its sessions, still reads.
+    @Test func anOlderBaselineStillDecodes() throws {
+        let json = #"{"takenAt":"2026-10-28T10:00:00.000Z","items":[],"sessions":[{"user":"jdoe","sessionID":"s1","source":"privileges"}],"unreadable":[]}"#
+        let baseline = try AltiwardJSON.decoder().decode(PersistenceBaseline.self, from: Data(json.utf8))
+        #expect(baseline.sessions.first?.upn == nil)
+    }
+
     @Test func anAccountMadeAdminIsNotAChangedAccount() throws {
         // Admin rights given to an existing account are an elevation, reported as such.
         let t = tracker()

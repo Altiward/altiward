@@ -56,7 +56,8 @@ public struct SystemIntegrity: Sendable {
     /// profile (forced), not from /Library/Preferences.
     public static let policyKeys = [
         "PermanentAdmins", "ExpiryEnforcement", "ExpiryGraceMinutes", "HookCodeRequirement", "ServerURL",
-        "OutOfBandEnforcement", "OutOfBandGraceMinutes",
+        "OutOfBandEnforcement", "OutOfBandGraceMinutes", "UserPrincipalNames",
+        "PlatformSSOIdentity",
     ]
 
     /// Altiward.app, or nil when the daemon isn't running from its bundle (development).

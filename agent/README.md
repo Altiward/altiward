@@ -131,8 +131,13 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
   SSH keys, local accounts and remote access after each grant and end and on each
   heartbeat, and reports changes on the sessions open in between (`persistence.detected`).
   None of it needs Apple's Endpoint Security entitlement.
-- **Maps users to UPNs** from the `UserPrincipalNames` preference. Platform SSO lookup is
-  still to do.
+- **Maps users to UPNs** from a `UserPrincipalNames` MDM sets, or else from the account
+  Platform SSO links to each Mac account (`PlatformSSO:` in the account's
+  `AltSecurityIdentities`, read through OpenDirectory). The agent keeps its own record of
+  every account's link and events take UPNs from it; each change to it, at any time, is
+  reported as `agent.tamper` (`platform_sso_link`, `platform_sso_link_changed`). A session
+  keeps the UPN on record when its grant arrived. A `PlatformSSOIdentity` of `false` from
+  MDM turns the read off.
 
 Every setting is read when the daemon starts. It checks for changes every 15 seconds and,
 when one has changed, logs which and exits for launchd to start it again with them, so a

@@ -30,6 +30,32 @@ public struct OpenSession: Sendable, Equatable {
     public let expiresAt: Date?
     /// `elevation.overdue` was already sent for the current expiry.
     public var overdueReported = false
+    /// The UPN every event of the session carries.
+    public var upn: PinnedUPN = .unknown
+}
+
+/// The UPN every event of a session carries, read once: when its grant claim arrived, or when
+/// its out-of-band rights were found. So a Platform SSO link changed during the session can't
+/// move it onto someone else.
+public enum PinnedUPN: Sendable, Equatable, Codable {
+    /// A session or held claim an older agent stored: each event reads the UPN as it is made.
+    case unknown
+    /// Read then; nil when the user had none.
+    case read(String?)
+
+    /// Stored as NULL when unknown, and as an empty string when read with none.
+    init(column: String?) {
+        guard let column else {
+            self = .unknown
+            return
+        }
+        self = .read(column.isEmpty ? nil : column)
+    }
+
+    var column: SQLiteValue {
+        guard case .read(let upn) = self else { return .null }
+        return .text(upn ?? "")
+    }
 }
 
 /// A use of a permanent admin account with a start and an end (a sign-in), from when it is
@@ -68,11 +94,14 @@ public struct PendingClaim: Sendable, Equatable {
     public var invocation: HookInvocation
     /// The uid of the process that sent the claim, when the daemon could tell.
     public var callerUID: UInt32?
+    /// The user's UPN when the claim arrived, which the session keeps.
+    public var upn: PinnedUPN
 
-    public init(claimID: String, invocation: HookInvocation, callerUID: UInt32?) {
+    public init(claimID: String, invocation: HookInvocation, callerUID: UInt32?, upn: PinnedUPN = .unknown) {
         self.claimID = claimID
         self.invocation = invocation
         self.callerUID = callerUID
+        self.upn = upn
     }
 }
 
@@ -174,6 +203,11 @@ public final class AgentStore: @unchecked Sendable {
             invoked_at REAL NOT NULL,
             caller_uid INTEGER
         );
+        """,
+        // 3 -> 4: the UPN a session started with, and a held claim's (1.2.0).
+        """
+        ALTER TABLE open_sessions ADD COLUMN upn TEXT;
+        ALTER TABLE pending_claims ADD COLUMN upn TEXT;
         """,
     ]
 
@@ -286,7 +320,7 @@ public final class AgentStore: @unchecked Sendable {
     public func openSession(user: String) throws -> OpenSession? {
         try locked {
             try db.query(
-                "SELECT user, session_id, source, started_at, expires_at, overdue_reported FROM open_sessions WHERE user = ?",
+                "SELECT user, session_id, source, started_at, expires_at, overdue_reported, upn FROM open_sessions WHERE user = ?",
                 [.text(user)]
             ).first.map(Self.session(from:))
         }
@@ -295,7 +329,7 @@ public final class AgentStore: @unchecked Sendable {
     public func openSessions() throws -> [OpenSession] {
         try locked {
             try db.query(
-                "SELECT user, session_id, source, started_at, expires_at, overdue_reported FROM open_sessions ORDER BY user"
+                "SELECT user, session_id, source, started_at, expires_at, overdue_reported, upn FROM open_sessions ORDER BY user"
             ).map(Self.session(from:))
         }
     }
@@ -305,16 +339,16 @@ public final class AgentStore: @unchecked Sendable {
         try locked {
             try db.run(
                 """
-                INSERT INTO open_sessions (user, session_id, source, started_at, expires_at, overdue_reported)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO open_sessions (user, session_id, source, started_at, expires_at, overdue_reported, upn)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user) DO UPDATE SET session_id = excluded.session_id, source = excluded.source,
                     started_at = excluded.started_at, expires_at = excluded.expires_at,
-                    overdue_reported = excluded.overdue_reported
+                    overdue_reported = excluded.overdue_reported, upn = excluded.upn
                 """,
                 [
                     .text(s.user), .text(s.sessionID), .text(s.source.rawValue),
                     .double(s.startedAt.timeIntervalSince1970), .optional(s.expiresAt?.timeIntervalSince1970),
-                    .int(s.overdueReported ? 1 : 0),
+                    .int(s.overdueReported ? 1 : 0), s.upn.column,
                 ])
         }
     }
@@ -339,7 +373,8 @@ public final class AgentStore: @unchecked Sendable {
             source: ElevationSource(rawValue: row.text(2)!) ?? .privileges,
             startedAt: Date(timeIntervalSince1970: row.double(3)!),
             expiresAt: row.double(4).map(Date.init(timeIntervalSince1970:)),
-            overdueReported: row.int(5) == 1)
+            overdueReported: row.int(5) == 1,
+            upn: PinnedUPN(column: row.text(6)))
     }
 
     // MARK: Permanent admin uses
@@ -422,13 +457,13 @@ public final class AgentStore: @unchecked Sendable {
         try locked {
             try db.run(
                 """
-                INSERT OR IGNORE INTO pending_claims (claim_id, user, reason, invoked_at, caller_uid)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT OR IGNORE INTO pending_claims (claim_id, user, reason, invoked_at, caller_uid, upn)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 [
                     .text(claim.claimID), .text(claim.invocation.user), .optional(claim.invocation.reason),
                     .double(claim.invocation.invokedAt.timeIntervalSince1970),
-                    claim.callerUID.map { .int(Int64($0)) } ?? .null,
+                    claim.callerUID.map { .int(Int64($0)) } ?? .null, claim.upn.column,
                 ])
         }
     }
@@ -437,14 +472,15 @@ public final class AgentStore: @unchecked Sendable {
     public func pendingClaims() throws -> [PendingClaim] {
         try locked {
             try db.query(
-                "SELECT claim_id, user, reason, invoked_at, caller_uid FROM pending_claims ORDER BY invoked_at, claim_id"
+                "SELECT claim_id, user, reason, invoked_at, caller_uid, upn FROM pending_claims ORDER BY invoked_at, claim_id"
             ).map { row in
                 PendingClaim(
                     claimID: row.text(0)!,
                     invocation: HookInvocation(
                         user: row.text(1)!, state: .admin, reason: row.text(2),
                         invokedAt: Date(timeIntervalSince1970: row.double(3)!)),
-                    callerUID: row.int(4).map { UInt32(truncatingIfNeeded: $0) })
+                    callerUID: row.int(4).map { UInt32(truncatingIfNeeded: $0) },
+                    upn: PinnedUPN(column: row.text(5)))
             }
         }
     }

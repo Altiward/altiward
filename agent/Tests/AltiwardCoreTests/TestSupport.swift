@@ -139,7 +139,8 @@ func makeEnvironment(
     privilegesExtensionPID: @escaping @Sendable () -> Int32? = { nil },
     userID: @escaping @Sendable (_ shortName: String) -> UInt32? = { ["jdoe": 501, "mallory": 502, "itadmin": 503][$0] },
     privilegesRenewals: @escaping @Sendable (_ since: Date) -> [PrivilegesRenewalLine] = { _ in [] },
-    privilegesAgentImageUUIDs: @escaping @Sendable () -> Set<String> = { [] }
+    privilegesAgentImageUUIDs: @escaping @Sendable () -> Set<String> = { [] },
+    platformSSOLinks: @escaping @Sendable () -> [String: String]? = { [:] }
 ) -> AgentEnvironment {
     AgentEnvironment(
         device: device,
@@ -158,7 +159,8 @@ func makeEnvironment(
         permanentUseLog: permanentUseLog, fullName: fullName, accountExists: accountExists,
         privilegesLogAvailability: privilegesLogAvailability, privilegesDaemonLines: privilegesDaemonLines,
         processIdentity: processIdentity, privilegesExtensionPID: privilegesExtensionPID, userID: userID,
-        privilegesRenewals: privilegesRenewals, privilegesAgentImageUUIDs: privilegesAgentImageUUIDs)
+        privilegesRenewals: privilegesRenewals, privilegesAgentImageUUIDs: privilegesAgentImageUUIDs,
+        platformSSOLinks: platformSSOLinks)
 }
 
 /// Writes a store as agent 0.2 left it: the 0.1.0 tables at schema version 1.
@@ -214,6 +216,23 @@ func writeVersion2Store(in dir: URL) throws {
             ended_at REAL
         );
         PRAGMA user_version = 2;
+        """)
+}
+
+/// Agent 1.1's store: version 3, with `pending_claims` and no UPN columns.
+func writeVersion3Store(in dir: URL) throws {
+    try writeVersion2Store(in: dir)
+    let db = try SQLiteConnection(path: dir.appendingPathComponent("agent.sqlite").path)
+    try db.execute(
+        """
+        CREATE TABLE pending_claims (
+            claim_id TEXT PRIMARY KEY,
+            user TEXT NOT NULL,
+            reason TEXT,
+            invoked_at REAL NOT NULL,
+            caller_uid INTEGER
+        );
+        PRAGMA user_version = 3;
         """)
 }
 

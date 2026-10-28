@@ -33,7 +33,7 @@ what people do with them otherwise.
 | What | Detail |
 | --- | --- |
 | The Mac | Serial number, hardware UUID, macOS version, agent version, SAP Privileges version |
-| The person | macOS short name, and their UPN (sign-in name) if you map one in the MDM profile (`UserPrincipalNames`). A person's UPN comes only from the profile, never from the directory. With Intune connected, the server also reads each Mac's primary user from Intune and shows it, but never puts it on a person's events |
+| The person | macOS short name, and their UPN (sign-in name): the one you map in the MDM profile (`UserPrincipalNames`), or else the Entra ID (or other identity provider) account Platform SSO links to their Mac account. The agent reads every Mac account's link from the Mac's local directory (the account's `AltSecurityIdentities`), keeps only the Platform SSO value and never stores or sends the others, such as an Apple ID. When an account's link is added, changed or removed, it sends the account's short name with the link before and after. Set `PlatformSSOIdentity` to `false` in the profile and it reads no links at all. Altiward doesn't look UPNs up in Entra ID or your identity provider. With Intune connected, the server also reads each Mac's primary user from Intune and shows it, but never puts it on a person's events |
 | Each elevation | When it started and ended, how long it was allowed for, and the reason they typed (up to 2,048 characters) |
 | Who is admin | Every human account in the Mac's `admin` group (any member with a UID of 500 or more, and any other direct member apart from `root` and `_` accounts, hidden ones included), checked every 5 minutes, and admin rights that appear without an elevation |
 | Health | Whether the agent, SAP Privileges and their settings are intact (including Privileges' daily admin budget, if set), and how many events are waiting to send. The Privileges settings include whether MDM caps how long a grant lasts and turns renewals off, whether apps are set to renew rights automatically (yes or no, not which), whether Privileges runs the hook on give-backs, and whether it revokes rights at sign-in or after a clock change, with the account names its profile excludes from each. While someone holds rights from SAP Privileges, this includes whether Privileges' timer is still running for them: the agent looks for its process in the Mac's process list and sends only the answer |
@@ -363,7 +363,9 @@ security records ([Backups](install.md#backups)).
 
 The agent keeps one database, `/Library/Application Support/Altiward/agent.sqlite`,
 readable only by root. It holds events waiting to send (removed once your server
-confirms them), the elevations open now, the Mac's key (or the handle to it in the Secure
+confirms them), the elevations open now with each one's UPN, every Mac account's Platform
+SSO link as last read, and the last link of each account whose link was removed or that is
+gone (none with `PlatformSSOIdentity` off), the last persistence snapshot, the Mac's key (or the handle to it in the Secure
 Enclave) and its public key, the server's clock offset it last learnt, and revoke results
 (removed 30 days after they are reported). While the agent is replacing the Mac's key and
 doesn't yet know the server's answer, it also holds the replacement key (or its handle), a
@@ -373,8 +375,8 @@ answer is known. For checking grants against
 Privileges' log it also holds:
 
 - each grant claim from the hook while it waits, up to a minute, for the log: the account,
-  the reason the person typed, the UID of the process that sent it and when it arrived. It is
-  removed once the claim is confirmed or refused;
+  the reason the person typed, the UID of the process that sent it, their UPN and when it
+  arrived. It is removed once the claim is confirmed or refused;
 - the process ID and start time of the last 20 processes it verified as Privileges'
   extension, so it can check older records against the process that wrote them;
 - the time and logging process ID of the log lines that confirmed a claim, for 5 minutes,
@@ -382,7 +384,9 @@ Privileges' log it also holds:
 - when it first found Privileges' log available, and whether the extension has logged a
   grant the daemon's line confirmed.
 
-It logs to the Mac's unified log under `com.altiward.agent`.
+It logs to the Mac's unified log under `com.altiward.agent`, including each tamper finding's
+description, which for a Platform SSO link names the Mac account and the links before and
+after.
 
 ## Network and transport
 

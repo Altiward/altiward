@@ -55,6 +55,8 @@
                 <key>$SHORTNAME</key>
                 <string>$EMAIL</string>
             </dict>
+            <key>PlatformSSOIdentity</key>
+            <true/>
             <key>ExpiryEnforcement</key>
             <string>alert</string>
             <key>ExpiryGraceMinutes</key>

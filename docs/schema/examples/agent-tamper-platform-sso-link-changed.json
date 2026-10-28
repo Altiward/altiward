@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "event_id": "5d2e8f14-7a3b-4c6e-9f01-2b4d6a8c0e13",
+  "type": "agent.tamper",
+  "session_id": null,
+  "timestamp": "2026-10-28T15:40:12Z",
+  "device": {
+    "serial": "C02XK0AAJGH5",
+    "hardware_uuid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+    "os_version": "27.2.0",
+    "agent_version": "1.2.0",
+    "privileges_version": "2.6.0"
+  },
+  "user": null,
+  "elevation": null,
+  "delayed": false,
+  "detail": {
+    "check": "platform_sso_link_changed",
+    "state": "detected",
+    "problem": "jdoe's Mac account moved from jane.doe@example.com to ceo@example.com in Platform SSO",
+    "user": "jdoe",
+    "previous_upn": "jane.doe@example.com",
+    "upn": "ceo@example.com"
+  }
+}

@@ -111,7 +111,8 @@ See [settings](docs/install.md#6-settings-worth-reviewing) and the agent's
   every 30 days, which someone with admin rights could copy. Rotation proves a key's
   continuity, not who enrolled first: a serial enrolled before its real Mac keeps that
   identity ([the agent's design notes](agent/README.md#design-notes)).
-- Identity mapping uses the `UserPrincipalNames` preference; Platform SSO isn't read yet.
+- Each person's UPN comes from the `UserPrincipalNames` preference or from Platform SSO on
+  the Mac (tested with Entra ID; Okta waits for a test org).
 - No settings editor in the console, and no Jamf Pro, Intune, Entra ID or Okta
   integrations beyond single sign-on. Settings come from the `com.altiward.agent` profile.
 - Altiward doesn't have Apple's Endpoint Security entitlement, so it shows what changed
