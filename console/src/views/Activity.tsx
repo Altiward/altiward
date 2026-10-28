@@ -41,6 +41,7 @@ export function auditSummary(a: AuditEntry): string {
     case "change_settings":
       return settingsChange(d.previous, d.settings);
     case "sign_in":
+      if (d.method === "token") return `Token${str(d.route) ? `, first request ${str(d.route)}` : ""}`;
       return `Single sign-on${str(d.role) ? ` as ${str(d.role)}` : ""}`;
     case "sign_out":
       return "Single sign-on";

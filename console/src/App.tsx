@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { BrowserRouter, NavLink, Navigate, Route, Routes } from "react-router";
-import { type Me, createApi, probeSignIn } from "./api";
+import { ApiError, type Me, createApi, probeSignIn } from "./api";
 import { ActivityIcon, CommandsIcon, ElevatedGlyph, EnrollIcon, FleetIcon, NotGrantedGlyph, OverviewIcon, SessionsIcon, SettingsIcon } from "./components/Icons";
 import { ApiContext, MeContext, useApi, useMe } from "./context";
 import { useDark } from "./theme";
@@ -36,6 +36,8 @@ const ssoProblems: Record<string, string> = {
   denied: "Your identity provider didn’t sign you in. Try again, or ask your administrator.",
   unavailable: "Altiward can’t reach your identity provider. Try again shortly, or use a break-glass token.",
   failed: "Signing in didn’t work. Try again. If it keeps failing, ask your administrator to check the Altiward server’s log.",
+  server: "Altiward couldn’t sign you in just now. Your token wasn’t rejected, so try again shortly. " +
+    "If it keeps failing, ask your administrator to check the Altiward server’s log.",
   token: "The server rejected that token. Check it and paste it again.",
   ended: "Your session ended. Sign in again.",
 };
@@ -59,6 +61,8 @@ export function App() {
   const [sso, setSSO] = useState(false);
   const [signedIn, setSignedIn] = useState<SignedIn | null>(null);
   const [problem, setProblem] = useState<Problem | null>(takeSSOProblem);
+  // A token the server couldn't check, kept so the person can try it again.
+  const [retryToken, setRetryToken] = useState<string | undefined>();
 
   const ended = useCallback((why: Problem) => {
     forgetToken();
@@ -77,9 +81,18 @@ export function App() {
       const me = await createApi({ token }).me();
       try { sessionStorage.setItem(TOKEN_KEY, token); } catch { /* keep it in memory only */ }
       setProblem(null);
+      setRetryToken(undefined);
       setSignedIn({ me, token });
-    } catch {
-      ended("token");
+    } catch (e) {
+      // Only a 401 or 403 says the token is wrong. A server error or no answer says nothing
+      // about it, so it stays where it is.
+      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+        setRetryToken(undefined);
+        ended("token");
+      } else {
+        setRetryToken(token);
+        setProblem("server");
+      }
     }
   }, [ended]);
 
@@ -109,7 +122,7 @@ export function App() {
   }, [api, signedIn]);
 
   if (checking) return <div className="signin" aria-busy="true" />;
-  if (!api || !signedIn) return <SignIn sso={sso} problem={problem} onToken={signInWithToken} />;
+  if (!api || !signedIn) return <SignIn sso={sso} problem={problem} initialToken={retryToken} onToken={signInWithToken} />;
   return (
     <ApiContext.Provider value={api}>
       <MeContext.Provider value={signedIn.me}>
@@ -201,9 +214,9 @@ function Account({ onSignOut }: { onSignOut: () => void }) {
   );
 }
 
-function SignIn({ sso, problem, onToken }: { sso: boolean; problem: Problem | null; onToken: (token: string) => void }) {
-  const [value, setValue] = useState("");
-  const [showToken, setShowToken] = useState(!sso || problem === "token");
+function SignIn({ sso, problem, initialToken, onToken }: { sso: boolean; problem: Problem | null; initialToken?: string; onToken: (token: string) => void }) {
+  const [value, setValue] = useState(initialToken ?? "");
+  const [showToken, setShowToken] = useState(!sso || problem === "token" || !!initialToken);
   const message = problem ? (ssoProblems[problem] ?? ssoProblems.failed) : null;
   // /signed-out is where the identity provider returns people after signing them out.
   const next = window.location.pathname === "/signed-out" ? "/" : window.location.pathname + window.location.search;
