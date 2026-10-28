@@ -327,4 +327,29 @@ struct TamperTests {
         }
         #expect(try tamper(t).isEmpty)
     }
+
+    /// The heartbeat's result took what a changed file held, then lost to a newer result the
+    /// watcher committed: the failure it carries is still reported, and restored after.
+    @Test func aStaleResultStillReportsTheFailureItCarries() throws {
+        let check = OSAllocatedUnfairLock(initialState: IntegrityResult.ok)
+        var env = makeEnvironment(admins: FakeAdmins([]), clock: clock, integrity: { [results] in results.withLock { $0 } })
+        env.settingsCheck = { check.withLock { $0 } }
+        let t = ElevationTracker(store: store, environment: env)
+        let early = clock.now
+        clock.advance(5)
+        check.withLock { $0 = IntegrityResult(ok: true, problem: nil, observedAt: clock.now) }
+        #expect(try t.checkManagedSettings().isEmpty)
+
+        let earlier = EarlierFailure(problem: "differed at a time", findings: ["k"])
+        results.withLock {
+            $0 = [.settingsManaged: IntegrityResult(ok: true, problem: nil, observedAt: early, earlier: earlier)]
+        }
+        let reported = try tamper(t)
+        #expect(reported.map { $0.detail["state"] } == ["failed"])
+        #expect(reported.first?.detail["problem"] == "differed at a time")
+
+        clock.advance(5)
+        check.withLock { $0 = IntegrityResult(ok: true, problem: nil, observedAt: clock.now) }
+        #expect(try t.checkManagedSettings().map { $0.detail["state"] } == ["restored"])
+    }
 }

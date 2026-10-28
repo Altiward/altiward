@@ -15,7 +15,10 @@ public final class ManagedPreferencesWatcher: Sendable {
     /// check off for good.
     public static let longestWait: TimeInterval = 15
 
-    private let queue = DispatchQueue(label: "com.altiward.agent.managed-preferences")
+    /// FSEvents delivers here, and `onChange` runs here: never behind the handler.
+    private let events = DispatchQueue(label: "com.altiward.agent.managed-preferences.events")
+    /// The handler runs here, one run at a time; it reads the profiles and writes the store.
+    private let work = DispatchQueue(label: "com.altiward.agent.managed-preferences.work")
     private let onChange: @Sendable () -> Void
     private let handler: @Sendable () -> Void
     /// When a scheduled run is due, so the earliest stands.
@@ -50,7 +53,7 @@ public final class ManagedPreferencesWatcher: Sendable {
                 nil, callback, &context, [path] as CFArray, FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0.1,
                 flags)
         else { return false }
-        FSEventStreamSetDispatchQueue(created, queue)
+        FSEventStreamSetDispatchQueue(created, events)
         guard FSEventStreamStart(created) else {
             FSEventStreamInvalidate(created)
             FSEventStreamRelease(created)
@@ -72,7 +75,7 @@ public final class ManagedPreferencesWatcher: Sendable {
             return $0.generation
         }
         guard let mine else { return }
-        queue.asyncAfter(deadline: .now() + delay) { [pending, handler] in
+        work.asyncAfter(deadline: .now() + delay) { [pending, handler] in
             let current = pending.withLock {
                 guard $0.generation == mine else { return false }
                 $0.since = nil
@@ -91,7 +94,7 @@ public final class ManagedPreferencesWatcher: Sendable {
             return true
         }
         guard take else { return }
-        queue.asyncAfter(deadline: .now() + max(0, date.timeIntervalSinceNow)) { [scheduled, handler] in
+        work.asyncAfter(deadline: .now() + max(0, date.timeIntervalSinceNow)) { [scheduled, handler] in
             let current = scheduled.withLock {
                 guard $0 == date else { return false }
                 $0 = nil

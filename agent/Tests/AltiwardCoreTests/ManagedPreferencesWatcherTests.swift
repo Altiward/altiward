@@ -62,3 +62,30 @@ struct ManagedPreferencesWatcherTests {
         #expect(runs.withLock { $0[0] }.timeIntervalSince(start) < 1.5)
     }
 }
+
+extension ManagedPreferencesWatcherTests {
+    /// A change is passed on while a slow run of the handler (reading the profiles) is still
+    /// going: the two never wait for each other.
+    @Test func aChangeIsPassedOnWhileTheHandlerRuns() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("watch-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let changes = OSAllocatedUnfairLock(initialState: 0)
+        let running = OSAllocatedUnfairLock(initialState: false)
+        let watcher = ManagedPreferencesWatcher(
+            onChange: { changes.withLock { $0 += 1 } },
+            handler: {
+                running.withLock { $0 = true }
+                Thread.sleep(forTimeInterval: 4)
+                running.withLock { $0 = false }
+            })
+        #expect(watcher.start(path: dir.path))
+        Thread.sleep(forTimeInterval: 0.5)
+        watcher.trigger(after: 0)
+        #expect(wait(2) { running.withLock { $0 } })
+        Thread.sleep(forTimeInterval: 0.3)
+        let before = changes.withLock { $0 }
+        try Data("x".utf8).write(to: dir.appendingPathComponent("com.altiward.agent.plist"))
+        #expect(wait(2) { changes.withLock { $0 } > before })
+        #expect(running.withLock { $0 })
+    }
+}

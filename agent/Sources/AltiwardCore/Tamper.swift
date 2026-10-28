@@ -47,15 +47,9 @@ extension ElevationTracker {
             let name = check.rawValue
             var before = previous[name]
             var beforeFindings = previousFindings[name]
-            // Looked before the result already recorded (the heartbeat read while a file change
-            // was checked): the newer one stands.
-            if let at = result.observedAt?.timeIntervalSince1970, let last = observed[name], at < last {
-                state[name] = before
-                findings[name] = beforeFindings
-                continue
-            }
-            if let at = result.observedAt { observedNow[name] = at.timeIntervalSince1970 }
-            // A failure that came and went since the last run: said first, unless already said.
+            // A failure that came and went since the last run: said first, unless already said,
+            // and even when the rest of this result is too old to count, as it is the only report
+            // of that failure.
             var reportedEarlier = false
             if let earlier = result.earlier,
                 !(before == false && Set(earlier.findings).isSubset(of: Set(beforeFindings ?? [])))
@@ -66,6 +60,15 @@ extension ElevationTracker {
                 reported[name] = now.timeIntervalSince1970
                 reportedEarlier = true
             }
+            // Looked before the result already recorded (the heartbeat read while a file change
+            // was checked): the newer one stands, so the next result sends `restored` if the
+            // earlier failure is gone.
+            if let at = result.observedAt?.timeIntervalSince1970, let last = observed[name], at < last {
+                state[name] = before
+                findings[name] = beforeFindings
+                continue
+            }
+            if let at = result.observedAt { observedNow[name] = at.timeIntervalSince1970 }
             if result.held {
                 // Keeps whatever it had, including not having run yet.
                 state[name] = before

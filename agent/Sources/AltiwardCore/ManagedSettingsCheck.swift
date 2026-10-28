@@ -63,6 +63,9 @@ public struct SettingsMismatch: Sendable, Equatable, Comparable {
         case added
         /// The file can't be read as settings.
         case unreadable
+        /// A user signed in with a name that can't be a plain folder name (`key`); their
+        /// folder isn't compared.
+        case unexpectedName = "unexpected name"
     }
 
     public var path: String
@@ -73,13 +76,19 @@ public struct SettingsMismatch: Sendable, Equatable, Comparable {
     /// Just after MDM's payloads changed, the file still holds what the payloads before set:
     /// macOS hasn't rewritten it yet.
     public var lagging = false
+    /// Where the problem text says it is, with a user's name quoted; nil: the file's folder.
+    public var place: String?
 
     public static func < (a: Self, b: Self) -> Bool {
         (a.path, a.domain, a.key ?? "", a.kind.rawValue) < (b.path, b.domain, b.key ?? "", b.kind.rawValue)
     }
 
     /// The finding it stands for, for ``IntegrityResult/findings``.
-    var finding: String { "\(domain) \(key.map(ManagedSettingsCheck.quoted) ?? "file")" }
+    var finding: String {
+        kind == .unexpectedName
+            ? "user \(ManagedSettingsCheck.quoted(key ?? ""))"
+            : "\(domain) \(key.map(ManagedSettingsCheck.quoted) ?? "file")"
+    }
 
     /// Compares a file's settings for `domain` with the payloads MDM installed for it, both
     /// ways: every key a payload sets must be in the file with a value equal to one payload's,
@@ -88,19 +97,21 @@ public struct SettingsMismatch: Sendable, Equatable, Comparable {
     /// the payloads before a change, a difference the old payloads explain is marked lagging.
     static func compare(
         _ file: ManagedPreferenceFiles.Read, path: String, domain: String, payloads: [MDMPayload],
-        previous: [MDMPayload]? = nil
+        previous: [MDMPayload]? = nil, place: String? = nil
     ) -> [SettingsMismatch] {
         let settings: [String: PlistValue]
         switch file {
         case .missing: settings = [:]
-        case .unreadable: return [SettingsMismatch(path: path, domain: domain, key: nil, kind: .unreadable)]
+        case .unreadable:
+            return [SettingsMismatch(path: path, domain: domain, key: nil, kind: .unreadable, place: place)]
         case .settings(let s): settings = s
         }
         let expected = values(payloads)
         let before = previous.map(values)
         var found: [SettingsMismatch] = []
         func add(_ key: String, _ kind: Kind, lagging: Bool) {
-            found.append(SettingsMismatch(path: path, domain: domain, key: key, kind: kind, lagging: lagging))
+            found.append(
+                SettingsMismatch(path: path, domain: domain, key: key, kind: kind, lagging: lagging, place: place))
         }
         for (key, values) in expected {
             guard let value = settings[key] else {
@@ -325,7 +336,8 @@ public struct ManagedSettingsCheck: Sendable {
     }
 
     private struct Sources {
-        var file: (String) -> ManagedPreferenceFiles.Read
+        /// Nil: not read then, so not compared (a snapshot of a change).
+        var file: (String) -> ManagedPreferenceFiles.Read?
         /// Nil: not compared. Then per key: nil when unknown, .some(nil) when nothing is served.
         var served: ((String, String) -> PlistValue??)?
         var signedIn: [String: Date]
@@ -352,7 +364,7 @@ public struct ManagedSettingsCheck: Sendable {
 
     private func snapshotSources(_ s: ManagedFilesSnapshot) -> Sources {
         Sources(
-            file: { s.files[$0] ?? .missing },
+            file: { s.files[$0] },
             served: { domain, key in s.served["\(domain) \(key)"] },
             signedIn: s.signedIn)
     }
@@ -374,16 +386,23 @@ public struct ManagedSettingsCheck: Sendable {
         for domain in ManagedDomains.all {
             let mine = payloads.payloads(for: domain)
             let before = previous?.payloads(for: domain)
-            found += SettingsMismatch.compare(
-                sources.file(files.devicePath(domain)), path: files.devicePath(domain), domain: domain, payloads: mine,
-                previous: before)
+            if let file = sources.file(files.devicePath(domain)) {
+                found += SettingsMismatch.compare(
+                    file, path: files.devicePath(domain), domain: domain, payloads: mine, previous: before)
+            }
             if let served = sources.served {
                 found += SettingsMismatch.compareServed(
                     domain: domain, payloads: mine, previous: before, served: { served(domain, $0) })
             }
         }
         var dueAt: Date?
-        for (user, since) in sources.signedIn.sorted(by: { $0.key < $1.key }) where Self.plainName(user) {
+        for (user, since) in sources.signedIn.sorted(by: { $0.key < $1.key }) {
+            guard Self.plainName(user) else {
+                found.append(
+                    SettingsMismatch(
+                        path: files.root.path, domain: "", key: user, kind: .unexpectedName, place: files.root.path))
+                continue
+            }
             guard now.timeIntervalSince(since) >= Self.signInGrace else {
                 let due = since.addingTimeInterval(Self.signInGrace)
                 dueAt = min(dueAt ?? due, due)
@@ -411,24 +430,31 @@ public struct ManagedSettingsCheck: Sendable {
     private func userMismatches(
         _ user: String, _ payloads: [MDMPayload], _ previous: [MDMPayload]?, _ sources: Sources
     ) -> [SettingsMismatch] {
+        let folder = "\(files.root.path)/\(Self.quoted(user))"
         let complete = sources.file(files.completePath(user))
-        return ManagedDomains.all.flatMap { domain in
+        return ManagedDomains.all.flatMap { domain -> [SettingsMismatch] in
             let mine = payloads.filter { $0.domain == domain }
             let before = previous?.filter { $0.domain == domain }
-            return SettingsMismatch.compare(
-                sources.file(files.userPath(user, domain)), path: files.userPath(user, domain), domain: domain,
-                payloads: mine, previous: before)
-                + SettingsMismatch.compare(
+            var found: [SettingsMismatch] = []
+            if let copy = sources.file(files.userPath(user, domain)) {
+                found += SettingsMismatch.compare(
+                    copy, path: files.userPath(user, domain), domain: domain, payloads: mine, previous: before,
+                    place: folder)
+            }
+            if let complete {
+                found += SettingsMismatch.compare(
                     ManagedPreferenceFiles.complete(complete, domain: domain), path: files.completePath(user),
-                    domain: domain, payloads: mine, previous: before)
+                    domain: domain, payloads: mine, previous: before, place: folder + "/complete.plist")
+            }
+            return found
         }
     }
 
     // MARK: Wording
 
-    /// A short name that is safe as a folder name.
+    /// A short name that is safe as a folder name: letters, digits, `.`, `_` and `-` only.
     static func plainName(_ user: String) -> Bool {
-        !user.isEmpty && user != "." && user != ".." && !user.contains("/")
+        user != "." && user != ".." && user.wholeMatch(of: /[A-Za-z0-9._-]+/) != nil
     }
 
     /// A key name as the problem text shows it: in quotes, at most ``nameLimit`` characters,
@@ -455,17 +481,20 @@ public struct ManagedSettingsCheck: Sendable {
     }
 
     /// `com.altiward.agent "ServerURL" (changed), corp.sap.privileges "EnableSystemExtension"
-    /// (removed) in /Library/Managed Preferences; … in /Library/Managed Preferences/jdoe/complete.plist`,
+    /// (removed) in /Library/Managed Preferences; … in /Library/Managed Preferences/"jdoe"/complete.plist`,
     /// listing at most ``listedLimit``.
     static func describe(_ mismatches: [SettingsMismatch]) -> String {
         let sorted = mismatches.sorted()
         var byPlace: [(String, [SettingsMismatch])] = []
         for m in sorted.prefix(listedLimit) {
-            let place =
-                m.path == servedPath
-                ? "what macOS serves"
-                : (m.path as NSString).lastPathComponent == "complete.plist"
-                    ? m.path : (m.path as NSString).deletingLastPathComponent
+            let place: String
+            if let named = m.place {
+                place = named
+            } else if m.path == servedPath {
+                place = "what macOS serves"
+            } else {
+                place = (m.path as NSString).deletingLastPathComponent
+            }
             if let i = byPlace.firstIndex(where: { $0.0 == place }) {
                 byPlace[i].1.append(m)
             } else {
@@ -473,7 +502,11 @@ public struct ManagedSettingsCheck: Sendable {
             }
         }
         let listed = byPlace.map { place, items in
-            items.map { "\($0.domain) \($0.key.map(quoted) ?? "file") (\($0.kind.rawValue))" }.joined(separator: ", ")
+            items.map {
+                $0.kind == .unexpectedName
+                    ? "user \(quoted($0.key ?? "")) (\($0.kind.rawValue))"
+                    : "\($0.domain) \($0.key.map(quoted) ?? "file") (\($0.kind.rawValue))"
+            }.joined(separator: ", ")
                 + " in \(place)"
         }.joined(separator: "; ")
         return sorted.count > listedLimit ? listed + "; and \(sorted.count - listedLimit) more" : listed

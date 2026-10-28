@@ -228,21 +228,20 @@ Create these in your MDM and scope them to a pilot group first.
    for `com.altiward.agent` and `corp.sap.privileges`, both ways: every key a payload sets
    must be there with the same value, and every key in a file must be one a payload sets.
    It compares on every heartbeat, and whenever a file there changes: at once against the
-   payloads it last read, then again a few seconds later with the profiles read afresh, so
-   a value changed and put back in between is still reported. It compares the device's
-   files, and the copies in the folders of people signed in at the login window
-   (`/Library/Managed Preferences/<user>`, with its `complete.plist`) from two minutes
-   after they sign in. Other people's folders keep the settings of their last sign-in, so
-   they aren't compared until they sign in again. A value changed, a key removed or a key
-   added fails the check, naming the domain and key (never the value). If other keys fail
-   later, it is reported again, at most every 10 minutes. When the agent sees MDM change one
-   of these profiles, a file that still holds the previous profile's value is left alone
-   for up to 5 minutes while macOS rewrites it. The check also fails while the profiles
-   can't be read (saying which stored settings it compared with instead, and from when),
-   and still reports `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`,
-   `ExpiryGraceMinutes`, `OutOfBandEnforcement`, `OutOfBandGraceMinutes`,
-   `UserPrincipalNames`, `PlatformSSOIdentity` or `HookCodeRequirement` set in
-   `/Library/Preferences`.
+   payloads it last read, and again a few seconds later with the profiles read afresh. It
+   compares the device's files, and the copies in the folders of people signed in at the
+   login window (`/Library/Managed Preferences/<user>`, with its `complete.plist`) from
+   shortly after they sign in. Other people's folders keep the settings of their last
+   sign-in, so they aren't compared until they sign in again. A value changed, a key
+   removed or a key added fails the check, naming the domain and key (never the value). If
+   other keys fail later, it is reported again, at most every 10 minutes. When the agent
+   sees MDM change one of these profiles, a file that still holds the previous profile's
+   value is left alone for a short time while macOS rewrites it. The check also fails
+   while the profiles can't be read (saying which stored settings it compared with
+   instead, and from when), and still reports `ServerURL`, `PermanentAdmins`,
+   `ExpiryEnforcement`, `ExpiryGraceMinutes`, `OutOfBandEnforcement`,
+   `OutOfBandGraceMinutes`, `UserPrincipalNames`, `PlatformSSOIdentity` or
+   `HookCodeRequirement` set in `/Library/Preferences`.
 
    Keep **Alert when a Mac stops checking in** on, with **Raise it after** as short as your
    Macs allow (**Settings › General**): a Mac whose agent stops reporting to your server,

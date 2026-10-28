@@ -156,7 +156,7 @@ struct ManagedSettingsCheckTests {
         signedIn.withLock { $0 = ["jdoe": clock.now.addingTimeInterval(-600)] }
         #expect(
             check.result(state()).problem
-                == "managed settings differ from MDM's profiles: corp.sap.privileges \"EnableSystemExtension\" (changed) in \(device)/jdoe")
+                == "managed settings differ from MDM's profiles: corp.sap.privileges \"EnableSystemExtension\" (changed) in \(device)/\"jdoe\"")
     }
 
     @Test func aSignedInUsersCompleteListIsCompared() throws {
@@ -170,7 +170,7 @@ struct ManagedSettingsCheckTests {
         }
         #expect(
             check.result(state()).problem
-                == "managed settings differ from MDM's profiles: com.altiward.agent \"PermanentAdmins\" (changed) in \(device)/jdoe/complete.plist")
+                == "managed settings differ from MDM's profiles: com.altiward.agent \"PermanentAdmins\" (changed) in \(device)/\"jdoe\"/complete.plist")
     }
 
     /// An entry that isn't forced (`mcxdomain` `always`) isn't what MDM set, whatever its value.
@@ -333,5 +333,35 @@ struct ManagedSettingsCheckTests {
             LoginRecord(user: "gone", tty: "console", host: "", pid: 13, started: at, ended: nil),
         ]
         #expect(LoginRecords.atLoginWindow(records, processExists: { $0 != 13 }) == ["jdoe": at])
+    }
+
+    /// A user still inside the sign-in grace when a file changed wasn't read then, so their
+    /// folder isn't judged from what the change held.
+    @Test func aFolderTheChangeDidntReadIsntJudged() throws {
+        signedIn.withLock { $0 = ["jdoe": clock.now.addingTimeInterval(-30)] }
+        try edit("com.altiward.agent.plist") { $0["ServerURL"] = "https://attacker.example.net" }
+        check.quick(state())
+        try edit("com.altiward.agent.plist") { $0["ServerURL"] = "https://altiward-agents.example.com" }
+        clock.advance(200)
+        let r = check.result(state())
+        #expect(r.ok)
+        #expect(r.earlier?.findings == ["com.altiward.agent \"ServerURL\""])
+    }
+
+    /// User names come from the sign-in records: quoted and escaped in problem texts, and a
+    /// name that can't be a plain folder name isn't used as a path.
+    @Test func userNamesAreQuotedAndOnlyPlainOnesCompared() throws {
+        signedIn.withLock { $0 = ["jdoe": clock.now.addingTimeInterval(-600)] }
+        try edit("jdoe/corp.sap.privileges.plist") { $0["EnableSystemExtension"] = false }
+        #expect(check.result(state()).problem?.hasSuffix("in \(device)/\"jdoe\"") == true)
+
+        try edit("jdoe/corp.sap.privileges.plist") { $0["EnableSystemExtension"] = true }
+        for odd in ["../etc", "a b", "x\"; ok", ".."] {
+            signedIn.withLock { $0 = [odd: clock.now.addingTimeInterval(-600)] }
+            let r = check.result(state())
+            #expect(!r.ok)
+            #expect(r.problem == "managed settings differ from MDM's profiles: user \(ManagedSettingsCheck.quoted(odd)) (unexpected name) in \(device)")
+            #expect(r.findings == ["user \(ManagedSettingsCheck.quoted(odd))"])
+        }
     }
 }
