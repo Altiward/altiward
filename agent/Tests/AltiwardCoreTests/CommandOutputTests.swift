@@ -3,7 +3,8 @@ import Testing
 
 @testable import AltiwardCore
 
-struct CommandOutputTests {
+/// One at a time: each test blocks its thread while a command runs.
+@Suite(.serialized) struct CommandOutputTests {
     @Test func returnsTheOutputOfACommandThatSucceeds() {
         #expect(CommandOutput.run("/bin/echo", ["hello"], timeout: 5, maxBytes: 100) == .success(Data("hello\n".utf8)))
     }
