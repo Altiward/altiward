@@ -1,1 +1,1 @@
-ghcr.io/altiward/caddy:2.11.7-altiward.2@sha256:7bb2e4e5b387752ea67d60a636526bd0c9f040af94814dbb7a0c301b3c0258d3
+ghcr.io/altiward/caddy:2.11.7-altiward.3@sha256:fb6dafc66c7d4fc6c7f94d4d17a2a7868f45e0f9de87f11dca424a7efcc0f46e

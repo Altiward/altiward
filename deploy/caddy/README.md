@@ -1,7 +1,7 @@
 # The deployment proxy
 
 Compose and Azure use the same digest-pinned Caddy image from `image.txt`. It is Caddy
-2.11.7, rebuilt with Go 1.27.3 and `golang.org/x/net` 0.62.0. The upstream image still
+2.11.7, rebuilt with Go 1.27.3, `golang.org/x/net` 0.62.0 and go-jose v4.1.6. The upstream image still
 contains older vulnerable dependencies, so copying its tag alone does not fix them.
 This image includes the standard Caddy modules and the upstream image's
 `nomysql,nopgx,nobadger` tags. Its runtime contains the binary, trusted CA certificates
@@ -22,6 +22,12 @@ CADDY_IMAGE=altiward-caddy:build scripts/test-azure-proxy.sh altiward-api:ci
 `osv-scanner.toml` lists advisories for modules in `go.mod` that never reach the binary,
 with the reason for each, so dependency scanners such as OpenSSF Scorecard skip them.
 Remove an entry when its module is upgraded past the fix.
+
+The PKI modules also compile go-jose v3.0.5 through `go.step.sm/crypto`. Upstream has no
+v3 fix for [GHSA-mgcc-cww5-fp2q](https://github.com/go-jose/go-jose/security/advisories/GHSA-mgcc-cww5-fp2q).
+That dependency is not excluded from scanning: upgrading v4 does not establish that v3
+is fixed or unused. Run module investigations with `GOWORK=off` from this directory,
+so a local development workspace cannot substitute the server's dependency graph.
 
 The build supports amd64 and arm64 without running the target binaries under emulation.
 Pinned builder, Dockerfile frontend, compiler and certificate images, module checksums,
