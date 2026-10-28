@@ -694,6 +694,66 @@ describe("Enrollments and Intune", () => {
     expect(within(inspector).getByText(words)).toBeInTheDocument();
   });
 
+  it("tags the Mac Not in Intune in the inspector too", async () => {
+    const api = fakeApi({ enrollments: vi.fn(async () => [enrollment({ serial: "NOT-LISTED" })]), ...connected() });
+    renderView(api, <EnrollmentsView />);
+    const row = (await screen.findByText("NOT-LISTED")).closest("tr")!;
+    await waitFor(() => expect(within(row).getByText("Not in Intune")).toBeInTheDocument());
+    await userEvent.click(within(row).getByText("NOT-LISTED"));
+    expect(within(screen.getByRole("complementary", { name: "Enrollment details" })).getByText("Not in Intune")).toBeInTheDocument();
+  });
+
+  it("doesn't tag a Mac Not in Intune when its key matched Intune: the copy can be 15 minutes old", async () => {
+    const api = fakeApi({
+      enrollments: vi.fn(async () => [enrollment({ serial: "NEW-IN-INTUNE", mdm_check: "match" })]), ...connected(),
+    });
+    renderView(api, <EnrollmentsView />);
+    await screen.findByText("NEW-IN-INTUNE");
+    await waitFor(() => expect(api.mdmDevices).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("Not in Intune")).toBeNull();
+  });
+
+  it("shows a match plainly and says it isn't proof", async () => {
+    const api = fakeApi({ enrollments: vi.fn(async () => [enrollment({ mdm_check: "match" })]), ...connected() });
+    renderView(api, <EnrollmentsView />);
+    await userEvent.click(await screen.findByText("C02XK0AAJGH5"));
+    const inspector = screen.getByRole("complementary", { name: "Enrollment details" });
+    const words = within(inspector).getByText("Matches Intune");
+    expect(words.closest(".tag")).toBeNull();
+    expect(words.querySelector("svg")).toBeNull();
+    expect(within(inspector).getByText(
+      "The device ID sent belongs to this serial in Intune. Device IDs and serials aren’t secret, so this doesn’t prove it’s the Mac.",
+    )).toBeInTheDocument();
+  });
+
+  describe("a key waiting for approval with another Mac's device ID", () => {
+    const active = enrollment({ device_id: "d-active", activated_at: "2026-10-01T00:00:00Z" });
+    const waiting = enrollment({ device_id: "d-pending", status: "pending", activated_at: null, mdm_check: "mismatch" });
+    const open = async () => {
+      const rows = await screen.findAllByText("C02XK0AAJGH5");
+      await userEvent.click(rows.find((r) => r.closest("tr")?.textContent?.includes("Waiting"))!);
+      return screen.getByRole("complementary", { name: "Enrollment details" });
+    };
+
+    it("warns instead of suggesting a reinstall", async () => {
+      renderView(fakeApi({ enrollments: vi.fn(async () => [waiting, active]) }), <EnrollmentsView />);
+      const inspector = await open();
+      expect(inspector).toHaveTextContent("This Mac enrolled again with a new key.");
+      expect(inspector).not.toHaveTextContent("reinstall");
+      expect(within(inspector).getByText(
+        "The device ID this Mac sent is another Mac’s in Intune, or the profile reached the wrong Mac. Find out why before you approve it.",
+      )).toBeInTheDocument();
+    });
+
+    it("still suggests a reinstall for any other check", async () => {
+      renderView(fakeApi({ enrollments: vi.fn(async () => [{ ...waiting, mdm_check: "unknown_id" as const }, active]) }), <EnrollmentsView />);
+      const inspector = await open();
+      expect(inspector).toHaveTextContent("Approve it if you expect that, for example after a reinstall.");
+      expect(inspector).not.toHaveTextContent("Find out why before you approve it.");
+    });
+  });
+
   it("has no Intune check row when the key has no check", async () => {
     const api = fakeApi({ enrollments: vi.fn(async () => [enrollment()]) });
     renderView(api, <EnrollmentsView />);

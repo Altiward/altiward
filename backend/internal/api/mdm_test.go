@@ -126,11 +126,18 @@ func TestMDMNeedsAConsoleSignIn(t *testing.T) {
 }
 
 // GET /v1/mdm counts the Intune checks of the keys in use, by outcome. A key that waits for
-// approval isn't in use, and one never checked isn't counted.
+// approval isn't in use, and one never checked is counted on its own, as not_checked.
 func TestMDMStatusCountsChecks(t *testing.T) {
-	h, _, _ := newServerWithIntuneMacs(t)
-	if _, out := do(t, h, "GET", "/v1/mdm", consoleToken, nil); fmt.Sprint(out["checks"]) != "map[]" {
-		t.Fatalf("checks before any enrolment = %v", out["checks"])
+	h, st, _ := newServerWithIntuneMacs(t)
+	if _, out := do(t, h, "GET", "/v1/mdm", consoleToken, nil); fmt.Sprint(out["checks"]) != "map[]" || out["not_checked"] != 0.0 {
+		t.Fatalf("before any enrolment: checks %v, not_checked %v", out["checks"], out["not_checked"])
+	}
+	// A key that enrolled before Intune was connected has no check.
+	if _, err := st.Enroll(context.Background(), store.DeviceCredential{
+		DeviceID: "d-before-intune", TenantID: "acme", Serial: "C02BEFOREINTUNE", HardwareUUID: "HW-BEFORE",
+		PublicKey: []byte("a key enrolled before Intune"), CreatedAt: serverNow(t),
+	}, store.DefaultEnrollLimits()); err != nil {
+		t.Fatal(err)
 	}
 	enrollWithID(t, h, fixtureSerial, macIntuneID)
 	enrollWithID(t, h, "C02OTHERMAC1", otherIntuneID)
@@ -140,7 +147,7 @@ func TestMDMStatusCountsChecks(t *testing.T) {
 	}
 	rec, out := do(t, h, "GET", "/v1/mdm", consoleToken, nil)
 	checks, _ := out["checks"].(map[string]any)
-	if rec.Code != 200 || len(checks) != 2 || checks["match"] != 2.0 || checks["not_sent"] != 1.0 {
+	if rec.Code != 200 || len(checks) != 2 || checks["match"] != 2.0 || checks["not_sent"] != 1.0 || out["not_checked"] != 1.0 {
 		t.Fatalf("status: %d %s", rec.Code, rec.Body)
 	}
 }

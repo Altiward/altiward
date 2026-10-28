@@ -34,6 +34,9 @@ export const explanations = {
     "The Mac replaced this key with a new one, which it proved it holds, so nobody revoked this one. If a " +
     "rotated_key_used alert names this key, a copy of it was used, or the Mac was restored from a backup: see " +
     "“A rotated key was used” in the install guide.",
+  intuneMatch:
+    "The device ID sent belongs to this serial in Intune. Device IDs and serials aren’t secret, so this doesn’t " +
+    "prove it’s the Mac.",
   enrolledWith:
     "The enrolment token the Mac enrolled with: its fingerprint, not the token. Search for it to find every key " +
     "one token enrolled, such as after it leaked.",

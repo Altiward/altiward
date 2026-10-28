@@ -480,6 +480,17 @@ const unmatchedWords: Record<Exclude<MDMCheck, "match">, string> = {
   unavailable: "enrolled while Intune couldn't be reached",
 };
 
+/** "1 active Mac" or "2 active Macs". */
+const activeMacs = (n: number) => `${n} active Mac${n === 1 ? "" : "s"}`;
+
+/** What the counts of active Macs say: how many were checked and matched, and how many were never
+ *  checked. A Mac is checked only when it enrols a key, so those that enrolled before Intune was
+ *  connected wait for their next key. */
+const checkedSentence = (checked: number, count: number, verb: "matched" | "didn’t match") =>
+  `Of the ${activeMacs(checked)} checked since Intune was connected, ${count} ${verb} Intune.`;
+const notCheckedSentence = (n: number) =>
+  `${activeMacs(n)} enrolled before Intune was connected and ${n === 1 ? "hasn’t" : "haven’t"} been checked`;
+
 /** Whether the last sync failed: its error is newer than its last success. */
 const syncFailing = (s: MDMStatus) =>
   !!s.last_error_at && (!s.last_success_at || new Date(s.last_error_at) > new Date(s.last_success_at));
@@ -502,6 +513,15 @@ function MdmSettings() {
   const matched = checks.match ?? 0;
   const checked = Object.values(checks).reduce((sum, n) => sum + (n ?? 0), 0);
   const unmatched = checked - matched;
+  const notChecked = s?.not_checked ?? 0;
+  // A later server may count an outcome this console has no words for.
+  const unnamed = Object.entries(checks)
+    .filter(([k]) => k !== "match" && !(k in unmatchedWords)).reduce((sum, [, n]) => sum + (n ?? 0), 0);
+  const rest = [
+    ...(Object.keys(unmatchedWords) as (keyof typeof unmatchedWords)[])
+      .filter((k) => checks[k]).map((k) => `${checks[k]} ${unmatchedWords[k]}`),
+    ...(unnamed ? [`${unnamed} had another outcome`] : []),
+  ];
   const guide = `https://github.com/Altiward/altiward/blob/${guideRef(about?.version ?? null)}/docs/install.md#7-connect-intune-optional`;
 
   async function setRequired(on: boolean) {
@@ -554,13 +574,11 @@ function MdmSettings() {
             <p className="hint">
               {checked === 0
                 ? "No active Mac has enrolled with Intune connected yet, so none has been checked."
-                : `${matched} of ${checked} active Macs matched Intune at their last enrolment.`}
+                : checkedSentence(checked, matched, "matched")}
             </p>
-            {unmatched > 0 && (
-              <p className="hint">
-                Of the rest, {(Object.keys(unmatchedWords) as (keyof typeof unmatchedWords)[])
-                  .filter((k) => checks[k]).map((k) => `${checks[k]} ${unmatchedWords[k]}`).join(", ")}.
-              </p>
+            {rest.length > 0 && <p className="hint">Of the rest, {rest.join(", ")}.</p>}
+            {notChecked > 0 && (
+              <p className="hint">{notCheckedSentence(notChecked)}: a Mac is checked when it next enrols a key.</p>
             )}
           </>
         )}
@@ -581,14 +599,18 @@ function MdmSettings() {
               </span>
               <input type="checkbox" role="switch" disabled={!settings.data || saving || !canChange}
                 checked={settings.data?.require_intune_match ?? false}
-                onChange={(e) => (e.target.checked && unmatched > 0 ? setConfirming(true) : void setRequired(e.target.checked))} />
+                onChange={(e) => (e.target.checked && (unmatched > 0 || notChecked > 0) ? setConfirming(true) : void setRequired(e.target.checked))} />
             </label>
           </div>
         </div>
       )}
       {confirming && (
         <ConfirmSheet title="Require an Intune match?" confirm="Require a match" busy={saving}
-          message={`${unmatched} of ${checked} active Macs didn't match Intune at their last enrolment. Their keys keep working, but from now on a new key from a Mac that doesn't match waits for your approval in Enrollments.`}
+          message={[
+            ...(unmatched > 0 ? [checkedSentence(checked, unmatched, "didn’t match")] : []),
+            ...(notChecked > 0 ? [`${notCheckedSentence(notChecked)}.`] : []),
+            "Their keys keep working, but from now on a new key from a Mac that doesn’t match waits for your approval in Enrollments.",
+          ].join(" ")}
           onConfirm={() => void setRequired(true)} onCancel={() => setConfirming(false)} />
       )}
     </>

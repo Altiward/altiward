@@ -377,7 +377,7 @@ func silent(e store.StoredEvent, tenantID string) Record {
 // intuneReasons says, in an enrolment's message, what Intune said about the device ID the
 // Mac sent, for each mdm_check but a mismatch.
 var intuneReasons = map[string]string{
-	"match":       "Intune's record matches",
+	"match":       "the Intune device ID sent matches the serial",
 	"not_sent":    "no Intune device ID sent",
 	"invalid_id":  "the Intune device ID isn't valid",
 	"unknown_id":  "Intune doesn't know the device ID",

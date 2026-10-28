@@ -2,7 +2,7 @@ import { type JSX, useMemo, useState } from "react";
 import { ApiError, type CredentialStatus, type Enrollment, type KeyStorage, type MDMCheck } from "../api";
 import { Banner, Details, Empty, Explain, Missing, RoleNote, SearchField, Segmented, Toolbar } from "../components/Chrome";
 import { Fingerprint } from "../components/Fingerprint";
-import { AttentionGlyph, ChipGlyph, CloseIcon, EndedGlyph, FileGlyph, NotGrantedGlyph, RotatedGlyph, VerifiedGlyph } from "../components/Icons";
+import { AttentionGlyph, ChipGlyph, CloseIcon, EndedGlyph, FileGlyph, NotGrantedGlyph, RotatedGlyph } from "../components/Icons";
 import { NotInIntune } from "../components/NotInIntune";
 import { ConfirmSheet } from "../components/Sheet";
 import { StateBadge } from "../components/StateBadge";
@@ -46,10 +46,12 @@ function KeyKeptIn({ storage }: { storage: KeyStorage }) {
   return <span className="key-storage"><Glyph />{word}</span>;
 }
 
-/** What Intune said about the device ID the Mac sent as it enrolled, with a glyph: a match is
- *  verified, a mismatch is a failure, and anything else is for a person to look at. */
-const intuneCheckLook: Record<MDMCheck, [string, "ok" | "denied" | "attention"]> = {
-  match: ["Matches Intune", "ok"],
+/** What Intune said about the device ID the Mac sent as it enrolled. A mismatch is a failure, with
+ *  a glyph, and anything else but a match is for a person to look at. A match is plain, not
+ *  verified: the device ID and the serial aren't secrets, so whoever holds the enrolment token
+ *  can send a real Mac's. */
+const intuneCheckLook: Record<MDMCheck, [string, "plain" | "denied" | "attention"]> = {
+  match: ["Matches Intune", "plain"],
   mismatch: ["Intune has this device ID for another Mac", "denied"],
   unknown_id: ["Intune doesn't know this device ID", "attention"],
   unavailable: ["Intune couldn't be reached; check it before approving", "attention"],
@@ -58,7 +60,7 @@ const intuneCheckLook: Record<MDMCheck, [string, "ok" | "denied" | "attention"]>
 };
 function IntuneCheck({ check }: { check: MDMCheck }) {
   const [words, look] = intuneCheckLook[check] ?? [check, "attention"]; // a later server may send another outcome
-  return look === "ok" ? <span className="secondary"><VerifiedGlyph /> {words}</span>
+  return look === "plain" ? <Explain tip={explanations.intuneMatch} bare>{words}</Explain>
     : <span className={`tag wrap ${look}`}>{look === "denied" ? <NotGrantedGlyph /> : <AttentionGlyph />} {words}</span>;
 }
 
@@ -67,9 +69,10 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
   const api = useApi();
   const { data, error, reload } = useLoad(() => api.enrollments(), [], 30_000);
   const mdm = useMDM();
-  // Only a key in use or waiting: a revoked or replaced one says nothing about the Mac now.
+  // Only a key in use or waiting: a revoked or replaced one says nothing about the Mac now. A key
+  // that matched Intune was checked live, and the copy can be 15 minutes older than that.
   const notInIntune = (e: Enrollment) => hasSynced(mdm.status) && (e.status === "active" || e.status === "pending")
-    && !mdm.bySerial.has(normaliseSerial(e.serial));
+    && e.mdm_check !== "match" && !mdm.bySerial.has(normaliseSerial(e.serial));
   const [evidenceVersion, setEvidenceVersion] = useState(0);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
@@ -180,6 +183,8 @@ function EnrollmentInspector({ enrollment: e, notInIntune, active, retiresMac, p
   const replacesEnclaveKey = active?.key_storage === "secure_enclave";
   // A reinstall keeps the hardware UUID, so a different one is the first thing to read.
   const otherHardware = e.status === "pending" && active && e.hardware_uuid !== active.hardware_uuid ? active : undefined;
+  // Another Mac's device ID is never routine, so the note doesn't suggest a reinstall.
+  const otherMacsID = e.status === "pending" && e.mdm_check === "mismatch";
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -262,8 +267,14 @@ function EnrollmentInspector({ enrollment: e, notInIntune, active, retiresMac, p
       {e.status === "pending" && !newMac && (
         <p className="secondary" style={{ marginTop: 12 }}>
           This Mac enrolled again with a new key.
-          {otherHardware ? " " : " Approve it if you expect that, for example after a reinstall. "}
+          {otherHardware || otherMacsID ? " " : " Approve it if you expect that, for example after a reinstall. "}
           Its previous key keeps working until you approve.
+        </p>
+      )}
+      {otherMacsID && (
+        <p className="secondary" style={{ marginTop: 12 }}>
+          The device ID this Mac sent is another Mac’s in Intune, or the profile reached the wrong Mac. Find out why
+          before you approve it.
         </p>
       )}
       {e.status === "pending" && replacesEnclaveKey && e.key_storage !== "secure_enclave" && (

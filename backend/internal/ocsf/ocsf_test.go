@@ -977,7 +977,7 @@ func TestEnrollmentNamesTheIntuneCheck(t *testing.T) {
 	for _, tt := range []struct {
 		example, check, severity, message string
 	}{
-		{"agent-enrollment-enrolled", "match", "Informational", "C02XK0AAJGH5 enrolled a new key (Intune's record matches)"},
+		{"agent-enrollment-enrolled", "match", "Informational", "C02XK0AAJGH5 enrolled a new key (the Intune device ID sent matches the serial)"},
 		{"agent-enrollment-enrolled", "not_sent", "Informational", "C02XK0AAJGH5 enrolled a new key (no Intune device ID sent)"},
 		{"agent-enrollment-pending", "invalid_id", "Medium",
 			"C02XK0AAJGH5 enrolled again with a new key, waiting for approval (the Intune device ID isn't valid)"},

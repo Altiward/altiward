@@ -669,7 +669,7 @@ describe("Settings MDM", () => {
     expect(await screen.findByText("Synced")).toBeInTheDocument();
     expect(screen.getByText("212")).toBeInTheDocument();
     expect(screen.getByText(dateTime("2026-10-18T11:45:00Z"))).toBeInTheDocument();
-    expect(screen.getByText("40 of 43 active Macs matched Intune at their last enrolment.")).toBeInTheDocument();
+    expect(screen.getByText("Of the 43 active Macs checked since Intune was connected, 40 matched Intune.")).toBeInTheDocument();
     expect(screen.getByText(/1 sent another Mac's device ID/)).toBeInTheDocument();
     expect(screen.getByText(/2 sent no Intune device ID/)).toBeInTheDocument();
     expect(screen.queryByText("Not connected")).toBeNull();
@@ -677,7 +677,27 @@ describe("Settings MDM", () => {
 
   it("treats an outcome missing from the counts as none", async () => {
     renderView(fakeApi(connected({ checks: { not_sent: 3 } })), "/settings/mdm");
-    expect(await screen.findByText("0 of 3 active Macs matched Intune at their last enrolment.")).toBeInTheDocument();
+    expect(await screen.findByText("Of the 3 active Macs checked since Intune was connected, 0 matched Intune.")).toBeInTheDocument();
+  });
+
+  it("counts the active Macs that enrolled before Intune was connected, which haven't been checked", async () => {
+    renderView(fakeApi(connected({ checks: { match: 1 }, not_checked: 2 })), "/settings/mdm");
+    expect(await screen.findByText("Of the 1 active Mac checked since Intune was connected, 1 matched Intune.")).toBeInTheDocument();
+    expect(screen.getByText(
+      "2 active Macs enrolled before Intune was connected and haven’t been checked: a Mac is checked when it next enrols a key.",
+    )).toBeInTheDocument();
+  });
+
+  it("says so when no active Mac has been checked yet, and none is waiting for its first check", async () => {
+    renderView(fakeApi(connected({ checks: {}, not_checked: 0 })), "/settings/mdm");
+    expect(await screen.findByText("No active Mac has enrolled with Intune connected yet, so none has been checked.")).toBeInTheDocument();
+    expect(screen.queryByText(/enrolled before Intune was connected/)).toBeNull();
+  });
+
+  it("names an outcome this console doesn't know without leaving the sentence empty", async () => {
+    renderView(fakeApi(connected({ checks: { match: 1, quarantined: 2 } as never })), "/settings/mdm");
+    expect(await screen.findByText("Of the 3 active Macs checked since Intune was connected, 1 matched Intune.")).toBeInTheDocument();
+    expect(screen.getByText("Of the rest, 2 had another outcome.")).toBeInTheDocument();
   });
 
   it("shows the last error, and that the sync is failing", async () => {
@@ -715,9 +735,22 @@ describe("Settings MDM", () => {
     await userEvent.click(toggle);
     expect(over.putSettings).not.toHaveBeenCalled();
     const sheet = screen.getByRole("dialog");
-    expect(sheet).toHaveTextContent("3 of 43 active Macs didn't match Intune");
+    expect(sheet).toHaveTextContent("Of the 43 active Macs checked since Intune was connected, 3 didn’t match Intune.");
+    expect(sheet).not.toHaveTextContent("enrolled before Intune was connected");
     await userEvent.click(within(sheet).getByRole("button", { name: "Require a match" }));
     await waitFor(() => expect(over.putSettings).toHaveBeenCalledWith(expect.objectContaining({ require_intune_match: true })));
+  });
+
+  it("confirms first while some active Macs haven't been checked, though every Mac checked matched", async () => {
+    const over = connected({ checks: { match: 5 }, not_checked: 1 });
+    renderView(fakeApi(over), "/settings/mdm");
+    const toggle = await screen.findByRole("switch", { name: /Require an Intune match/ });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    await userEvent.click(toggle);
+    expect(over.putSettings).not.toHaveBeenCalled();
+    const sheet = screen.getByRole("dialog");
+    expect(sheet).toHaveTextContent("1 active Mac enrolled before Intune was connected and hasn’t been checked.");
+    expect(sheet).not.toHaveTextContent("didn’t match");
   });
 
   it("saves nothing when the confirmation is cancelled", async () => {

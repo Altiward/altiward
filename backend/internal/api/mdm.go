@@ -26,8 +26,11 @@ type mdmStatus struct {
 	SilenceHeldAt *time.Time `json:"silence_held_at,omitempty"`
 	SilenceHeld   int        `json:"silence_held"`
 	// Checks counts the keys in use by the outcome of their Intune check; a key never
-	// checked isn't counted.
+	// checked isn't in it.
 	Checks map[store.MDMCheck]int `json:"checks"`
+	// NotChecked counts the keys in use that were never checked: they enrolled before
+	// Intune was connected, or while it was off.
+	NotChecked int `json:"not_checked"`
 }
 
 type mdmDevice struct {
@@ -61,11 +64,12 @@ func (s *Server) getMDMStatus(w http.ResponseWriter, r *http.Request, p auth.Pri
 		s.serverError(w, "Intune check counts", err)
 		return
 	}
+	notChecked := checks[store.MDMNotChecked]
 	delete(checks, store.MDMNotChecked)
 	writeJSON(w, http.StatusOK, mdmStatus{
 		Configured: true, Source: store.MDMIntune, LastSuccessAt: st.LastSuccessAt, LastErrorAt: st.LastErrorAt,
 		LastError: st.LastError, Devices: st.Devices, SilenceHeldAt: st.SilenceHeldAt, SilenceHeld: st.SilenceHeld,
-		Checks: checks,
+		Checks: checks, NotChecked: notChecked,
 	})
 }
 

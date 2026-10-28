@@ -199,6 +199,8 @@ export interface MDMStatus {
   silence_held?: number;
   /** Keys in use by the outcome of their Intune check. An outcome never seen is left out: read it as 0. */
   checks?: Partial<Record<MDMCheck, number>>;
+  /** Keys in use that were never checked: they enrolled before Intune was connected, or while it was off. */
+  not_checked?: number;
 }
 
 /** A Mac in the copy of what Intune manages. The IDs that identify it to Intune are never sent. */
