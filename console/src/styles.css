@@ -336,6 +336,10 @@ dialog.sheet .buttons { display: flex; justify-content: flex-end; gap: var(--spa
   width: 72px; height: 28px; padding: 0 var(--space-2); border-radius: var(--radius-sm);
   border: 1px solid var(--line); background: var(--surface-100); font: 400 13px/20px var(--mono); text-align: right;
 }
+.form select {
+  height: 28px; padding: 0 var(--space-2); border-radius: var(--radius-sm);
+  border: 1px solid var(--line); background: var(--surface-100); font: 400 13px/20px var(--sans);
+}
 .form input[aria-invalid="true"] { border-color: var(--denied); }
 .form p.hint[role="alert"] { color: var(--denied); }
 .form .hint a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }

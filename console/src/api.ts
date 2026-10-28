@@ -174,6 +174,8 @@ export interface Settings {
   /** Hours without a check-in before the server raises agent.silent; 0 means the default, 72. */
   silent_after_hours: number;
   silent_alerts_off: boolean;
+  /** How long history is kept: 0 the default, -1 for good, otherwise 90 to 3650 days. Left out, the stored value stays. */
+  history_days?: number;
 }
 
 /** One console action from the audit log. */

@@ -5,8 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiContext, MeContext } from "../context";
 import { fakeApi, githubFetch, release, signedIn } from "../test/fixtures";
 import { checkReleases, showsPrereleases } from "../updates";
-import type { ConsoleSignIn } from "../api";
-import { dateTime } from "../format";
+import type { ConsoleSignIn, HistoryPolicy } from "../api";
+import { dateOnly, dateTime } from "../format";
 import { setLook } from "../theme";
 import { SettingsView } from "./Settings";
 
@@ -174,6 +174,140 @@ describe("Settings", () => {
     renderView(api);
     expect(await screen.findByDisplayValue("72")).toBeDisabled();
     expect(screen.getByRole("switch", { name: /Alert when a Mac stops checking in/ })).not.toBeChecked();
+  });
+
+  describe("keep history for", () => {
+    const policy = (over: Partial<HistoryPolicy>): HistoryPolicy => ({
+      days: 365, kept_for_good: false, reason: "default_siem", held_before: null, waiting_for_backfill: false, ...over,
+    });
+    const history = (over: Partial<HistoryPolicy> = {}, stored = 0, sinks = true) => fakeApi({
+      settings: vi.fn(async () => ({ reenrollment_requires_approval: true, silent_after_hours: 48, silent_alerts_off: false, history_days: stored })),
+      retention: vi.fn(async () => ({ history: policy(over) })),
+      exports: vi.fn(async () => (sinks ? [{ sink: "splunk", pending: 0, failing: 0, oldest_queued_at: null, max_attempts: 8, last_delivered_at: null }] : [])),
+      putSettings: vi.fn(async (s) => s),
+    });
+    const choose = (to: string) => userEvent.selectOptions(screen.getByRole("combobox", { name: "Keep history for" }), to);
+    const saveHistory = () => screen.getByRole("button", { name: "Save history period" });
+
+    it.each([
+      [{}, "1 year, the default with a SIEM connected"],
+      [{ days: 0, reason: "default_no_siem" as const }, "Kept for good: no SIEM is connected"],
+      [{ days: 120, reason: "set" as const }, "120 days"],
+      [{ days: 0, kept_for_good: true, reason: "kept_for_good" as const }, "Kept for good"],
+    ])("says the period in force for %j", async (over, sentence) => {
+      renderView(history(over));
+      expect(await screen.findByText(sentence)).toBeInTheDocument();
+    });
+
+    it("says when history is held back for the SIEM, and when nothing is removed yet", async () => {
+      renderView(history({ held_before: "2026-10-01T00:00:00Z", waiting_for_backfill: true }));
+      expect(await screen.findByText(
+        `History from before ${dateOnly("2026-10-01T00:00:00Z")}, when your SIEM was connected, is kept until you replay it to the SIEM.`,
+      )).toBeInTheDocument();
+      expect(screen.getByText("Nothing is removed until the admin group has been sent to your SIEM.")).toBeInTheDocument();
+    });
+
+    it("asks before shortening the period, and saves it only once confirmed", async () => {
+      const api = history();
+      renderView(api);
+      await screen.findByText("1 year, the default with a SIEM connected");
+      await choose("Days");
+      const field = screen.getByLabelText("Days of history");
+      await userEvent.clear(field);
+      await userEvent.type(field, "120");
+      await userEvent.click(saveHistory());
+      const sheet = screen.getByRole("dialog");
+      expect(within(sheet).getByRole("heading", { name: "Remove older history?" })).toBeInTheDocument();
+      expect(sheet).toHaveTextContent("History older than 120 days will be removed at the next daily run. Your SIEM keeps what it was sent.");
+      expect(api.putSettings).not.toHaveBeenCalled();
+      await userEvent.click(within(sheet).getByRole("button", { name: "Remove" }));
+      expect(api.putSettings).toHaveBeenCalledWith({
+        reenrollment_requires_approval: true, silent_after_hours: 48, silent_alerts_off: false, history_days: 120,
+      });
+      await waitFor(() => expect(api.retention).toHaveBeenCalledTimes(2));
+    });
+
+    it("saves nothing when the sheet is cancelled", async () => {
+      const api = history();
+      renderView(api);
+      await screen.findByText("1 year, the default with a SIEM connected");
+      await choose("Days");
+      const field = screen.getByLabelText("Days of history");
+      await userEvent.clear(field);
+      await userEvent.type(field, "120");
+      await userEvent.click(saveHistory());
+      await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(api.putSettings).not.toHaveBeenCalled();
+    });
+
+    it("saves a longer period without asking", async () => {
+      const api = history();
+      renderView(api);
+      await screen.findByText("1 year, the default with a SIEM connected");
+      await choose("Days");
+      const field = screen.getByLabelText("Days of history");
+      await userEvent.clear(field);
+      await userEvent.type(field, "1000");
+      await userEvent.click(saveHistory());
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(api.putSettings).toHaveBeenCalledWith(expect.objectContaining({ history_days: 1000 }));
+    });
+
+    it("keeps for good without asking", async () => {
+      const api = history();
+      renderView(api);
+      await screen.findByText("1 year, the default with a SIEM connected");
+      await choose("Keep for good");
+      await userEvent.click(saveHistory());
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(api.putSettings).toHaveBeenCalledWith(expect.objectContaining({ history_days: -1 }));
+    });
+
+    it("asks when going from kept for good to the default with a SIEM connected", async () => {
+      const api = history({ days: 0, kept_for_good: true, reason: "kept_for_good" }, -1);
+      renderView(api);
+      await screen.findByText("Kept for good");
+      await choose("Default");
+      await userEvent.click(saveHistory());
+      expect(screen.getByRole("dialog")).toHaveTextContent("History older than 365 days will be removed");
+      expect(api.putSettings).not.toHaveBeenCalled();
+    });
+
+    it("saves the default without asking when no SIEM is connected", async () => {
+      const api = history({ days: 0, kept_for_good: true, reason: "kept_for_good" }, -1, false);
+      renderView(api);
+      await screen.findByText("Kept for good");
+      await choose("Default");
+      await userEvent.click(saveHistory());
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(api.putSettings).toHaveBeenCalledWith(expect.objectContaining({ history_days: 0 }));
+    });
+
+    it("can't save fewer than 90 days or more than 3650", async () => {
+      const api = history();
+      renderView(api);
+      await screen.findByText("1 year, the default with a SIEM connected");
+      await choose("Days");
+      const field = screen.getByLabelText("Days of history");
+      await userEvent.clear(field);
+      await userEvent.type(field, "89");
+      expect(screen.getByRole("alert")).toHaveTextContent("from 90 to 3650");
+      expect(saveHistory()).toBeDisabled();
+      await userEvent.clear(field);
+      await userEvent.type(field, "3651");
+      expect(saveHistory()).toBeDisabled();
+      expect(api.putSettings).not.toHaveBeenCalled();
+    });
+
+    it("shows a viewer the choice, disabled", async () => {
+      render(<ApiContext.Provider value={history()}><MeContext.Provider value={signedIn("viewer")}>
+        {settingsAt("/settings")}
+      </MeContext.Provider></ApiContext.Provider>);
+      expect(await screen.findByText("1 year, the default with a SIEM connected")).toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: "Keep history for" })).toBeDisabled();
+      expect(saveHistory()).toBeDisabled();
+    });
   });
 
   describe("console sign-ins", () => {
