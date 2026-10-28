@@ -907,7 +907,9 @@ extension ElevationTracker {
         let now = env.now()
         let device = env.device()
         return try store.transaction {
-            try tamperEvents([.settingsManaged: result], now: now, device: device, partial: true)
+            let events = try tamperEvents([.settingsManaged: result], now: now, device: device, partial: true)
+            for event in events { try store.enqueue(event, now: now) }
+            return events
         }
     }
 
