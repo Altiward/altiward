@@ -92,6 +92,17 @@ type Store interface {
 	// quiet, has no group reported, or has today's snapshot already.
 	RaiseAdminGroupSnapshot(ctx context.Context, tenantID, serial string, now time.Time) (bool, error)
 
+	// BackfillAdminGroups raises, once, the agent.admin_group events that the health
+	// readings stored before Installation().AdminGroupStartedAt would have raised, and
+	// returns how many it stored. It walks each Mac's readings in arrival order (received
+	// time, then event ID) with the rules ingest uses, so it stores what ingest would have.
+	// Each event's ID derives from its reading, so one already stored (a repeat, or a Mac
+	// that ingest has covered since) is left alone and not counted. It never changes the
+	// admin group a Mac last reported, which ingest owns. It records now as
+	// Installation().AdminGroupBackfilledAt once every Mac is done, and returns 0 at once
+	// when that is set. After an error nothing is recorded, so a later call walks again.
+	BackfillAdminGroups(ctx context.Context, now time.Time) (raised int, err error)
+
 	// ClaimExports leases up to limit due items for sink so concurrent workers don't double-send.
 	ClaimExports(ctx context.Context, sink string, limit int, lease time.Duration, now time.Time) ([]ExportItem, error)
 	// CompleteExports removes delivered items and records deliveredAt as their sinks' last

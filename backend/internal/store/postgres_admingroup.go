@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Altiward/altiward/backend/internal/admingroup"
+	"github.com/Altiward/altiward/backend/internal/event"
 	"github.com/Altiward/altiward/backend/internal/session"
 )
 
@@ -84,4 +85,101 @@ func (p *Postgres) RaiseAdminGroupSnapshot(ctx context.Context, tenantID, serial
 		return nil
 	})
 	return raised && err == nil, err
+}
+
+func (p *Postgres) BackfillAdminGroups(ctx context.Context, now time.Time) (int, error) {
+	if len(p.raisedIDSecret) == 0 {
+		return 0, nil
+	}
+	in, err := p.Installation(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if in.AdminGroupBackfilledAt != nil {
+		return 0, nil
+	}
+	rows, err := p.pool.Query(ctx, `
+		SELECT DISTINCT tenant_id, device_serial FROM events
+		WHERE type = $1 AND received_at < $2
+		ORDER BY tenant_id, device_serial`, string(event.AgentHealth), in.AdminGroupStartedAt)
+	if err != nil {
+		return 0, fmt.Errorf("list Macs: %w", err)
+	}
+	macs := []DeviceRef{}
+	for rows.Next() {
+		var r DeviceRef
+		if err := rows.Scan(&r.TenantID, &r.Serial); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		macs = append(macs, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	raised := 0
+	for _, mac := range macs {
+		// One transaction a Mac. It takes no lock: it reads readings that are stored already
+		// and adds events whose IDs are fixed, so a second server doing the same, or ingest
+		// raising one of them, leaves a single copy.
+		err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+			n, err := p.backfillMac(ctx, tx, mac, in.AdminGroupStartedAt)
+			raised += n
+			return err
+		})
+		if err != nil {
+			return raised, fmt.Errorf("backfill %s/%s: %w", mac.TenantID, mac.Serial, err)
+		}
+	}
+	if _, err := p.pool.Exec(ctx, `UPDATE installation SET admin_group_backfilled_at = $1
+		WHERE admin_group_backfilled_at IS NULL`, now); err != nil {
+		return raised, fmt.Errorf("record the backfill: %w", err)
+	}
+	return raised, nil
+}
+
+// backfillMac stores what the Mac's readings from before start would have raised. It
+// returns how many it stored; a transaction that fails stores none of them.
+func (p *Postgres) backfillMac(ctx context.Context, tx pgx.Tx, mac DeviceRef, start time.Time) (int, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT body, received_at FROM events
+		WHERE tenant_id = $1 AND device_serial = $2 AND type = $3 AND received_at < $4
+		ORDER BY received_at, event_id`, mac.TenantID, mac.Serial, string(event.AgentHealth), start)
+	if err != nil {
+		return 0, fmt.Errorf("load readings: %w", err)
+	}
+	readings := []StoredEvent{}
+	for rows.Next() {
+		var body []byte
+		var r StoredEvent
+		if err := rows.Scan(&body, &r.ReceivedAt); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if json.Unmarshal(body, &r.Event) != nil {
+			continue // a reading that can't be read raised nothing at ingest either
+		}
+		readings = append(readings, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	return backfillMac(readings, mac.TenantID, p.raisedIDSecret,
+		func(e event.Event, at time.Time) (recorded, stored bool, err error) {
+			stored, err = p.insertEvent(ctx, tx, mac.TenantID, e, at)
+			if err != nil {
+				return false, false, err
+			}
+			if stored {
+				return true, true, p.queueExports(ctx, tx, mac.TenantID, e.EventID, at)
+			}
+			var typ, serial string
+			if err := tx.QueryRow(ctx, `SELECT type, device_serial FROM events WHERE tenant_id = $1 AND event_id = $2`,
+				mac.TenantID, e.EventID).Scan(&typ, &serial); err != nil {
+				return false, false, fmt.Errorf("load raised event: %w", err)
+			}
+			return typ == string(e.Type) && serial == e.Device.Serial, false, nil
+		})
 }

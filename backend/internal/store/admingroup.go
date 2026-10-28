@@ -3,6 +3,7 @@ package store
 import (
 	"time"
 
+	"github.com/Altiward/altiward/backend/internal/admingroup"
 	"github.com/Altiward/altiward/backend/internal/event"
 	"github.com/Altiward/altiward/backend/internal/session"
 )
@@ -17,4 +18,39 @@ func deviceIdentity(d session.Device) event.Device {
 		Serial: d.Serial, HardwareUUID: d.HardwareUUID, OSVersion: d.OSVersion,
 		AgentVersion: d.AgentVersion, PrivilegesVersion: d.PrivilegesVersion,
 	}
+}
+
+// backfillMac walks one Mac's health readings, oldest first, as ingest would have: the group
+// last reported starts as nothing and follows each reading (raiseAdminGroup in either
+// store). keep stores what a reading raises, at the time the reading was received, and
+// reports whether the event is now recorded (false: its ID belongs to another event, so the
+// group last reported stays as it was) and whether it stored it just now. An event that
+// doesn't validate is left out, as ingest leaves it. It returns how many were stored.
+func backfillMac(readings []StoredEvent, tenantID string, secret []byte,
+	keep func(raised event.Event, at time.Time) (recorded, stored bool, err error)) (int, error) {
+	var prev *admingroup.Report
+	stored := 0
+	for _, r := range readings {
+		raised, next, ok := admingroup.OnHealth(prev, r.Event, tenantID, secret, r.ReceivedAt)
+		if !ok {
+			refreshed := admingroup.Refreshed(*prev, r.Event)
+			prev = &refreshed
+			continue
+		}
+		if raised.Validate(r.ReceivedAt) != nil {
+			continue
+		}
+		recorded, isNew, err := keep(raised, r.ReceivedAt)
+		if err != nil {
+			return stored, err
+		}
+		if !recorded {
+			continue
+		}
+		if isNew {
+			stored++
+		}
+		prev = &next
+	}
+	return stored, nil
 }

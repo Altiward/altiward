@@ -269,6 +269,18 @@ func run(log *slog.Logger) error {
 	}
 	defer st.Close()
 
+	// Sends the admin group from readings stored before this version. It does nothing once
+	// it has finished, and a failure is tried again at the next start.
+	go func() {
+		raised, err := st.BackfillAdminGroups(ctx, time.Now())
+		switch {
+		case err != nil && ctx.Err() == nil:
+			log.Error("admin group backfill failed; it will try again at the next start", "err", err)
+		case err == nil && raised > 0:
+			log.Info("raised the admin group from stored readings", "events", raised)
+		}
+	}()
+
 	// Shared by the SIEMs, the identity provider and Intune.
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 	trusted, err := cfg.TrustedRoots()

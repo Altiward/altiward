@@ -175,6 +175,9 @@ func (m *Memory) store(tenantID string, e event.Event, receivedAt time.Time) {
 // reading raises, compared with the group last reported, and records it. It expects m.mu
 // held, so readings are compared in the order they arrive.
 func (m *Memory) raiseAdminGroup(tenantID string, health event.Event, receivedAt time.Time, res *IngestResult) {
+	if len(m.installation.RaisedIDSecret) == 0 {
+		return
+	}
 	dk := key{tenantID, health.Device.Serial}
 	var prev *admingroup.Report
 	if r, ok := m.adminGroups[dk]; ok {
