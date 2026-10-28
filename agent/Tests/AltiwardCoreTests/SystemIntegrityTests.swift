@@ -66,19 +66,44 @@ struct SystemIntegrityTests {
     @Test func policySetOutsideMDMFails() {
         #expect(integrity(forced: ["ExpiryEnforcement", "PermanentAdmins"]).run()[.settingsManaged] == .ok)
         let r = integrity(local: ["PermanentAdmins", "ExpiryEnforcement"], forced: ["ServerURL"]).run()
-        #expect(r[.settingsManaged] == .failed("set outside MDM: PermanentAdmins, ExpiryEnforcement"))
+        #expect(
+            r[.settingsManaged]
+                == IntegrityResult(
+                    ok: false, problem: "set outside MDM: PermanentAdmins, ExpiryEnforcement",
+                    findings: ["com.altiward.agent \"PermanentAdmins\"", "com.altiward.agent \"ExpiryEnforcement\""]))
         // Removing rights nobody granted is policy too: switching it off locally keeps them.
         for key in ["OutOfBandEnforcement", "OutOfBandGraceMinutes"] {
-            #expect(integrity(local: [key]).run()[.settingsManaged] == .failed("set outside MDM: \(key)"))
+            #expect(integrity(local: [key]).run()[.settingsManaged]?.problem == "set outside MDM: \(key)")
             #expect(integrity(forced: [key]).run()[.settingsManaged] == .ok)
         }
         // A map set outside MDM would decide whose name a session carries.
+        #expect(integrity(local: ["UserPrincipalNames"]).run()[.settingsManaged]?.problem == "set outside MDM: UserPrincipalNames")
         #expect(
-            integrity(local: ["UserPrincipalNames"]).run()[.settingsManaged] == .failed("set outside MDM: UserPrincipalNames"))
-        #expect(
-            integrity(local: ["PlatformSSOIdentity"]).run()[.settingsManaged] == .failed("set outside MDM: PlatformSSOIdentity"))
+            integrity(local: ["PlatformSSOIdentity"]).run()[.settingsManaged]?.problem == "set outside MDM: PlatformSSOIdentity")
         // Keys that aren't policy don't count.
         #expect(integrity(local: ["FlushInterval"]).run()[.settingsManaged] == .ok)
+    }
+
+    /// In the installed agent the comparison with MDM's payloads runs as well, and both
+    /// problems are named together.
+    @Test func theInstalledAgentAddsTheComparisonWithMDM() {
+        var s = integrity()
+        let compared = IntegrityResult(
+            ok: false, problem: "managed settings differ from MDM's profiles: x", findings: ["com.altiward.agent ServerURL"])
+        s.managedSettings = { compared }
+        #expect(s.run()[.settingsManaged] == compared)
+
+        var both = integrity(local: ["PermanentAdmins"])
+        both.managedSettings = { compared }
+        #expect(
+            both.run()[.settingsManaged]
+                == IntegrityResult(
+                    ok: false, problem: "set outside MDM: PermanentAdmins; managed settings differ from MDM's profiles: x",
+                    findings: ["com.altiward.agent \"PermanentAdmins\"", "com.altiward.agent ServerURL"]))
+
+        var held = integrity()
+        held.managedSettings = { IntegrityResult(ok: true, problem: nil, held: true) }
+        #expect(held.run()[.settingsManaged]?.held == true)
     }
 
     @Test func privilegesChecksRunWithPrivilegesInstalled() {

@@ -56,12 +56,11 @@ public enum PrivilegesAgentLog {
         start.locale = Locale(identifier: "en_US_POSIX")
         start.dateFormat = "yyyy-MM-dd HH:mm:ss"
         let predicate = "process == \"PrivilegesAgent\" AND eventMessage BEGINSWITH \"\(PrivilegesRenewalLine.prefix)\""
-        guard
-            let output = CommandOutput.run(
-                "/usr/bin/log",
-                ["show", "--style", "ndjson", "--start", start.string(from: since), "--predicate", predicate],
-                timeout: readTimeout, maxBytes: maxOutput)
-        else {
+        let read = CommandOutput.run(
+            "/usr/bin/log",
+            ["show", "--style", "ndjson", "--start", start.string(from: since), "--predicate", predicate],
+            timeout: readTimeout, maxBytes: maxOutput)
+        guard case .success(let output) = read else {
             log.error("couldn't read PrivilegesAgent's renewals from the unified log")
             return []
         }
@@ -137,40 +136,6 @@ enum MachOImage {
         default:
             return slice(0).map { [$0] } ?? []
         }
-    }
-}
-
-/// A command's standard output when it exits 0 within `timeout` and prints no more than
-/// `maxBytes`; nil otherwise. The output is read while the command runs, so a large one
-/// can't fill the pipe and stall it.
-enum CommandOutput {
-    static func run(_ executable: String, _ arguments: [String], timeout: TimeInterval, maxBytes: Int) -> Data? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-        let output = OSAllocatedUnfairLock(initialState: Data())
-        let read = DispatchSemaphore(value: 0)
-        DispatchQueue.global().async {
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            output.withLock { $0 = data }
-            read.signal()
-        }
-        guard read.wait(timeout: .now() + timeout) == .success else {
-            process.terminate()
-            return nil
-        }
-        process.waitUntilExit()
-        let data = output.withLock { $0 }
-        guard process.terminationStatus == 0, data.count <= maxBytes else { return nil }
-        return data
     }
 }
 

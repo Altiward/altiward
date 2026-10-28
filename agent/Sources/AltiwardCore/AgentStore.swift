@@ -3,12 +3,15 @@ import Foundation
 public enum AgentStoreError: Error, Equatable, CustomStringConvertible {
     /// The store was written by a newer agent, in a layout this build doesn't know.
     case newerSchema(found: Int, supported: Int)
+    /// A row isn't in the shape this agent writes.
+    case unreadableRow(String)
 
     public var description: String {
         switch self {
         case .newerSchema(let found, let supported):
             "agent store has schema version \(found), newer than this agent's \(supported): "
                 + "a newer Altiward agent wrote it, so reinstall that release or later"
+        case .unreadableRow(let table): "a row in \(table) can't be read"
         }
     }
 }
@@ -208,6 +211,17 @@ public final class AgentStore: @unchecked Sendable {
         """
         ALTER TABLE open_sessions ADD COLUMN upn TEXT;
         ALTER TABLE pending_claims ADD COLUMN upn TEXT;
+        """,
+        // 4 -> 5: the settings payloads MDM installed, from the last clean read of the
+        // installed profiles (1.2.0).
+        """
+        CREATE TABLE mdm_payloads (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            domain TEXT NOT NULL,
+            profile_uuid TEXT NOT NULL,
+            payload_uuid TEXT NOT NULL,
+            settings BLOB NOT NULL
+        );
         """,
     ]
 
@@ -532,6 +546,55 @@ public final class AgentStore: @unchecked Sendable {
         try locked {
             try db.run("DELETE FROM command_results WHERE reported_at < ?", [.double(date.timeIntervalSince1970)])
         }
+    }
+
+    // MARK: MDM payloads
+
+    static let mdmPayloadsReadAtKey = "mdm_payloads_read_at"
+
+    /// Stores `set`, which may be empty, as the last clean read. The rows are rewritten only
+    /// when the payloads changed; otherwise only the time of the read.
+    public func saveMDMPayloads(_ set: MDMPayloadSet) throws {
+        let rows = try set.payloads.map { ($0, try PlistValue.encode($0.settings)) }
+        try transaction {
+            if (try? Self.mdmPayloads(db: db))??.sameSettings(as: set) != true {
+                try db.execute("DELETE FROM mdm_payloads")
+                for (p, settings) in rows {
+                    try db.run(
+                        "INSERT INTO mdm_payloads (domain, profile_uuid, payload_uuid, settings) VALUES (?, ?, ?, ?)",
+                        [.text(p.domain), .text(p.profileUUID), .text(p.payloadUUID), .blob(settings)])
+                }
+            }
+            try setValue(AltiwardJSON.format(set.readAt), forKey: Self.mdmPayloadsReadAtKey)
+        }
+    }
+
+    /// The stored MDM payloads; nil when none were ever stored. Throws when a row isn't one
+    /// this agent wrote.
+    public func mdmPayloads() throws -> MDMPayloadSet? {
+        try locked { try Self.mdmPayloads(db: db) }
+    }
+
+    /// The stored MDM payloads from the store in `directory`, opened read-only and left as it
+    /// is, for a command that changes nothing.
+    public static func storedMDMPayloads(directory: URL) throws -> MDMPayloadSet? {
+        try mdmPayloads(db: SQLiteConnection(path: directory.appendingPathComponent("agent.sqlite").path, readOnly: true))
+    }
+
+    private static func mdmPayloads(db: SQLiteConnection) throws -> MDMPayloadSet? {
+        guard
+            let readAt = try db.query("SELECT value FROM kv WHERE key = ?", [.text(mdmPayloadsReadAtKey)]).first?
+                .text(0).flatMap(AltiwardJSON.parse)
+        else { return nil }
+        let payloads = try db.query("SELECT domain, profile_uuid, payload_uuid, settings FROM mdm_payloads ORDER BY seq")
+            .map { row in
+                guard let domain = row.text(0), let profile = row.text(1), let payload = row.text(2),
+                    let settings = row.blob(3)
+                else { throw AgentStoreError.unreadableRow("mdm_payloads") }
+                return MDMPayload(
+                    domain: domain, profileUUID: profile, payloadUUID: payload, settings: try PlistValue.decode(settings))
+            }
+        return MDMPayloadSet(payloads, readAt: readAt)
     }
 
     // MARK: Key-value state

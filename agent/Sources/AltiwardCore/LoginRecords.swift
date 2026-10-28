@@ -79,6 +79,20 @@ public enum LoginRecords {
         }
     }
 
+    /// Users signed in at the login window now (`console`), with when each signed in. A record
+    /// whose process has gone doesn't count.
+    public static func signedInAtLoginWindow() -> [String: Date] {
+        atLoginWindow(current(), processExists: processExists)
+    }
+
+    static func atLoginWindow(_ records: [LoginRecord], processExists: (Int32) -> Bool) -> [String: Date] {
+        var users: [String: Date] = [:]
+        for r in records where r.tty == "console" && processExists(r.pid) {
+            users[r.user] = min(users[r.user] ?? r.started, r.started)
+        }
+        return users
+    }
+
     /// Whether a process with this id exists. `EPERM` means it does, under another account.
     public static func processExists(_ pid: Int32) -> Bool {
         kill(pid, 0) == 0 || errno == EPERM

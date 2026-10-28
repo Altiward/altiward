@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CommandPollInterval</key>
+	<integer>60</integer>
+	<key>EnrollmentToken</key>
+	<string>token-not-shown</string>
+	<key>ExpiryEnforcement</key>
+	<string>enforce</string>
+	<key>ExpiryGraceMinutes</key>
+	<integer>1</integer>
+	<key>HeartbeatInterval</key>
+	<integer>60</integer>
+	<key>HookCodeRequirement</key>
+	<string>identifier "com.altiward.hook" and anchor apple generic and certificate leaf[subject.OU] = "JHKW5KFQH7"</string>
+	<key>MDMDeviceID</key>
+	<string>00000000-0000-4000-8000-000000000000</string>
+	<key>OutOfBandEnforcement</key>
+	<string>alert</string>
+	<key>OutOfBandGraceMinutes</key>
+	<integer>5</integer>
+	<key>PayloadUUID</key>
+	<string>4B4B4B4B-0004-4000-8000-000000000004</string>
+	<key>PermanentAdmins</key>
+	<array>
+		<string>breakglass</string>
+	</array>
+	<key>ServerURL</key>
+	<string>https://altiward-agents.example.com</string>
+	<key>UserPrincipalNames</key>
+	<dict>
+		<key>jdoe</key>
+		<string>jane.doe@example.com</string>
+	</dict>
+</dict>
+</plist>

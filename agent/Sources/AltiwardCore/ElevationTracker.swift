@@ -20,6 +20,9 @@ public struct AgentEnvironment: Sendable {
     public var now: @Sendable () -> Date
     /// The tamper checks that look at the installed system; see ``SystemIntegrity``.
     public var integrity: @Sendable () -> [IntegrityCheck: IntegrityResult]
+    /// The settings check alone, run when a managed preferences file changes
+    /// (``ElevationTracker/checkManagedSettings()``). Nil where nothing watches them.
+    public var settingsCheck: (@Sendable () -> IntegrityResult)?
     /// Snapshots the persistence locations; see ``checkPersistence()``. Nil turns
     /// the check off.
     public var persistence: (@Sendable () -> PersistenceSnapshot)?
@@ -111,6 +114,7 @@ public struct AgentEnvironment: Sendable {
         self.config = config
         self.now = now
         self.integrity = integrity
+        self.settingsCheck = nil
         self.persistence = persistence
         self.waitForDirectory = waitForDirectory
         self.privilegesTimer = privilegesTimer
@@ -132,13 +136,16 @@ public struct AgentEnvironment: Sendable {
         self.platformSSOLinks = platformSSOLinks
     }
 
-    /// The real system.
-    public static func live(config: AgentConfiguration) -> AgentEnvironment {
-        let system = SystemIntegrity.live(config: config)
+    /// The real system. With `managed` (the installed agent), the Privileges settings come
+    /// from MDM's payloads, and the settings check compares the managed preferences with them.
+    public static func live(config: AgentConfiguration, managed: ManagedSettings? = nil) -> AgentEnvironment {
+        let system = SystemIntegrity.live(config: config, managed: managed)
         let sources = PersistenceSources.live()
-        return AgentEnvironment(
+        let privilegesSettings: @Sendable () -> PrivilegesSettings =
+            if let managed { { managed.privilegesSettings() } } else { { PrivilegesSettings.current() } }
+        var env = AgentEnvironment(
             device: { DeviceIdentity.current() },
-            privileges: { PrivilegesSettings.current() },
+            privileges: privilegesSettings,
             admins: SystemAdminGroup(),
             adminEditor: SystemAdminGroup(),
             config: config,
@@ -162,6 +169,10 @@ public struct AgentEnvironment: Sendable {
             privilegesRenewals: { PrivilegesAgentLog.renewals(since: $0) },
             privilegesAgentImageUUIDs: { MachOImage.uuids(atPath: PrivilegesAgentLog.executable) },
             platformSSOLinks: { PlatformSSO.allLinks() })
+        if managed != nil {
+            env.settingsCheck = { system.settingsManaged() }
+        }
+        return env
     }
 }
 
@@ -551,8 +562,7 @@ public final class ElevationTracker: Sendable {
                 // Depth before this batch is enqueued: what was still waiting.
                 "queue_depth": .number(Double(try store.pendingCount())),
                 "privileges": privileges,
-                "integrity": .object(
-                    Dictionary(uniqueKeysWithValues: integrity.map { ($0.key.rawValue, JSONValue.bool($0.value.ok)) })),
+                "integrity": .object(try healthIntegrity(integrity)),
             ]
             if let unreadable = try persistenceUnreadable() { health["persistence_unreadable"] = .strings(unreadable) }
             events.append(
@@ -883,5 +893,37 @@ public final class ElevationTracker: Sendable {
         }
         result.status = !result.failed.isEmpty ? .failed : !result.revoked.isEmpty ? .completed : .skipped
         return result
+    }
+}
+
+/// The settings check between heartbeats.
+extension ElevationTracker {
+    /// Runs the settings check alone and reports a change, as the heartbeat would. For a
+    /// managed preferences file that changed: a setting forged for one elevation and put back
+    /// would otherwise be gone before the next heartbeat. Empty where nothing watches them.
+    public func checkManagedSettings() throws -> [AltiwardEvent] {
+        guard let check = env.settingsCheck else { return [] }
+        let result = check()
+        let now = env.now()
+        let device = env.device()
+        return try store.transaction {
+            try tamperEvents([.settingsManaged: result], now: now, device: device, partial: true)
+        }
+    }
+
+    /// The integrity map in `agent.health`: a held check, or one whose result was older than
+    /// the one recorded, shows the state it keeps, and is left out when it has none yet.
+    func healthIntegrity(_ integrity: [IntegrityCheck: IntegrityResult]) throws -> [String: JSONValue] {
+        let stored = try store.value(forKey: Self.integrityKey)
+            .flatMap { try? JSONDecoder().decode([String: Bool].self, from: Data($0.utf8)) } ?? [:]
+        var map: [String: JSONValue] = [:]
+        for (check, result) in integrity {
+            if result.held || result.observedAt != nil {
+                if let kept = stored[check.rawValue] { map[check.rawValue] = .bool(kept) }
+            } else {
+                map[check.rawValue] = .bool(result.ok)
+            }
+        }
+        return map
     }
 }

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AllowPrivilegeRenewal</key>
+	<false/>
+	<key>EnableSystemExtension</key>
+	<true/>
+	<key>ExpirationIntervalMax</key>
+	<integer>60</integer>
+	<key>PassReasonToExecutable</key>
+	<true/>
+	<key>PayloadUUID</key>
+	<string>3B3B3B3B-0003-4000-8000-000000000003</string>
+	<key>PostChangeActionOnGrantOnly</key>
+	<false/>
+	<key>PostChangeExecutableChecksum</key>
+	<string>checksum-not-shown</string>
+	<key>PostChangeExecutablePath</key>
+	<string>/Library/Application Support/Altiward/Altiward.app/Contents/MacOS/Altiward</string>
+</dict>
+</plist>

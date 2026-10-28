@@ -50,12 +50,13 @@ and the console shows it:
   line for them ([what is recorded](docs/data-handling.md)).
 - **Tamper and health.** Alerts when the agent's LaunchDaemon or signature is changed, its
   server, permanent admins, expiry enforcement, out-of-band enforcement, UPN, Platform SSO
-  or hook requirement settings are set outside MDM, or it is downgraded; when a Mac
-  account's Platform SSO link is added, removed or changed; when Privileges' own protection
-  is off or Altiward's hook isn't set in Privileges, someone stops Privileges' timer while
-  holding rights it granted, or Privileges blocks an attempt to remove or unload it; and
-  when a Mac stops checking in (within hours, with Intune connected, if Intune still hears
-  from it).
+  or hook requirement settings are set outside MDM, its or Privileges' managed settings
+  don't match what MDM's profiles set (the agent takes its own settings from those
+  profiles), or it is downgraded; when a Mac account's Platform SSO link is added, removed
+  or changed; when Privileges' own protection is off or Altiward's hook isn't set in
+  Privileges, someone stops Privileges' timer while holding rights it granted, or
+  Privileges blocks an attempt to remove or unload it; and when a Mac stops checking in
+  (within hours, with Intune connected, if Intune still hears from it).
 - **What changed while someone was admin:** launch items, sudoers, SSH keys, local
   accounts and remote access.
 - **Your SIEM gets every event** as OCSF, along with every console action. Events wait

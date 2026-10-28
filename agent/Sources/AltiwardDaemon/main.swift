@@ -17,9 +17,11 @@
 //                                 grant is held, as the hook's is, while Privileges' log is
 //                                 available
 //
-// Configuration comes from the com.altiward.agent preference domain (MDM profile) with
+// Installed (root, from Altiward.app), the settings come from the com.altiward.agent payloads
+// of the profiles MDM installed, as /usr/bin/profiles reports them, or from the last ones read
+// when it can't. In development they come from the com.altiward.agent preference domain, with
 // ALTIWARD_SERVER_URL, ALTIWARD_TOKEN, ALTIWARD_DATA_DIR and ALTIWARD_HEARTBEAT_SECONDS
-// overrides for local development.
+// overrides; the installed agent ignores those.
 
 import AltiwardCore
 import Foundation
@@ -45,7 +47,27 @@ if command == "permanent-uses" {
     // Like privileges-audit: no store, no Secure Enclave key, nothing changed.
     let hours = arguments.dropFirst().first.flatMap(Double.init) ?? 24
     let since = Date().addingTimeInterval(-hours * 3600)
-    let admins = AgentConfiguration.load().permanentAdmins
+    var admins = AgentConfiguration.load(environment: [:]).permanentAdmins
+    if Daemon.installed {
+        // As the daemon reads them, without changing anything: the installed profiles, or the
+        // MDM settings the daemon last stored, read-only.
+        switch InstalledProfiles.readDevice() {
+        case .success(.enrolled(let payloads)):
+            admins = AgentConfiguration.load(
+                environment: [:], preferences: MDMPayloadSet(payloads, readAt: Date()).preferences(for: AgentConfiguration.domain)
+            ).permanentAdmins
+        case .success(.notEnrolled):
+            print("this Mac isn't enrolled in MDM: using PermanentAdmins from the preferences")
+        case .failure(let error):
+            if let stored = try? AgentStore.storedMDMPayloads(directory: AgentConfiguration.defaultDataDirectory) {
+                print("can't read the installed profiles (\(error)): using the MDM settings stored \(AltiwardJSON.format(stored.readAt))")
+                admins = AgentConfiguration.load(environment: [:], preferences: stored.preferences(for: AgentConfiguration.domain))
+                    .permanentAdmins
+            } else {
+                print("can't read the installed profiles (\(error)) and no MDM settings are stored: using the preferences")
+            }
+        }
+    }
     if admins.isEmpty {
         print("PermanentAdmins is empty: no account is watched, so the agent records none of this")
     }
@@ -73,14 +95,27 @@ if command == "permanent-uses" {
 }
 
 do {
-    let configuration = AgentConfiguration.load()
+    var configuration = AgentConfiguration.load()
+    var store: AgentStore?
+    var managed: ManagedSettings?
+    if Daemon.installed {
+        let opened = try AgentStore.open(directory: AgentConfiguration.defaultDataDirectory)
+        // Stored settings are used only with the server and token this Mac enrolled with.
+        let settings = ManagedSettings(store: opened, enrolment: DeviceAuthenticator.enrolment(in: opened))
+        // Nothing to take settings from that an admin couldn't write: starting would hand the
+        // agent, its key and its reports to whatever settings are in the preferences. Wait.
+        let state = try ManagedSettings.startupState(
+            settings, mayWait: command == "run", log: { log.error("\($0, privacy: .public)") })
+        configuration = ManagedSettings.configuration(state)!
+        (store, managed) = (opened, settings)
+    }
     // A command run beside the daemon can't use a Secure Enclave key the daemon made:
     // such a key works only in the session that made it, and it must never rotate the key
     // the daemon is using. Only the process launchd started is the daemon. With its own
     // data directory (development) no daemon shares the store, so the command holds the key.
     let role = DeviceAuthenticator.Role.forProcess(
         environment: ProcessInfo.processInfo.environment, dataDirectory: configuration.dataDirectory)
-    let daemon = try Daemon(configuration: configuration, role: role)
+    let daemon = try Daemon(configuration: configuration, role: role, store: store, managed: managed)
     switch command {
     case "run":
         daemon.run()  // never returns

@@ -115,7 +115,9 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
 - **Runs revokes from the console** (below), removing the user from `admin` itself.
   Permanent admins are never removed.
 - **Runs tamper checks** each heartbeat and sends `agent.tamper` when one changes: the
-  LaunchDaemon plist, the app's code signature, nine settings set outside MDM
+  LaunchDaemon plist, the app's code signature, the managed preferences files for
+  `com.altiward.agent` and `corp.sap.privileges` against MDM's payloads (also a few seconds
+  after any of those files changes), nine settings set outside MDM
   (`ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`,
   `OutOfBandEnforcement`, `OutOfBandGraceMinutes`, `UserPrincipalNames`,
   `PlatformSSOIdentity`, `HookCodeRequirement`), a downgrade, and, with Privileges installed, its tamper protection, its hook setting, its timer
@@ -419,10 +421,13 @@ or directly: `altiward-agent status | flush | heartbeat | commands | simulate-ho
 
 ## Configuration
 
-Managed preference domain `com.altiward.agent`; see the commented example in
-[`com.altiward.agent.plist`](../deploy/mdm/com.altiward.agent.plist).
-Environment overrides for development: `ALTIWARD_SERVER_URL`, `ALTIWARD_TOKEN`,
-`ALTIWARD_DATA_DIR`, `ALTIWARD_HEARTBEAT_SECONDS`.
+Domain `com.altiward.agent`; see the commented example in
+[`com.altiward.agent.plist`](../deploy/mdm/com.altiward.agent.plist). The installed agent
+(root, running from Altiward.app) reads it from the payloads of the profiles MDM installed,
+through `/usr/bin/profiles`, and keeps the last clean reading in its store for when that
+can't be read. Anything else is development: it reads the managed preference domain, with
+environment overrides `ALTIWARD_SERVER_URL`, `ALTIWARD_TOKEN`, `ALTIWARD_DATA_DIR` and
+`ALTIWARD_HEARTBEAT_SECONDS`, which the installed agent ignores.
 
 The Privileges keys admins add are in
 [`corp.sap.privileges.plist`](../deploy/mdm/corp.sap.privileges.plist).
