@@ -257,6 +257,8 @@ struct TamperTests {
         let found = try t.checkManagedSettings()
         #expect(found.map { $0.detail["check"] } == ["settings_managed"])
         #expect(found.map { $0.detail["state"] } == ["failed"])
+        // Queued for the server, not only returned to be logged.
+        #expect(try store.pending(limit: 100).contains { $0.event.eventID == found.first?.eventID })
         // launch_daemon was neither retired nor repeated.
         #expect(try t.checkManagedSettings().isEmpty)
         check.withLock { $0 = .ok }

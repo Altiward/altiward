@@ -7,7 +7,7 @@
   the settings from the preferences and fails `settings_managed`. `ALTIWARD_*` environment
   overrides now apply only in development.
 - `settings_managed` compares the managed preferences files for `com.altiward.agent` and
-  `corp.sap.privileges`, and what macOS serves from them, with MDM's payloads, both ways,
+  `corp.sap.privileges` with MDM's payloads, both ways,
   on every heartbeat and whenever one of the files changes: the device's files, and the
   folders of people signed in at the login window. A changed, removed or added key fails
   it, naming the key, never its value, and it is reported `failed` again when the failing

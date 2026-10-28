@@ -224,7 +224,7 @@ Create these in your MDM and scope them to a pilot group first.
 
    **What `settings_managed` checks.** Anyone with admin rights can write the files in
    `/Library/Managed Preferences`, and macOS then reports the written value as set by MDM.
-   So the agent compares those files, and what macOS serves from them, with MDM's payloads
+   So the agent compares those files with MDM's payloads
    for `com.altiward.agent` and `corp.sap.privileges`, both ways: every key a payload sets
    must be there with the same value, and every key in a file must be one a payload sets.
    It compares on every heartbeat, and whenever a file there changes: at once against the

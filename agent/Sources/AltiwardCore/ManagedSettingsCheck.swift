@@ -208,6 +208,8 @@ public struct ManagedSettingsCheck: Sendable {
     /// differs from the device's payloads.
     public var userPayloads: @Sendable (String) -> Result<[MDMPayload], ProfilesReadError>
     /// What CFPreferences serves root for a key of a domain; nil turns that comparison off.
+    /// The live check leaves it off: a process keeps the value it first read even after the
+    /// file is rewritten and cfprefsd restarted, so the daemon would compare a stale value.
     public var served: (@Sendable (_ domain: String, _ key: String) -> PlistValue?)?
     public var now: @Sendable () -> Date
     /// Where findings between reads, follow-ups and users' own payloads are kept.
@@ -233,10 +235,6 @@ public struct ManagedSettingsCheck: Sendable {
     public static func live(_ managed: ManagedSettings) -> ManagedSettingsCheck {
         ManagedSettingsCheck(
             signedIn: { LoginRecords.signedInAtLoginWindow() },
-            served: { domain, key in
-                CFPreferencesAppSynchronize(domain as CFString)
-                return CFPreferencesCopyAppValue(key as CFString, domain as CFString).flatMap { PlistValue($0) }
-            },
             memo: managed)
     }
 
