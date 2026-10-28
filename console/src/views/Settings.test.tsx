@@ -708,6 +708,23 @@ describe("Settings MDM", () => {
     expect(screen.getByText("intune: HTTP 403 Forbidden")).toBeInTheDocument();
   });
 
+  it("warns when early silence alerts were held back in the last day", async () => {
+    const at = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    renderView(fakeApi(connected({ silence_held_at: at, silence_held: 12 })), "/settings/mdm");
+    const banner = await screen.findByRole("alert");
+    expect(banner).toHaveTextContent(`Early alerts held back ${dateTime(at)}: 12 Macs had stopped checking in with ` +
+      "Altiward while Intune still heard from them, too many to be agents removed one by one.");
+    expect(banner).toHaveTextContent("Altiward is probably what they can’t reach: check the agent hostname, its certificate and any proxy.");
+    expect(banner).toHaveTextContent("Each Mac is still reported once it has been quiet for the alert limit.");
+  });
+
+  it("doesn't warn about alerts held back more than a day ago", async () => {
+    const at = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    renderView(fakeApi(connected({ silence_held_at: at, silence_held: 12 })), "/settings/mdm");
+    expect(await screen.findByText("Synced")).toBeInTheDocument();
+    expect(screen.queryByText(/held back/)).toBeNull();
+  });
+
   it("says when the first sync hasn't finished", async () => {
     renderView(fakeApi(connected({ last_success_at: undefined, devices: 0 })), "/settings/mdm");
     expect(await screen.findByText("Waiting for the first sync")).toBeInTheDocument();

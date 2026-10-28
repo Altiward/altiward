@@ -465,3 +465,51 @@ func TestDeviceSilenceKeepsNewestStateInAnyOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestDeviceSilenceKeepsItsBasis(t *testing.T) {
+	early := testfixture.Event(t, "agent-silent-mdm")
+	d := session.NewDevice("t1", early.Device.Serial)
+	d.Apply(early)
+	if !d.Silent() || d.Silence.Basis != "mdm_check_in" {
+		t.Fatalf("silence = %+v", d.Silence)
+	}
+	d = session.NewDevice("t1", early.Device.Serial)
+	d.Apply(testfixture.Event(t, "agent-silent"))
+	if d.Silence.Basis != "no_contact" {
+		t.Fatalf("silence = %+v", d.Silence)
+	}
+	// Stored before the basis was recorded: empty, which means no_contact.
+	var old session.Device
+	if err := json.Unmarshal([]byte(`{"serial":"C02XK0AAJGH5","silence":{"event_id":"x","state":"silent"}}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	if old.Silence.Basis != "" {
+		t.Fatalf("silence = %+v", old.Silence)
+	}
+}
+
+// A downgrade doesn't lower the version the Mac is known to have run, in any order.
+func TestDeviceKeepsTheHighestAgentVersion(t *testing.T) {
+	newer := testfixture.Event(t, "agent-health")
+	newer.Device.AgentVersion = "1.2.0"
+	older := testfixture.Event(t, "agent-health")
+	older.EventID = "0b5e0f3a-1c2d-4e5f-8a9b-0c1d2e3f4a5b"
+	older.Timestamp = newer.Timestamp.Add(time.Hour)
+	older.Device.AgentVersion = "1.1.0"
+	unreadable := testfixture.Event(t, "agent-health")
+	unreadable.EventID = "1c6f1a4b-2d3e-4f5a-9b0c-1d2e3f4a5b6c"
+	unreadable.Timestamp = newer.Timestamp.Add(2 * time.Hour)
+	unreadable.Device.AgentVersion = "dev"
+	silent := testfixture.Event(t, "agent-silent")
+	silent.Device.AgentVersion = "9.0.0"
+
+	for _, order := range [][]event.Event{{newer, older, unreadable, silent}, {silent, unreadable, older, newer}} {
+		d := session.NewDevice("t1", newer.Device.Serial)
+		for _, e := range order {
+			d.Apply(e)
+		}
+		if d.AgentVersion != "dev" || d.HighestAgentVersion != "1.2.0" {
+			t.Fatalf("agent = %s, highest = %s", d.AgentVersion, d.HighestAgentVersion)
+		}
+	}
+}

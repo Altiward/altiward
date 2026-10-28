@@ -9,7 +9,7 @@ Each directory holds the events one agent release sends, frozen when that releas
 directory to the API and require all of them to be accepted.
 
 - **When an agent release ships** with a new minor version, copy `../examples/` here as
-  `agent-X.Y/`, leaving out `agent-silent.json`, `agent-enrollment-*.json` and
+  `agent-X.Y/`, leaving out `agent-silent*.json`, `agent-enrollment-*.json` and
   `agent-admin-group-*.json`, which only the server raises.
 - **Keep the newest two** directories once there are two, the new release's included, and
   delete the rest. Set `OldestSupportedAgent` in `backend/internal/release` to the oldest

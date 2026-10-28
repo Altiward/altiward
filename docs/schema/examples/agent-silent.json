@@ -16,7 +16,9 @@
   "delayed": false,
   "detail": {
     "state": "silent",
+    "basis": "no_contact",
     "last_seen_at": "2026-10-13T09:00:00Z",
-    "silent_after_seconds": 259200
+    "silent_after_seconds": 259200,
+    "admin_members": ["itadmin"]
   }
 }

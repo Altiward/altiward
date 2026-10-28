@@ -25,7 +25,7 @@
         "type_id": 1
       },
       "created_time": 1792148400000,
-      "desc": "C02XK0AAJGH5 has not checked in since 2026-10-13T09:00:00Z (the limit is 72 hours); the agent may have been removed, the Mac is off, or it can't reach the agent hostname (check the hostname is reachable from outside your network)",
+      "desc": "C02XK0AAJGH5 has not checked in since 2026-10-13T09:00:00Z (the limit is 72 hours); the agent may have been removed, the Mac is off, or it can't reach the agent hostname (check the hostname is reachable from outside your network). Admins at its last check-in: itadmin",
       "first_seen_time": 1792148400000,
       "title": "Altiward agent stopped checking in",
       "types": [
@@ -34,7 +34,7 @@
       "uid": "3f6d1c2a-8b4e-5a7f-9c0d-1e2f3a4b5c6d"
     },
     "is_alert": true,
-    "message": "C02XK0AAJGH5 has not checked in since 2026-10-13T09:00:00Z (the limit is 72 hours); the agent may have been removed, the Mac is off, or it can't reach the agent hostname (check the hostname is reachable from outside your network)",
+    "message": "C02XK0AAJGH5 has not checked in since 2026-10-13T09:00:00Z (the limit is 72 hours); the agent may have been removed, the Mac is off, or it can't reach the agent hostname (check the hostname is reachable from outside your network). Admins at its last check-in: itadmin",
     "metadata": {
       "logged_time": 1792148400000,
       "product": {
@@ -56,6 +56,10 @@
     "unmapped": {
       "altiward": {
         "detail": {
+          "admin_members": [
+            "itadmin"
+          ],
+          "basis": "no_contact",
           "last_seen_at": "2026-10-13T09:00:00Z",
           "silent_after_seconds": 259200,
           "state": "silent"

@@ -43,3 +43,39 @@ func TestAgentSupported(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentSupportedReadsPreReleases(t *testing.T) {
+	for v, want := range map[string]bool{"1.0.0-rc.1": true, "0.9.0-rc.4": false, "1.1.0+build.7": true} {
+		if got := release.AgentSupported(v); got != want {
+			t.Errorf("AgentSupported(%q) = %v, want %v", v, got, want)
+		}
+	}
+}
+
+func TestAgentAtLeast(t *testing.T) {
+	for v, want := range map[string]bool{
+		"1.2.0": true, "1.2": true, "1.10.0": true, "2.0.0": true, "1.2.0-rc.4": true,
+		"1.1.0": false, "1.1.9": false, "0.12.0": false, "1.1.0-rc.1": false,
+		"": true, "dev": true, "1.x": true, // unreadable: counts as new enough
+	} {
+		if got := release.AgentAtLeast(v, "1.2"); got != want {
+			t.Errorf("AgentAtLeast(%q, 1.2) = %v, want %v", v, got, want)
+		}
+	}
+}
+
+func TestNewerAgent(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{"1.2.0", "1.1.0", true}, {"1.1.0", "1.2.0", false}, {"1.2.0", "1.2.0", false},
+		{"1.2.1", "1.2.0", true}, {"1.10.0", "1.9.9", true}, {"1.2.0", "1.2.0-rc.4", true},
+		{"1.2.0-rc.4", "1.2.0", false}, {"1.2.0-rc.4", "1.1.0", true},
+		{"1.2.0", "", true}, {"1.2.0", "dev", true}, {"dev", "1.0.0", false}, {"", "", false},
+	} {
+		if got := release.NewerAgent(c.a, c.b); got != c.want {
+			t.Errorf("NewerAgent(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}

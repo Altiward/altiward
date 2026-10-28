@@ -59,9 +59,9 @@ type MDM interface {
 	ClearMDM(ctx context.Context, tenantID, source string) error
 }
 
-// mdmSerial is how a serial is matched: upper-cased, without surrounding spaces, as the
+// MDMSerial is how a serial is matched: upper-cased, without surrounding spaces, as the
 // index on mdm_devices has it.
-func mdmSerial(s string) string { return strings.ToUpper(strings.Trim(s, " ")) }
+func MDMSerial(s string) string { return strings.ToUpper(strings.Trim(s, " ")) }
 
 // uniqueMDMDevices lower-cases each device ID and keeps the last record of each, in the
 // order first listed.

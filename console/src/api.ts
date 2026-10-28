@@ -86,6 +86,9 @@ export interface Silence {
   state: "silent" | "resumed";
   /** The Mac's last check-in when the server raised it. */
   last_seen_at: string;
+  /** Why it was raised: the Mac went the alert limit without checking in, or Intune still heard from it
+   *  well after its last check-in. Missing for a resume, and for a silence raised before server 1.2.0. */
+  basis?: "no_contact" | "mdm_check_in";
 }
 
 /** A tamper check changing (agent.tamper): failed, restored, retired (a failing check that
@@ -195,6 +198,7 @@ export interface MDMStatus {
   last_error?: string;
   /** Macs in the copy at the last success. */
   devices?: number;
+  /** When early silence alerts were last held back because too many Macs would have raised one, and how many. */
   silence_held_at?: string;
   silence_held?: number;
   /** Keys in use by the outcome of their Intune check. An outcome never seen is left out: read it as 0. */

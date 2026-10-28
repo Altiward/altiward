@@ -335,6 +335,10 @@ func run(log *slog.Logger) error {
 	}
 
 	silence := &monitor.Silence{Store: st, Log: log, Now: time.Now}
+	if i := cfg.Intune; i != nil {
+		// A silence is raised early when Intune still hears from the Mac, from MDMStartGrace after this start.
+		silence.MDMSource, silence.MDMTenant, silence.Started = store.MDMIntune, i.Tenant, time.Now()
+	}
 	go silence.Run(ctx, time.Minute)
 
 	// The first sweep waits an hour: during an update, an older revision still running

@@ -313,7 +313,9 @@ function DeviceInspector({ device: d, intune, severities, onClose }: {
           {!isRetired && silent(d) && (
             <p className="lede" title={dateTime(d.silence!.at)}>
               <span className="tag denied"><NotGrantedGlyph /> Not checking in</span>{" "}
-              Alert raised {relativeTime(d.silence!.at).toLowerCase()}. The agent may have been removed, the Mac is off, or it can’t reach the agent hostname from where it is.
+              Alert raised {relativeTime(d.silence!.at).toLowerCase()}. {d.silence!.basis === "mdm_check_in"
+                ? "Intune still hears from it: the agent may have been removed or stopped, or it can’t reach the agent hostname."
+                : "The agent may have been removed, the Mac is off, or it can’t reach the agent hostname from where it is."}
             </p>
           )}
           {d.admin_members.some((u) => !permanent.has(u)) && (

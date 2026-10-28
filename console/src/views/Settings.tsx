@@ -495,6 +495,10 @@ const notCheckedSentence = (n: number) =>
 const syncFailing = (s: MDMStatus) =>
   !!s.last_error_at && (!s.last_success_at || new Date(s.last_error_at) > new Date(s.last_success_at));
 
+/** Whether early silence alerts were held back in the last day. */
+const heldRecently = (s: MDMStatus) =>
+  !!s.silence_held_at && Date.now() - new Date(s.silence_held_at).getTime() < 24 * 60 * 60 * 1000;
+
 /** Microsoft Intune: whether it is connected and syncing, how many active Macs matched it when
  *  they enrolled, and the setting that holds the rest for approval. Like the SIEMs, the
  *  connection is set in the server's environment, so nothing here changes it. */
@@ -558,6 +562,14 @@ function MdmSettings() {
               <StateBadge state="ended" label="Not connected" />
             </div>
           </div>
+        )}
+        {s?.configured && heldRecently(s) && (
+          <Banner>
+            Early alerts held back {dateTime(s.silence_held_at!)}: {s.silence_held} Macs had stopped checking in with Altiward
+            while Intune still heard from them, too many to be agents removed one by one. Altiward is probably what they
+            can’t reach: check the agent hostname, its certificate and any proxy. Each Mac is still reported once it has
+            been quiet for the alert limit.
+          </Banner>
         )}
         {s?.configured && (
           <>
