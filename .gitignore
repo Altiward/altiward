@@ -17,6 +17,7 @@ go.work.sum
 # Node (console)
 node_modules/
 console/dist/
+console/coverage/
 
 # Local configuration and secrets — signing material never lives in the repo
 .env
