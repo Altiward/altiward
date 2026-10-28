@@ -9,10 +9,12 @@ import (
 	"io/fs"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Altiward/altiward/backend/internal/admingroup"
 	"github.com/Altiward/altiward/backend/internal/command"
 	"github.com/Altiward/altiward/backend/internal/event"
 	"github.com/Altiward/altiward/backend/internal/session"
@@ -255,11 +257,209 @@ func suite(t *testing.T, newStore func(t *testing.T, sink string) Store) {
 			t.Fatalf("device changed:\n%s\n%s", beforeJSON, afterJSON)
 		}
 		// The first claim's lease has run out by now, so the whole queue comes back: the
-		// enrolment, the health event and the pending enrolment, in the order they arrived.
+		// enrolment, the health event, the admin group it raised and the pending enrolment,
+		// in the order they arrived.
 		queued, _ = s.ClaimExports(ctx, sink, 10, time.Minute, now.Add(time.Hour))
-		if len(queued) != 3 || queued[2].Event.EventID != pending.EventID {
+		if len(queued) != 4 || queued[2].Event.Type != event.AgentAdminGroup || queued[3].Event.EventID != pending.EventID {
 			t.Fatalf("pending enrolment not queued for export: %d items", len(queued))
 		}
+	})
+
+	t.Run("admin group", func(t *testing.T) {
+		// queued returns the agent.admin_group events queued for sink, oldest first, and
+		// checks each is valid. It leases what it claims, so a second call returns only what
+		// was queued since.
+		queued := func(t *testing.T, s Store, sink string) []event.Event {
+			t.Helper()
+			items, err := s.ClaimExports(ctx, sink, 100, time.Minute, now.Add(time.Hour))
+			if err != nil {
+				t.Fatal(err)
+			}
+			out := []event.Event{}
+			for _, it := range items {
+				if e := it.Event.Event; e.Type == event.AgentAdminGroup {
+					if err := e.Validate(now); err != nil {
+						t.Fatalf("queued an invalid event: %v", err)
+					}
+					out = append(out, e)
+				}
+			}
+			return out
+		}
+		idFor := func(t *testing.T, s Store, tenant, key string) string {
+			t.Helper()
+			in, err := s.Installation(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return admingroup.ID(in.RaisedIDSecret, tenant, "C02XK0AAJGH5", key)
+		}
+		// reading is the agent-health fixture with another event ID, Mac time and group.
+		reading := func(t *testing.T, id string, at time.Time, members ...string) event.Event {
+			t.Helper()
+			e := testfixture.Event(t, "agent-health")
+			e.EventID, e.Timestamp = id, at
+			list := []any{}
+			for _, m := range members {
+				list = append(list, m)
+			}
+			e.Detail["admin_members"] = list
+			return e
+		}
+		state := func(e event.Event) string { s, _ := e.Detail["state"].(string); return s }
+
+		t.Run("raises the admin group when it changes", func(t *testing.T) {
+			s, tenant, sink := setup(t)
+			_, _, _, health := fixtures(t)
+			res, err := s.Ingest(ctx, tenant, []event.Event{health}, now)
+			if err != nil || !slices.Equal(res.Accepted, []string{health.EventID}) || len(res.RaisedIDTaken) != 0 {
+				t.Fatalf("res = %+v err = %v", res, err)
+			}
+			added := reading(t, "3e9c9d85-9d3b-4a6b-8c8b-000000000001", health.Timestamp.Add(5*time.Minute),
+				"backdoor", "itadmin", "jdoe")
+			added.Detail["open_sessions"] = []any{map[string]any{
+				"user": "jdoe", "session_id": "5d1c2b7a-8e4f-4a6b-9c3d-2e1f0a9b8c7d", "source": "privileges"}}
+			later := now.Add(5 * time.Minute)
+			if res, err = s.Ingest(ctx, tenant, []event.Event{added}, later); err != nil ||
+				!slices.Equal(res.Accepted, []string{added.EventID}) || len(res.Duplicate) != 0 {
+				t.Fatalf("res = %+v err = %v", res, err)
+			}
+
+			got := queued(t, s, sink)
+			if len(got) != 2 || state(got[0]) != event.AdminGroupSnapshot || state(got[1]) != event.AdminGroupChanged {
+				t.Fatalf("queued %+v, want a snapshot and a change", got)
+			}
+			if got[0].EventID != idFor(t, s, tenant, "first/"+health.EventID) || !got[0].Timestamp.Equal(now) ||
+				got[0].Detail["health_event_id"] != health.EventID {
+				t.Fatalf("snapshot = %+v", got[0])
+			}
+			change := got[1]
+			if change.EventID != idFor(t, s, tenant, "changed/"+added.EventID) || !change.Timestamp.Equal(later) ||
+				change.Device.Serial != "C02XK0AAJGH5" || change.SessionID != nil {
+				t.Fatalf("change = %+v", change)
+			}
+			detail, _ := json.Marshal(change.Detail)
+			for _, want := range []string{
+				`"added":[{"name":"jdoe","session_id":"5d1c2b7a-8e4f-4a6b-9c3d-2e1f0a9b8c7d","source":"privileges"}]`,
+				`"removed":[]`, `"members":["backdoor","itadmin","jdoe"]`, `"truncated":0`,
+			} {
+				if !strings.Contains(string(detail), want) {
+					t.Fatalf("detail %s has no %s", detail, want)
+				}
+			}
+			// The raised events aren't sessions, and aren't a check-in.
+			if open, _ := s.ListSessions(ctx, tenant, SessionFilter{}); len(open) != 0 {
+				t.Fatalf("sessions = %v", ids(open))
+			}
+			devices, _ := s.ListDevices(ctx, tenant)
+			if len(devices) != 1 || !devices[0].LastReceivedAt.Equal(later) || len(devices[0].AdminMembers) != 3 {
+				t.Fatalf("devices = %+v", devices)
+			}
+		})
+
+		t.Run("an oversized group is capped and never fails ingest", func(t *testing.T) {
+			s, tenant, sink := setup(t)
+			granted, _, _, _ := fixtures(t)
+			// 10,000 names that still fit in a reading the API accepts.
+			many := make([]string, 0, 10_000)
+			for i := range 10_000 {
+				many = append(many, strconv.FormatInt(int64(i), 36))
+			}
+			big := reading(t, "3e9c9d85-9d3b-4a6b-8c8b-000000000002", testfixture.Time(t, "2026-10-16T10:05:00Z"), many...)
+			if err := big.Validate(now); err != nil {
+				t.Fatalf("the API would refuse the reading: %v", err)
+			}
+			res, err := s.Ingest(ctx, tenant, []event.Event{big, granted}, now)
+			if err != nil || !slices.Equal(res.Accepted, []string{big.EventID, granted.EventID}) {
+				t.Fatalf("res = %+v err = %v", res, err)
+			}
+			got := queued(t, s, sink)
+			if len(got) != 1 || state(got[0]) != event.AdminGroupSnapshot {
+				t.Fatalf("queued %+v, want one snapshot", got)
+			}
+			if members, _ := got[0].Detail["members"].([]any); len(members) != event.MaxAdminGroupPeople ||
+				got[0].Detail["truncated"] != float64(9_800) {
+				t.Fatalf("snapshot of %d people, truncated %v", len(members), got[0].Detail["truncated"])
+			}
+			if _, _, err := s.GetSession(ctx, tenant, *granted.SessionID); err != nil {
+				t.Fatalf("the grant after it wasn't stored: %v", err)
+			}
+		})
+
+		t.Run("a late older reading is compared in arrival order", func(t *testing.T) {
+			s, tenant, sink := setup(t)
+			_, _, _, health := fixtures(t)
+			if _, err := s.Ingest(ctx, tenant, []event.Event{health}, now); err != nil {
+				t.Fatal(err)
+			}
+			// Sent later but stamped earlier by the Mac: the device keeps the newer reading's
+			// group, yet the change is still reported, against the group last reported.
+			late := reading(t, "3e9c9d85-9d3b-4a6b-8c8b-000000000003", health.Timestamp.Add(-time.Hour), "itadmin")
+			if _, err := s.Ingest(ctx, tenant, []event.Event{late}, now.Add(time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			back := reading(t, "3e9c9d85-9d3b-4a6b-8c8b-000000000004", health.Timestamp.Add(-30*time.Minute),
+				"backdoor", "itadmin")
+			if _, err := s.Ingest(ctx, tenant, []event.Event{back}, now.Add(2*time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			got := queued(t, s, sink)
+			if len(got) != 3 || state(got[1]) != event.AdminGroupChanged || state(got[2]) != event.AdminGroupChanged {
+				t.Fatalf("queued %+v, want a snapshot and two changes", got)
+			}
+			removed, _ := json.Marshal(got[1].Detail["removed"])
+			added, _ := json.Marshal(got[2].Detail["added"])
+			if string(removed) != `["backdoor"]` || string(added) != `[{"name":"backdoor"}]` {
+				t.Fatalf("removed %s, then added %s", removed, added)
+			}
+			if devices, _ := s.ListDevices(ctx, tenant); len(devices) != 1 || len(devices[0].AdminMembers) != 2 {
+				t.Fatalf("devices = %+v", devices)
+			}
+		})
+
+		t.Run("a resent reading raises nothing", func(t *testing.T) {
+			s, tenant, sink := setup(t)
+			_, _, _, health := fixtures(t)
+			if _, err := s.Ingest(ctx, tenant, []event.Event{health}, now); err != nil {
+				t.Fatal(err)
+			}
+			res, err := s.Ingest(ctx, tenant, []event.Event{health}, now.Add(time.Minute))
+			if err != nil || !slices.Equal(res.Duplicate, []string{health.EventID}) || len(res.Accepted) != 0 ||
+				len(res.RaisedIDTaken) != 0 {
+				t.Fatalf("res = %+v err = %v", res, err)
+			}
+			if got := queued(t, s, sink); len(got) != 1 {
+				t.Fatalf("queued %+v, want the one snapshot", got)
+			}
+		})
+
+		t.Run("a raised ID already taken is reported, and the reading still stored", func(t *testing.T) {
+			s, tenant, sink := setup(t)
+			granted, _, _, health := fixtures(t)
+			// Only someone with the installation's secret could do this.
+			granted.EventID = idFor(t, s, tenant, "first/"+health.EventID)
+			if _, err := s.Ingest(ctx, tenant, []event.Event{granted}, now); err != nil {
+				t.Fatal(err)
+			}
+			res, err := s.Ingest(ctx, tenant, []event.Event{health}, now)
+			if err != nil || !slices.Equal(res.Accepted, []string{health.EventID}) ||
+				!slices.Equal(res.RaisedIDTaken, []string{granted.EventID}) {
+				t.Fatalf("res = %+v err = %v", res, err)
+			}
+			if got := queued(t, s, sink); len(got) != 0 {
+				t.Fatalf("queued %+v", got)
+			}
+			// Nothing was reported, so the next reading reports the whole group.
+			next := reading(t, "3e9c9d85-9d3b-4a6b-8c8b-000000000005", health.Timestamp.Add(5*time.Minute),
+				"backdoor", "itadmin")
+			if res, err = s.Ingest(ctx, tenant, []event.Event{next}, now.Add(5*time.Minute)); err != nil || len(res.RaisedIDTaken) != 0 {
+				t.Fatalf("res = %+v err = %v", res, err)
+			}
+			got := queued(t, s, sink)
+			if len(got) != 1 || state(got[0]) != event.AdminGroupSnapshot || got[0].EventID != idFor(t, s, tenant, "first/"+next.EventID) {
+				t.Fatalf("queued %+v, want a snapshot of the next reading", got)
+			}
+		})
 	})
 
 	t.Run("export outbox claim, retry and complete", func(t *testing.T) {
@@ -553,12 +753,13 @@ func TestPostgresStats(t *testing.T) {
 			mine = &st.Exports[i]
 		}
 	}
-	if mine == nil || mine.Pending != 2 || mine.Failing != 1 || mine.MaxAttempts != 1 || mine.LastError != "SIEM said no" {
+	// The grant, the reading and the admin group it raised.
+	if mine == nil || mine.Pending != 3 || mine.Failing != 1 || mine.MaxAttempts != 1 || mine.LastError != "SIEM said no" {
 		t.Fatalf("export backlog = %+v", mine)
 	}
 
 	// Dropping a removed sink's queue leaves the events and other sinks' queues alone.
-	if n, err := ro.DropExports(ctx, sink); err != nil || n != 2 {
+	if n, err := ro.DropExports(ctx, sink); err != nil || n != 3 {
 		t.Fatalf("DropExports = %d, %v", n, err)
 	}
 	if items, err := s.ClaimExports(ctx, sink, 10, time.Minute, now.Add(time.Hour)); err != nil || len(items) != 0 {

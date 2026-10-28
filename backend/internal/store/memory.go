@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Altiward/altiward/backend/internal/admingroup"
 	"github.com/Altiward/altiward/backend/internal/command"
 	"github.com/Altiward/altiward/backend/internal/event"
 	"github.com/Altiward/altiward/backend/internal/session"
@@ -23,7 +24,12 @@ type Memory struct {
 	sessions map[key]session.Session
 	devices  map[key]session.Device
 	// retired is when an admin retired each device in devices (see Device.RetiredAt).
-	retired  map[key]time.Time
+	retired map[key]time.Time
+	// adminGroups is the admin group last reported for each device in devices that has
+	// one (devices.admin_group in Postgres). It records what the server sent, not what the
+	// Mac reported, so like retired it sits beside the reduced state.
+	adminGroups map[key]admingroup.Report
+
 	exports  []*memExport
 	nextID   int64
 	creds    map[string]DeviceCredential // by device ID
@@ -70,6 +76,7 @@ func NewMemory(exportSinks []string) *Memory {
 
 		staleUseReported: map[string]time.Time{},
 
+		adminGroups:     map[key]admingroup.Report{},
 		consoleSessions: map[string]ConsoleSession{},
 		installation:    newMemoryInstallation(),
 
@@ -117,9 +124,7 @@ func (m *Memory) ingest(tenantID string, events []event.Event, receivedAt time.T
 			res.Duplicate = append(res.Duplicate, e.EventID)
 			continue
 		}
-		stored := StoredEvent{Event: e, ReceivedAt: receivedAt}
-		m.events[k] = stored
-		m.order = append(m.order, k)
+		m.store(tenantID, e, receivedAt)
 
 		if e.SessionID != nil {
 			sk := key{tenantID, *e.SessionID}
@@ -142,18 +147,50 @@ func (m *Memory) ingest(tenantID string, events []event.Event, receivedAt time.T
 			d.Received(e, receivedAt)
 			m.devices[dk] = d
 		}
-
-		for _, sink := range m.sinks {
-			m.nextID++
-			m.exports = append(m.exports, &memExport{
-				ExportItem:  ExportItem{ID: m.nextID, TenantID: tenantID, Sink: sink, Event: stored},
-				queuedAt:    receivedAt,
-				nextAttempt: receivedAt,
-			})
-		}
 		res.Accepted = append(res.Accepted, e.EventID)
+		if e.Type == event.AgentHealth {
+			m.raiseAdminGroup(tenantID, e, receivedAt, &res)
+		}
 	}
 	return res, nil
+}
+
+// store keeps e and queues it for every sink. It expects m.mu held.
+func (m *Memory) store(tenantID string, e event.Event, receivedAt time.Time) {
+	k := key{tenantID, e.EventID}
+	stored := StoredEvent{Event: e, ReceivedAt: receivedAt}
+	m.events[k] = stored
+	m.order = append(m.order, k)
+	for _, sink := range m.sinks {
+		m.nextID++
+		m.exports = append(m.exports, &memExport{
+			ExportItem:  ExportItem{ID: m.nextID, TenantID: tenantID, Sink: sink, Event: stored},
+			queuedAt:    receivedAt,
+			nextAttempt: receivedAt,
+		})
+	}
+}
+
+// raiseAdminGroup is Postgres.raiseAdminGroup: it stores what a newly stored health
+// reading raises, compared with the group last reported, and records it. It expects m.mu
+// held, so readings are compared in the order they arrive.
+func (m *Memory) raiseAdminGroup(tenantID string, health event.Event, receivedAt time.Time, res *IngestResult) {
+	dk := key{tenantID, health.Device.Serial}
+	var prev *admingroup.Report
+	if r, ok := m.adminGroups[dk]; ok {
+		prev = &r
+	}
+	raised, next, ok := admingroup.OnHealth(prev, health, tenantID, m.installation.RaisedIDSecret, receivedAt)
+	if !ok || raised.Validate(receivedAt) != nil {
+		return
+	}
+	if had, taken := m.events[key{tenantID, raised.EventID}]; !taken {
+		m.store(tenantID, raised, receivedAt)
+	} else if had.Type != raised.Type || had.Device.Serial != raised.Device.Serial {
+		res.RaisedIDTaken = append(res.RaisedIDTaken, raised.EventID)
+		return
+	}
+	m.adminGroups[dk] = next
 }
 
 func (m *Memory) ListSessions(_ context.Context, tenantID string, f SessionFilter) ([]session.Session, error) {

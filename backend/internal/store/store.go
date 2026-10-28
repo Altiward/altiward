@@ -19,10 +19,16 @@ var ErrNotFound = errors.New("not found")
 var ErrSessionOwnerConflict = session.ErrOwnerConflict
 
 // IngestResult lists event IDs by outcome. Duplicates are events already stored,
-// typically an agent retrying after a lost response; they are not re-applied.
+// typically an agent retrying after a lost response; they are not re-applied. Accepted and
+// Duplicate answer the agent, so they list only the events it sent, never those the
+// server raised while storing them.
 type IngestResult struct {
 	Accepted  []string
 	Duplicate []string
+	// RaisedIDTaken lists the IDs of events the server raised but didn't store, because an
+	// event of another type or for another Mac already had the ID. The IDs derive from the
+	// installation's secret, so only tampering does this. Never sent to the agent.
+	RaisedIDTaken []string
 }
 
 // StoredEvent is an event as received.

@@ -89,6 +89,12 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request, p auth.Principal
 	}
 	resp.Accepted = append(resp.Accepted, res.Accepted...)
 	resp.Duplicate = append(resp.Duplicate, res.Duplicate...)
+	// The IDs of events the server raises derive from the installation's secret, so one
+	// already stored as something else was forged. The server's event wasn't stored; the
+	// Mac's events were, and are acknowledged.
+	for _, id := range res.RaisedIDTaken {
+		s.log.Error("raised event ID already taken", "tenant", p.TenantID, "device", p.Serial, "event_id", id)
+	}
 	if len(resp.Rejected) > 0 {
 		s.log.Warn("rejected events", "tenant", p.TenantID, "device", p.Serial, "count", len(resp.Rejected), "first", resp.Rejected[0].Error)
 	}

@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,8 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Altiward/altiward/backend/internal/admingroup"
 	"github.com/Altiward/altiward/backend/internal/api"
 	"github.com/Altiward/altiward/backend/internal/auth"
+	"github.com/Altiward/altiward/backend/internal/event"
 	"github.com/Altiward/altiward/backend/internal/store"
 	"github.com/Altiward/altiward/backend/internal/testfixture"
 )
@@ -118,6 +121,47 @@ func TestIngestVerdictsPerEvent(t *testing.T) {
 	_, out = a.post(t, batch(t, "elevation-granted"))
 	if len(out["duplicate"].([]any)) != 1 {
 		t.Fatalf("retry = %v", out)
+	}
+}
+
+// A raised event's ID already stored as something else means someone forged it: the server
+// says so in its log, and the Mac's reading is stored and acknowledged all the same.
+func TestIngestLogsARaisedIDAlreadyTaken(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory(nil)
+	tokens, err := auth.Parse("acme="+agentToken, "acme="+consoleToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	now := serverNow(t)
+	h := api.New(st, tokens, slog.New(slog.NewTextHandler(&logs, nil)), func() time.Time { return now })
+
+	in, err := st.Installation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	health := testfixture.Event(t, "agent-health")
+	taken := testfixture.Event(t, "elevation-granted")
+	taken.EventID = admingroup.ID(in.RaisedIDSecret, "acme", fixtureSerial, "first/"+health.EventID)
+	if _, err := st.Ingest(ctx, "acme", []event.Event{taken}, now); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, out := enrollAgent(t, h, fixtureSerial).post(t, batch(t, "agent-health"))
+	if accepted, _ := out["accepted"].([]any); rec.Code != 200 || len(accepted) != 1 || accepted[0] != health.EventID ||
+		len(out["duplicate"].([]any)) != 0 {
+		t.Fatalf("ingest: %d %s", rec.Code, rec.Body)
+	}
+	line := ""
+	for l := range strings.Lines(logs.String()) {
+		if strings.Contains(l, "raised event ID already taken") {
+			line = l
+		}
+	}
+	if !strings.Contains(line, "level=ERROR") || !strings.Contains(line, "event_id="+taken.EventID) ||
+		!strings.Contains(line, "device="+fixtureSerial) {
+		t.Fatalf("log = %s", logs.String())
 	}
 }
 

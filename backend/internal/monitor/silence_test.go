@@ -166,8 +166,9 @@ func TestSweepStoresTheAlertOnceAndQueuesItForExport(t *testing.T) {
 	if len(devices) != 1 || !devices[0].Silent() || !devices[0].LastSeenAt.Equal(seen) {
 		t.Fatalf("devices = %+v", devices)
 	}
+	// The reading, the admin group it raised, then the alert.
 	items, _ := st.ClaimExports(ctx, "splunk", 10, time.Minute, now)
-	if len(items) != 2 || items[1].Event.Type != event.AgentSilent {
+	if len(items) != 3 || items[2].Event.Type != event.AgentSilent {
 		t.Fatalf("exports = %+v", items)
 	}
 }

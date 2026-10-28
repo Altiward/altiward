@@ -59,7 +59,9 @@ func TestDrainSendsExportableEventsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sent != 2 {
+	// agent.health maps to nothing. The admin group it raised has a record for each of its
+	// two members and one for the Mac.
+	if sent != 5 {
 		t.Fatalf("sent = %d (agent.health must be skipped)", sent)
 	}
 	var classes []int
@@ -71,7 +73,7 @@ func TestDrainSendsExportableEventsOnce(t *testing.T) {
 			}
 		}
 	}
-	if len(classes) != 2 || classes[0] != 3005 || classes[1] != 2004 {
+	if len(classes) != 5 || classes[0] != 3005 || classes[1] != 3006 || classes[3] != 3006 || classes[4] != 2004 {
 		t.Fatalf("classes = %v", classes)
 	}
 	again, _ := w.Drain(context.Background(), sink)
@@ -145,10 +147,11 @@ func TestFailedSendIsRetriedAfterBackoff(t *testing.T) {
 		t.Fatal("expected failure")
 	}
 	sink.fail = false
-	// The failed batch (grant + health) waits out its backoff; the untried
-	// out-of-band finding is not held hostage by it.
+	// The failed batch (grant + health) waits out its backoff; the untried admin group
+	// the health raised and out-of-band finding are not held hostage by it.
 	sent, _ := w.Drain(context.Background(), sink)
-	if sent != 1 || sink.batches[0][0].Event.Type != event.AdminOutOfBand {
+	if sent != 4 || len(sink.batches) != 1 || sink.batches[0][0].Event.Type != event.AgentAdminGroup ||
+		sink.batches[0][3].Event.Type != event.AdminOutOfBand {
 		t.Fatalf("sent = %d batches = %v", sent, sink.batches)
 	}
 	*now = now.Add(export.Backoff(1) + time.Second)
@@ -165,7 +168,8 @@ func TestDrainSendsConsoleActionsInOrder(t *testing.T) {
 	if err := s.PutTenantSettings(context.Background(), "acme", store.TenantSettings{SilentAfterHours: 24}, a); err != nil {
 		t.Fatal(err)
 	}
-	if sent, err := w.Drain(context.Background(), sink); err != nil || sent != 3 {
+	// The grant, the admin group's three records, the out-of-band finding and the action.
+	if sent, err := w.Drain(context.Background(), sink); err != nil || sent != 6 {
 		t.Fatalf("sent %d, %v", sent, err)
 	}
 	last := sink.batches[len(sink.batches)-1]

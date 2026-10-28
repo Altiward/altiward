@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Altiward/altiward/backend/internal/admingroup"
 	"github.com/Altiward/altiward/backend/internal/event"
 	"github.com/Altiward/altiward/backend/internal/session"
 )
@@ -28,6 +29,10 @@ var migrations embed.FS
 type Postgres struct {
 	pool  *pgxpool.Pool
 	sinks []string
+	// raisedIDSecret keys the IDs of the events ingest raises (Installation.RaisedIDSecret),
+	// read once when the store opens. A store connected without migrating has none, and
+	// raises nothing: it is for tools that don't ingest.
+	raisedIDSecret []byte
 
 	watchers     commandWatchers
 	listenOnce   sync.Once
@@ -44,6 +49,10 @@ func OpenPostgres(ctx context.Context, url string, exportSinks []string) (*Postg
 	if err := p.migrate(ctx); err != nil {
 		p.Close()
 		return nil, err
+	}
+	if err := p.pool.QueryRow(ctx, `SELECT raised_id_secret FROM installation`).Scan(&p.raisedIDSecret); err != nil {
+		p.Close()
+		return nil, fmt.Errorf("read the installation secret: %w", err)
 	}
 	return p, nil
 }
@@ -137,19 +146,11 @@ func (p *Postgres) ingest(ctx context.Context, tx pgx.Tx, tenantID string, event
 		return res, fmt.Errorf("lock ingestion: %w", err)
 	}
 	for _, e := range events {
-		body, err := json.Marshal(e)
+		stored, err := p.insertEvent(ctx, tx, tenantID, e, receivedAt)
 		if err != nil {
 			return res, err
 		}
-		tag, err := tx.Exec(ctx, `
-			INSERT INTO events (tenant_id, event_id, type, session_id, device_serial, occurred_at, received_at, body)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-			ON CONFLICT (tenant_id, event_id) DO NOTHING`,
-			tenantID, e.EventID, string(e.Type), e.SessionID, e.Device.Serial, e.Timestamp, receivedAt, body)
-		if err != nil {
-			return res, fmt.Errorf("insert event: %w", err)
-		}
-		if tag.RowsAffected() == 0 {
+		if !stored {
 			res.Duplicate = append(res.Duplicate, e.EventID)
 			continue
 		}
@@ -158,19 +159,107 @@ func (p *Postgres) ingest(ctx context.Context, tx pgx.Tx, tenantID string, event
 				return res, err
 			}
 		}
-		if err := p.applyDevice(ctx, tx, tenantID, e, receivedAt); err != nil {
+		adminGroup, err := p.applyDevice(ctx, tx, tenantID, e, receivedAt)
+		if err != nil {
 			return res, err
 		}
-		for _, sink := range p.sinks {
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO export_outbox (tenant_id, sink, event_id, next_attempt_at) VALUES ($1, $2, $3, $4)
-				ON CONFLICT DO NOTHING`, tenantID, sink, e.EventID, receivedAt); err != nil {
-				return res, fmt.Errorf("queue export: %w", err)
-			}
+		if err := p.queueExports(ctx, tx, tenantID, e.EventID, receivedAt); err != nil {
+			return res, err
 		}
 		res.Accepted = append(res.Accepted, e.EventID)
+		if e.Type == event.AgentHealth {
+			if err := p.raiseAdminGroup(ctx, tx, tenantID, e, adminGroup, receivedAt, &res); err != nil {
+				return res, err
+			}
+		}
 	}
 	return res, nil
+}
+
+// insertEvent stores e unless an event with its ID is stored already, and reports whether
+// it did.
+func (p *Postgres) insertEvent(ctx context.Context, tx pgx.Tx, tenantID string, e event.Event, receivedAt time.Time) (bool, error) {
+	body, err := json.Marshal(e)
+	if err != nil {
+		return false, err
+	}
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO events (tenant_id, event_id, type, session_id, device_serial, occurred_at, received_at, body)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (tenant_id, event_id) DO NOTHING`,
+		tenantID, e.EventID, string(e.Type), e.SessionID, e.Device.Serial, e.Timestamp, receivedAt, body)
+	if err != nil {
+		return false, fmt.Errorf("insert event: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func (p *Postgres) queueExports(ctx context.Context, tx pgx.Tx, tenantID, eventID string, at time.Time) error {
+	for _, sink := range p.sinks {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO export_outbox (tenant_id, sink, event_id, next_attempt_at) VALUES ($1, $2, $3, $4)
+			ON CONFLICT DO NOTHING`, tenantID, sink, eventID, at); err != nil {
+			return fmt.Errorf("queue export: %w", err)
+		}
+	}
+	return nil
+}
+
+// raiseAdminGroup stores the agent.admin_group event that a newly stored health reading
+// raises (admingroup.OnHealth), compared with lastReported, the Mac's devices.admin_group as
+// applyDevice read it under the row's lock: so readings are compared in the order they
+// arrive. The event is stored and queued for every sink, with no session and no change to
+// the device's state, and the column then records the group. Nothing about the reading
+// fails the batch: an event that doesn't validate is left out, and an ID already stored as
+// another type or Mac goes in res.RaisedIDTaken and isn't recorded. A database error is
+// returned like any other in the transaction, which can't go on after one.
+func (p *Postgres) raiseAdminGroup(ctx context.Context, tx pgx.Tx, tenantID string, health event.Event, lastReported []byte,
+	receivedAt time.Time, res *IngestResult) error {
+	if len(p.raisedIDSecret) == 0 {
+		return nil
+	}
+	raised, next, ok := admingroup.OnHealth(decodeReport(lastReported), health, tenantID, p.raisedIDSecret, receivedAt)
+	if !ok || raised.Validate(receivedAt) != nil {
+		return nil
+	}
+	stored, err := p.insertEvent(ctx, tx, tenantID, raised, receivedAt)
+	if err != nil {
+		return err
+	}
+	if stored {
+		if err := p.queueExports(ctx, tx, tenantID, raised.EventID, receivedAt); err != nil {
+			return err
+		}
+	} else {
+		var typ, serial string
+		if err := tx.QueryRow(ctx, `SELECT type, device_serial FROM events WHERE tenant_id = $1 AND event_id = $2`,
+			tenantID, raised.EventID).Scan(&typ, &serial); err != nil {
+			return fmt.Errorf("load raised event: %w", err)
+		}
+		if typ != string(raised.Type) || serial != raised.Device.Serial {
+			res.RaisedIDTaken = append(res.RaisedIDTaken, raised.EventID)
+			return nil
+		}
+	}
+	group, err := json.Marshal(next)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE devices SET admin_group = $3 WHERE tenant_id = $1 AND serial = $2`,
+		tenantID, health.Device.Serial, group); err != nil {
+		return fmt.Errorf("save admin group: %w", err)
+	}
+	return nil
+}
+
+// decodeReport reads a devices.admin_group value: nil when nothing has been reported, or
+// when it can't be read, so that the next reading reports the whole group afresh.
+func decodeReport(raw []byte) *admingroup.Report {
+	var r *admingroup.Report
+	if len(raw) == 0 || json.Unmarshal(raw, &r) != nil {
+		return nil
+	}
+	return r
 }
 
 func ingestLockID(tenantID string) int64 {
@@ -215,37 +304,39 @@ func (p *Postgres) applySession(ctx context.Context, tx pgx.Tx, tenantID, sessio
 	return nil
 }
 
-func (p *Postgres) applyDevice(ctx context.Context, tx pgx.Tx, tenantID string, e event.Event, receivedAt time.Time) error {
+// applyDevice folds e into its device's row, which it locks, and returns the row's
+// admin_group as it was (nil for a new row), for raiseAdminGroup.
+func (p *Postgres) applyDevice(ctx context.Context, tx pgx.Tx, tenantID string, e event.Event, receivedAt time.Time) (adminGroup []byte, err error) {
 	d := session.NewDevice(tenantID, e.Device.Serial)
 	var state []byte
-	err := tx.QueryRow(ctx, `SELECT state FROM devices WHERE tenant_id = $1 AND serial = $2 FOR UPDATE`,
-		tenantID, e.Device.Serial).Scan(&state)
+	err = tx.QueryRow(ctx, `SELECT state, admin_group FROM devices WHERE tenant_id = $1 AND serial = $2 FOR UPDATE`,
+		tenantID, e.Device.Serial).Scan(&state, &adminGroup)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		if e.Type.IsServerRaised() {
-			return nil // no check-in, so no device yet; the event is stored and exported all the same
+			return nil, nil // no check-in, so no device yet; the event is stored and exported all the same
 		}
 	case err != nil:
-		return fmt.Errorf("load device: %w", err)
+		return nil, fmt.Errorf("load device: %w", err)
 	default:
 		if err := json.Unmarshal(state, &d); err != nil {
-			return fmt.Errorf("decode device: %w", err)
+			return nil, fmt.Errorf("decode device: %w", err)
 		}
 	}
 	d.Apply(e)
 	d.Received(e, receivedAt)
 	state, err = json.Marshal(d)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	_, err = tx.Exec(ctx, `
 		INSERT INTO devices (tenant_id, serial, state, last_seen_at) VALUES ($1, $2, $3, $4)
 		ON CONFLICT (tenant_id, serial) DO UPDATE SET state = excluded.state, last_seen_at = excluded.last_seen_at`,
 		tenantID, d.Serial, state, d.CheckedInAt())
 	if err != nil {
-		return fmt.Errorf("save device: %w", err)
+		return nil, fmt.Errorf("save device: %w", err)
 	}
-	return nil
+	return adminGroup, nil
 }
 
 func (p *Postgres) ListSessions(ctx context.Context, tenantID string, f SessionFilter) ([]session.Session, error) {
