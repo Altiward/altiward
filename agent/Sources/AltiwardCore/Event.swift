@@ -19,6 +19,8 @@ public enum EventType: String, Codable, Sendable, CaseIterable {
     case adminPermanentUse = "admin.permanent_use"
     /// Raised by the backend when a Mac enrols a key; the agent never sends it.
     case agentEnrollment = "agent.enrollment"
+    /// Raised by the backend to send a Mac's admin group to the SIEM; the agent never sends it.
+    case agentAdminGroup = "agent.admin_group"
 }
 
 public struct DeviceInfo: Codable, Sendable, Equatable {

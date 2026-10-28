@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://altiward.com/schema/event/v1",
   "title": "Altiward core event (schema_version 1)",
-  "description": "Every record the Mac agent sends to the Altiward API, plus agent.silent and agent.enrollment, which only the backend raises. A superset of the SAP Privileges webhook payload; mapped to OCSF on export. Contract fixtures live in ./examples and are decoded by both the Swift agent tests and the Go backend tests.",
+  "description": "Every record the Mac agent sends to the Altiward API, plus agent.silent, agent.enrollment and agent.admin_group, which only the backend raises. A superset of the SAP Privileges webhook payload; mapped to OCSF on export. Contract fixtures live in ./examples and are decoded by both the Swift agent tests and the Go backend tests.",
   "type": "object",
   "required": ["schema_version", "event_id", "type", "timestamp", "device", "delayed", "detail"],
   "additionalProperties": false,
@@ -23,14 +23,15 @@
         "agent.tamper",
         "agent.silent",
         "admin.permanent_use",
-        "agent.enrollment"
+        "agent.enrollment",
+        "agent.admin_group"
       ]
     },
     "session_id": {
-      "description": "Elevation session this event belongs to. Required for elevation.* and admin.out_of_band*; absent for agent.health, agent.tamper, agent.silent, agent.enrollment and admin.permanent_use.",
+      "description": "Elevation session this event belongs to. Required for elevation.* and admin.out_of_band*; absent for agent.health, agent.tamper, agent.silent, agent.enrollment, agent.admin_group and admin.permanent_use.",
       "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }]
     },
-    "timestamp": { "type": "string", "format": "date-time", "description": "When the event happened on the device (RFC 3339, UTC); for agent.silent and agent.enrollment, when the backend raised it." },
+    "timestamp": { "type": "string", "format": "date-time", "description": "When the event happened on the device (RFC 3339, UTC); for agent.silent, agent.enrollment and agent.admin_group, when the backend raised it." },
     "device": {
       "type": "object",
       "required": ["serial", "hardware_uuid"],

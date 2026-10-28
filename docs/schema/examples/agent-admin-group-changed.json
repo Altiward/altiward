@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "event_id": "9c4e7a12-5b3d-5f60-a8e1-2d7c4b9e0f31",
+  "type": "agent.admin_group",
+  "session_id": null,
+  "timestamp": "2026-10-16T10:10:00Z",
+  "device": {
+    "serial": "C02XK0AAJGH5",
+    "hardware_uuid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+    "os_version": "26.1.0",
+    "agent_version": "1.1.0",
+    "privileges_version": null
+  },
+  "user": null,
+  "elevation": null,
+  "delayed": false,
+  "detail": {
+    "state": "changed",
+    "members": ["root", "itadmin", "jdoe"],
+    "permanent_admins": ["itadmin"],
+    "added": [
+      { "name": "jdoe", "session_id": "7f3a9c2e-1d4b-4e8a-9b60-5c2d8e1f4a37", "source": "privileges" }
+    ],
+    "removed": ["asmith"],
+    "health_event_id": "4b8d2f6a-9e13-4c75-a0b2-6d1e3f5a7c92",
+    "as_of": "2026-10-16T10:05:00Z",
+    "truncated": 0
+  }
+}

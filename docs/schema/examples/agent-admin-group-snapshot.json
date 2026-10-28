@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "event_id": "e2a5c8f1-3b7d-5d94-b6c0-8f4a1e9d2b75",
+  "type": "agent.admin_group",
+  "session_id": null,
+  "timestamp": "2026-10-16T12:00:00Z",
+  "device": {
+    "serial": "C02XK0AAJGH5",
+    "hardware_uuid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+    "os_version": "26.1.0",
+    "agent_version": "1.1.0",
+    "privileges_version": null
+  },
+  "user": null,
+  "elevation": null,
+  "delayed": false,
+  "detail": {
+    "state": "snapshot",
+    "members": ["root", "itadmin"],
+    "permanent_admins": ["itadmin"],
+    "health_event_id": "4b8d2f6a-9e13-4c75-a0b2-6d1e3f5a7c92",
+    "as_of": "2026-10-16T11:55:00Z",
+    "truncated": 0
+  }
+}

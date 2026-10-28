@@ -208,6 +208,7 @@ func TestAgentsCannotSendServerRaisedEvents(t *testing.T) {
 	for _, c := range []struct{ fixture, want string }{
 		{"agent-silent", "agent.silent is raised only by the server"},
 		{"agent-enrollment-pending", "agent.enrollment is raised only by the server"},
+		{"agent-admin-group-changed", "agent.admin_group is raised only by the server"},
 	} {
 		t.Run(c.fixture, func(t *testing.T) {
 			h := newServer(t)
