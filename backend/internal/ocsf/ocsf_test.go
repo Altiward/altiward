@@ -715,6 +715,13 @@ func TestEnrollmentMapsToAPIActivity(t *testing.T) {
 	replaced := stored(t, "agent-enrollment-pending")
 	replaced.Detail = maps.Clone(replaced.Detail)
 	replaced.Detail["state"] = event.EnrollmentStateReplaced
+	// A key held for approval with no previous key: a Mac's first key (new Macs need
+	// approval, or an Intune check held it), or a retired Mac's new key.
+	firstHeld := stored(t, "agent-enrollment-pending")
+	firstHeld.Detail = maps.Clone(firstHeld.Detail)
+	for _, k := range []string{"previous_device_id", "previous_key_storage", "hardware_uuid_matches"} {
+		delete(firstHeld.Detail, k)
+	}
 	tests := []struct {
 		name     string
 		event    store.StoredEvent
@@ -725,6 +732,7 @@ func TestEnrollmentMapsToAPIActivity(t *testing.T) {
 		{"enrolled", stored(t, "agent-enrollment-enrolled"), "Informational", false, "C02XK0AAJGH5 enrolled a new key"},
 		{"pending", stored(t, "agent-enrollment-pending"), "Medium", true,
 			"C02XK0AAJGH5 enrolled again with a new key, waiting for approval"},
+		{"pending without a previous key", firstHeld, "Medium", true, "C02XK0AAJGH5 enrolled a new key, waiting for approval"},
 		{"replaced", replaced, "High", true,
 			"C02XK0AAJGH5 enrolled again; the new key replaced the previous one without approval"},
 	}
@@ -738,7 +746,7 @@ func TestEnrollmentMapsToAPIActivity(t *testing.T) {
 				"actor.user.name":                "token:1a2b3c4d",
 				"api.operation":                  "enroll",
 				"unmapped.altiward.event_type":   "agent.enrollment",
-				"unmapped.altiward.detail.state": tt.name,
+				"unmapped.altiward.detail.state": tt.event.Detail["state"],
 			}
 			for path, w := range want {
 				if got := get(r, path); got != w {
@@ -962,5 +970,38 @@ func TestAdminGroupRecordsHaveDistinctUIDs(t *testing.T) {
 	}
 	if len(records) != 3 {
 		t.Errorf("%d records, want 2 members + 1 for the Mac", len(records))
+	}
+}
+
+// An enrolment with another Mac's or another device's Intune device ID is High; the other outcomes keep the
+// state's severity and say what Intune said.
+func TestEnrollmentNamesTheIntuneCheck(t *testing.T) {
+	mismatch := mapJSON(t, stored(t, "agent-enrollment-pending-mdm-mismatch"))
+	if mismatch["severity"] != "High" || mismatch["is_alert"] != true ||
+		mismatch["message"] != "C02XK0AAJGH5 enrolled a new key with another Mac's or another device's Intune device ID, waiting for approval" ||
+		get(mismatch, "unmapped.altiward.detail.mdm_check") != "mismatch" || get(mismatch, "unmapped.altiward.detail.mdm_serial_known") != true {
+		t.Fatalf("mismatch = %v", mismatch)
+	}
+	for _, tt := range []struct {
+		example, check, severity, message string
+	}{
+		{"agent-enrollment-enrolled", "match", "Informational", "C02XK0AAJGH5 enrolled a new key (the Intune device ID sent matches the serial)"},
+		{"agent-enrollment-enrolled", "not_sent", "Informational", "C02XK0AAJGH5 enrolled a new key (no Intune device ID sent)"},
+		{"agent-enrollment-pending", "invalid_id", "Medium",
+			"C02XK0AAJGH5 enrolled again with a new key, waiting for approval (the Intune device ID isn't valid)"},
+		{"agent-enrollment-pending", "unknown_id", "Medium",
+			"C02XK0AAJGH5 enrolled again with a new key, waiting for approval (Intune doesn't know the device ID)"},
+		{"agent-enrollment-pending", "unavailable", "Medium",
+			"C02XK0AAJGH5 enrolled again with a new key, waiting for approval (Intune couldn't be asked)"},
+	} {
+		t.Run(tt.check, func(t *testing.T) {
+			e := stored(t, tt.example)
+			e.Detail = maps.Clone(e.Detail)
+			e.Detail["mdm_check"] = tt.check
+			r := mapJSON(t, e)
+			if r["severity"] != tt.severity || r["message"] != tt.message {
+				t.Fatalf("severity %v, message %q; want %s, %q", r["severity"], r["message"], tt.severity, tt.message)
+			}
+		})
 	}
 }

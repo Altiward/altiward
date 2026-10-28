@@ -20,8 +20,10 @@ const agentUserAgent = "altiward-agent/"
 //
 // The ID names the credential, so the same enrolment is the same event. The Mac's own
 // claims (hardware UUID, key storage, agent version) are the ones it made when it enrolled.
-// What isn't known is left out, not sent empty.
-func enrollmentEvent(tenantID string, res store.EnrollResult, userAgent string, now time.Time) event.Event {
+// With Intune connected, it says what Intune said about the device ID the Mac sent
+// (mdm_check), never the ID, and whether Intune knows the serial (mdm_serial_known, from
+// serialKnown). What isn't known is left out, not sent empty.
+func enrollmentEvent(tenantID string, res store.EnrollResult, userAgent string, now time.Time, serialKnown *bool) event.Event {
 	c := res.Credential
 	state := event.EnrollmentStateEnrolled
 	switch {
@@ -40,6 +42,12 @@ func enrollmentEvent(tenantID string, res store.EnrollResult, userAgent string, 
 	}
 	if c.Token != "" {
 		detail["token"] = c.Token
+	}
+	if c.MDMCheck != store.MDMNotChecked {
+		detail["mdm_check"] = string(c.MDMCheck)
+	}
+	if serialKnown != nil {
+		detail["mdm_serial_known"] = *serialKnown
 	}
 	if prev := res.Previous; prev != nil {
 		detail["previous_device_id"] = prev.DeviceID

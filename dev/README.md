@@ -48,7 +48,11 @@ Check-ins are timed by the server's clock, so to seed a Mac that stopped checkin
 backdates that device in this Compose project's Postgres (`docker compose exec`); the
 monitor then raises `agent.silent` within a minute. The same way, it moves one Mac's key
 back 30 days so that the Mac can rotate it, since the server rotates only a key active
-for 24 hours. The demo's seed can't, so the demo has no rotated key.
+for 24 hours. The demo's seed can't, so the demo has no rotated key. The same way it writes a
+copy of seven Intune Macs, the sync that made it and each key's Intune check, which the
+console shows only while the API runs with `ALTIWARD_INTUNE_AUTH` set (`make docs-screenshots`
+does that, with credentials that are never used). `make run-api` has Intune off, so a normal
+local console shows none of it.
 
 `make db-down` stops the development database. The Compose project is named `altiward`;
 the demo is `altiward-demo` and the production deployment `altiward-server`.

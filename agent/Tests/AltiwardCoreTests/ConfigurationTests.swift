@@ -29,6 +29,7 @@ struct ConfigurationTests {
         }
         with { $0.serverURL = URL(string: "https://x") }
         with { $0.enrollmentToken = "t" }
+        with { $0.mdmDeviceID = "x" }
         with { $0.dataDirectory = URL(fileURLWithPath: "/tmp/x") }
         with { $0.heartbeatInterval = 31 }
         with { $0.flushInterval = 11 }
@@ -44,6 +45,30 @@ struct ConfigurationTests {
             #expect(c != base)
             #expect(base.changedSettings(c).count == 1)
         }
+    }
+
+    @Test func readsTheMDMDeviceID() {
+        func id(_ value: String) -> String? {
+            AgentConfiguration.load(environment: [:], preferences: Preferences(values: ["MDMDeviceID": value])).mdmDeviceID
+        }
+        #expect(id("  ABC  ") == "ABC")
+        #expect(id("") == nil)
+        #expect(id("  ") == nil)
+        #expect(AgentConfiguration.load(environment: [:], preferences: Preferences(values: [:])).mdmDeviceID == nil)
+    }
+
+    /// A heartbeat is how the server learns the Mac is alive, so it comes at least hourly.
+    @Test func heartbeatIntervalHasAnHourCeiling() {
+        func interval(_ seconds: Int) -> TimeInterval {
+            AgentConfiguration.load(environment: [:], preferences: Preferences(values: ["HeartbeatInterval": seconds]))
+                .heartbeatInterval
+        }
+        #expect(interval(7200) == 3600)
+        #expect(interval(300) == 300)
+        #expect(interval(5) == 30)
+        let env = AgentConfiguration.load(
+            environment: ["ALTIWARD_HEARTBEAT_SECONDS": "99999"], preferences: Preferences(values: [:]))
+        #expect(env.heartbeatInterval == 3600)
     }
 
     /// `URL(fileURLWithPath:)` adds a trailing slash only once the folder exists, so a data directory

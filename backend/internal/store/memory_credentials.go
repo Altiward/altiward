@@ -30,7 +30,7 @@ func (m *Memory) Enroll(_ context.Context, c DeviceCredential, limits EnrollLimi
 	}
 	_, retired := m.retired[key{c.TenantID, c.Serial}]
 	if retired || holdsForApproval(m.tenantSettings(c.TenantID), m.enrolledBefore(c.TenantID, c.Serial),
-		res.Previous, c.HardwareUUID) {
+		res.Previous, c.HardwareUUID, c.MDMCheck) {
 		c.Status = CredentialPending
 	} else {
 		c.Status = CredentialActive
@@ -56,6 +56,29 @@ func (m *Memory) Credential(_ context.Context, deviceID string) (DeviceCredentia
 		return DeviceCredential{}, ErrNotFound
 	}
 	return m.withSuccessor(c), nil
+}
+
+func (m *Memory) CredentialByKey(_ context.Context, tenantID string, publicKey []byte) (DeviceCredential, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, c := range m.creds {
+		if c.TenantID == tenantID && bytes.Equal(c.PublicKey, publicKey) {
+			return m.withSuccessor(c), nil
+		}
+	}
+	return DeviceCredential{}, ErrNotFound
+}
+
+func (m *Memory) MDMCheckCounts(_ context.Context, tenantID string) (map[MDMCheck]int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := map[MDMCheck]int{}
+	for _, c := range m.creds {
+		if c.TenantID == tenantID && c.Status == CredentialActive {
+			out[c.MDMCheck]++
+		}
+	}
+	return out, nil
 }
 
 func (m *Memory) ApproveCredential(_ context.Context, tenantID, deviceID string, now time.Time, a AuditEntry) (DeviceCredential, error) {
@@ -293,6 +316,7 @@ func (m *Memory) Rotate(_ context.Context, r RotateRequest) (RotateResult, error
 		DeviceID: r.DeviceID, TenantID: cur.TenantID, Serial: cur.Serial, HardwareUUID: cur.HardwareUUID,
 		PublicKey: r.PublicKey, KeyStorage: r.KeyStorage, Token: cur.Token, Status: CredentialActive,
 		CreatedAt: r.Now, ActivatedAt: ptr(r.Now), RotatedFrom: cur.DeviceID, RotationSignedAt: ptr(r.SignedAt),
+		MDMDeviceID: cur.MDMDeviceID, MDMCheck: cur.MDMCheck,
 	}
 	m.creds[next.DeviceID] = next
 	delete(m.retired, key{next.TenantID, next.Serial})

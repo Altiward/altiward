@@ -482,11 +482,12 @@ struct DeviceAuthenticatorTests {
     func authenticator(
         _ store: AgentStore, _ server: FakeServer, url: URL? = nil, keys: FakeKeys? = nil,
         role: DeviceAuthenticator.Role = .daemon, device: DeviceInfo = testDevice,
-        transport: (any HTTPTransport)? = nil, log: @escaping @Sendable (String) -> Void = { _ in }
+        mdmDeviceID: String? = nil, transport: (any HTTPTransport)? = nil,
+        log: @escaping @Sendable (String) -> Void = { _ in }
     ) -> DeviceAuthenticator {
         DeviceAuthenticator(
-            store: store, serverURL: url ?? serverURL, enrollmentToken: "enroll-token-0001", device: { device },
-            transport: transport ?? server, keys: keys ?? self.keys, role: role, now: { clock.now }, log: log)
+            store: store, serverURL: url ?? serverURL, enrollmentToken: "enroll-token-0001", mdmDeviceID: mdmDeviceID,
+            device: { device }, transport: transport ?? server, keys: keys ?? self.keys, role: role, now: { clock.now }, log: log)
     }
 
     /// This test's Mac, with another serial and hardware UUID.
@@ -651,6 +652,24 @@ struct DeviceAuthenticatorTests {
         await #expect(throws: DeliveryError.enrollmentPending) { try await postEvents(auth) }
         await #expect(throws: DeliveryError.enrollmentPending) { try await postEvents(auth) }
         #expect(server.enrollments.count == 1)
+    }
+
+    /// Intune's ID for the Mac goes to the server once, in the enrol body.
+    @Test func enrolSendsTheMDMDeviceID() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let id = "77e8b11e-8a43-4e15-938a-0af400040863"
+        #expect(try await postEvents(authenticator(store, server, mdmDeviceID: id)) == 200)
+        let body = try JSONSerialization.jsonObject(with: #require(server.enrollments.first).body) as! [String: String]
+        #expect(body["mdm_device_id"] == id)
+    }
+
+    @Test func enrolLeavesOutAMissingMDMDeviceID() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        #expect(try await postEvents(authenticator(store, server)) == 200)
+        let body = try JSONSerialization.jsonObject(with: #require(server.enrollments.first).body) as! [String: String]
+        #expect(body["mdm_device_id"] == nil)
     }
 
     /// A Mac the server's enrolment limits refuse waits as long as the server says before
@@ -1298,13 +1317,14 @@ extension DeviceAuthenticatorTests {
     /// and has signed a request since, so it may rotate. Returns it and the file key's ID.
     func readyToRotate(
         _ store: AgentStore, _ server: FakeServer, keys: FakeKeys? = nil, age: TimeInterval = 86400,
-        transport: (any HTTPTransport)? = nil, log: @escaping @Sendable (String) -> Void = { _ in }
+        mdmDeviceID: String? = nil, transport: (any HTTPTransport)? = nil,
+        log: @escaping @Sendable (String) -> Void = { _ in }
     ) async throws -> (DeviceAuthenticator, String) {
-        let first = authenticator(store, server, keys: FakeKeys(secureEnclave: false))
+        let first = authenticator(store, server, keys: FakeKeys(secureEnclave: false), mdmDeviceID: mdmDeviceID)
         #expect(try await postEvents(first) == 200)
         let id = try #require(await first.deviceID)
         clock.advance(age)
-        let auth = authenticator(store, server, keys: keys, transport: transport, log: log)
+        let auth = authenticator(store, server, keys: keys, mdmDeviceID: mdmDeviceID, transport: transport, log: log)
         #expect(try await postEvents(auth) == 200)
         #expect(await auth.lastSignedSuccess?.deviceID == id)
         return (auth, id)
@@ -1366,6 +1386,16 @@ extension DeviceAuthenticatorTests {
         #expect(server.enrollments.count == 1)
         #expect(server.staleKeyUses == 0)
         #expect(oldKeyRequests(server, oldID, after: start).isEmpty)
+    }
+
+    /// The MDM's ID is for enrolling only: a rotation names the Mac by its signature.
+    @Test(.timeLimit(.minutes(1))) func rotateNeverSendsTheMDMDeviceID() async throws {
+        let store = try makeStore()
+        let server = FakeServer(clock: clock)
+        let (auth, _) = try await readyToRotate(store, server, mdmDeviceID: "ABC")
+        #expect(await auth.rotate(reason: "move into the Secure Enclave") == .rotated(.secureEnclave))
+        let rotation = try #require(server.requests.last { $0.isRotate })
+        #expect(!String(decoding: rotation.body, as: UTF8.self).contains("mdm_device_id"))
     }
 
     @Test(.timeLimit(.minutes(1))) func aLostResponseSendsNoOldKeyRequest() async throws {

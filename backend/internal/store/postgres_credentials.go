@@ -14,7 +14,7 @@ import (
 	"github.com/Altiward/altiward/backend/internal/event"
 )
 
-const credentialColumns = `device_id::text, tenant_id, serial, hardware_uuid, public_key, key_storage, token, status, created_at, activated_at, revoked_at, rotated_from::text, rotation_signed_at`
+const credentialColumns = `device_id::text, tenant_id, serial, hardware_uuid, public_key, key_storage, token, status, created_at, activated_at, revoked_at, rotated_from::text, rotation_signed_at, mdm_device_id, mdm_check`
 
 // credentialColumnsWithSuccessor adds the key's direct successor to credentialColumns. It is
 // for a SELECT from device_credentials itself, by that name, not for UPDATE ... RETURNING.
@@ -30,10 +30,10 @@ func scanCredentialWithSuccessor(row pgx.Row) (DeviceCredential, error) {
 
 func scanCredentialRow(row pgx.Row, withSuccessor bool) (DeviceCredential, error) {
 	var c DeviceCredential
-	var keyStorage, status string
+	var keyStorage, status, mdmCheck string
 	var rotatedFrom, rotatedTo *string
 	dest := []any{&c.DeviceID, &c.TenantID, &c.Serial, &c.HardwareUUID, &c.PublicKey, &keyStorage, &c.Token, &status,
-		&c.CreatedAt, &c.ActivatedAt, &c.RevokedAt, &rotatedFrom, &c.RotationSignedAt}
+		&c.CreatedAt, &c.ActivatedAt, &c.RevokedAt, &rotatedFrom, &c.RotationSignedAt, &c.MDMDeviceID, &mdmCheck}
 	if withSuccessor {
 		dest = append(dest, &rotatedTo)
 	}
@@ -43,6 +43,7 @@ func scanCredentialRow(row pgx.Row, withSuccessor bool) (DeviceCredential, error
 	}
 	c.KeyStorage = KeyStorage(keyStorage)
 	c.Status = CredentialStatus(status)
+	c.MDMCheck = MDMCheck(mdmCheck)
 	if rotatedFrom != nil {
 		c.RotatedFrom = *rotatedFrom
 	}
@@ -200,7 +201,7 @@ func (p *Postgres) Enroll(ctx context.Context, c DeviceCredential, limits Enroll
 			c.TenantID, c.Serial).Scan(&retired); err != nil {
 			return err
 		}
-		if retired || holdsForApproval(settings, enrolledBefore, res.Previous, c.HardwareUUID) {
+		if retired || holdsForApproval(settings, enrolledBefore, res.Previous, c.HardwareUUID, c.MDMCheck) {
 			c.Status = CredentialPending
 		} else {
 			c.Status, c.ActivatedAt = CredentialActive, ptr(c.CreatedAt)
@@ -218,10 +219,11 @@ func (p *Postgres) Enroll(ctx context.Context, c DeviceCredential, limits Enroll
 			}
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO device_credentials (device_id, tenant_id, serial, hardware_uuid, public_key, key_digest, key_storage, token, status, created_at, activated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+			INSERT INTO device_credentials (device_id, tenant_id, serial, hardware_uuid, public_key, key_digest, key_storage, token, status,
+				created_at, activated_at, mdm_device_id, mdm_check)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
 			c.DeviceID, c.TenantID, c.Serial, c.HardwareUUID, c.PublicKey, keyDigest(c.PublicKey), string(c.KeyStorage), c.Token,
-			string(c.Status), c.CreatedAt, c.ActivatedAt); err != nil {
+			string(c.Status), c.CreatedAt, c.ActivatedAt, c.MDMDeviceID, string(c.MDMCheck)); err != nil {
 			return fmt.Errorf("insert credential: %w", err)
 		}
 		res.Credential = c
@@ -238,6 +240,31 @@ func (p *Postgres) Credential(ctx context.Context, deviceID string) (DeviceCrede
 		return DeviceCredential{}, ErrNotFound
 	}
 	return credentialWithSuccessor(ctx, p.pool, deviceID)
+}
+
+func (p *Postgres) CredentialByKey(ctx context.Context, tenantID string, publicKey []byte) (DeviceCredential, error) {
+	return scanCredentialWithSuccessor(p.pool.QueryRow(ctx,
+		`SELECT `+credentialColumnsWithSuccessor+` FROM device_credentials WHERE key_digest = $1 AND tenant_id = $2`,
+		keyDigest(publicKey), tenantID))
+}
+
+func (p *Postgres) MDMCheckCounts(ctx context.Context, tenantID string) (map[MDMCheck]int, error) {
+	rows, err := p.pool.Query(ctx,
+		`SELECT mdm_check, count(*) FROM device_credentials WHERE tenant_id = $1 AND status = 'active' GROUP BY mdm_check`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[MDMCheck]int{}
+	for rows.Next() {
+		var check string
+		var n int
+		if err := rows.Scan(&check, &n); err != nil {
+			return nil, err
+		}
+		out[MDMCheck(check)] = n
+	}
+	return out, rows.Err()
 }
 
 func (p *Postgres) ApproveCredential(ctx context.Context, tenantID, deviceID string, now time.Time, a AuditEntry) (DeviceCredential, error) {
@@ -469,14 +496,15 @@ func (p *Postgres) Rotate(ctx context.Context, r RotateRequest) (RotateResult, e
 			DeviceID: r.DeviceID, TenantID: cur.TenantID, Serial: cur.Serial, HardwareUUID: cur.HardwareUUID,
 			PublicKey: r.PublicKey, KeyStorage: r.KeyStorage, Token: cur.Token, Status: CredentialActive,
 			CreatedAt: r.Now, ActivatedAt: ptr(r.Now), RotatedFrom: cur.DeviceID, RotationSignedAt: ptr(r.SignedAt),
+			MDMDeviceID: cur.MDMDeviceID, MDMCheck: cur.MDMCheck,
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO device_credentials (device_id, tenant_id, serial, hardware_uuid, public_key, key_digest, key_storage, token,
-				status, created_at, activated_at, rotated_from, rotation_signed_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+				status, created_at, activated_at, rotated_from, rotation_signed_at, mdm_device_id, mdm_check)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 			next.DeviceID, next.TenantID, next.Serial, next.HardwareUUID, next.PublicKey, keyDigest(next.PublicKey),
 			string(next.KeyStorage), next.Token, string(next.Status), next.CreatedAt, next.ActivatedAt, next.RotatedFrom,
-			next.RotationSignedAt); err != nil {
+			next.RotationSignedAt, next.MDMDeviceID, string(next.MDMCheck)); err != nil {
 			// An enrolment of the same key, on another Mac, committed after the check above.
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "device_credentials_key_digest_key" {

@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
-import type { Command, Device, PermanentUse } from "../api";
+import type { Command, Device, MDMDevice, PermanentUse } from "../api";
 import { Banner, Details, Empty, Explain, Missing, RoleNote, SearchField, Segmented, Toolbar } from "../components/Chrome";
 import { ClaimedGlyph, CloseIcon, ElevatedGlyph, EndedGlyph, NotGrantedGlyph, VerifiedGlyph } from "../components/Icons";
+import { NotInIntune } from "../components/NotInIntune";
 import { ConfirmSheet } from "../components/Sheet";
 import { StateBadge } from "../components/StateBadge";
 import { Table } from "../components/Table";
@@ -11,6 +12,7 @@ import { checkTips, persistenceCheckTip } from "../explanations";
 import {
   agentOutdated, dateOnly, dateTime, expiresAfter, hasFailingCheck, integrityCheckLabel, lastCheckIn, permanentUseMethodLabel, relativeTime, revokeNotice, tamperStateLabel,
 } from "../format";
+import { hasSynced, normaliseSerial, useMDM } from "../mdm";
 import { useCommandResult } from "../useCommandResult";
 import { useLoad } from "../useLoad";
 
@@ -47,6 +49,7 @@ export function FleetView() {
   const { data, error, reload } = useLoad(() => api.devices(), [], 30_000);
   const about = useLoad(() => api.about(), []);
   const oldest = about.data?.oldest_supported_agent;
+  const mdm = useMDM();
   const [params, setParams] = useSearchParams();
   const [query, setQuery] = useState(params.get("q") ?? "");
   const show = (params.get("show") ?? "") in shows ? params.get("show") as Show : null;
@@ -84,6 +87,9 @@ export function FleetView() {
               Showing {shows[show]}.{" "}
               <button type="button" className="button" onClick={() => setParams({})}>Show all Macs</button>
             </Banner>
+          )}
+          {lifecycle === "in_use" && data && hasSynced(mdm.status) && (
+            <NeverReported macs={data} intune={mdm.bySerial} />
           )}
           {data && rows.length === 0 ? (
             lifecycle === "retired" && !show && !query.trim() ? (
@@ -150,7 +156,7 @@ export function FleetView() {
               ]} />
           )}
         </div>
-        {current && <DeviceInspector device={current} severities={about.data?.tamper_severities} onClose={() => setSelected(null)} />}
+        {current && <DeviceInspector device={current} intune={hasSynced(mdm.status) ? mdm.bySerial : null} severities={about.data?.tamper_severities} onClose={() => setSelected(null)} />}
       </div>
     </>
   );
@@ -204,8 +210,61 @@ function RetiredNote({ device: d }: { device: Device }) {
   );
 }
 
-function DeviceInspector({ device: d, severities, onClose }: {
+/** The Macs Intune manages that have never reported to Altiward: not yet deployed, or the agent
+ *  never reached the server. Shown only while Intune is connected and has synced. */
+function NeverReported({ macs, intune }: { macs: Device[]; intune: Map<string, MDMDevice> }) {
+  const reported = new Set(macs.map((d) => normaliseSerial(d.serial)));
+  const missing = [...intune].filter(([serial]) => !reported.has(serial)).map(([, d]) => d)
+    .sort((a, b) => normaliseSerial(a.serial).localeCompare(normaliseSerial(b.serial)));
+  if (missing.length === 0) return null;
+  return (
+    <details className="never-reported" role="group" aria-labelledby="never-reported-title">
+      <summary>
+        <span id="never-reported-title">In Intune, never reported to Altiward</span> <span className="secondary">({missing.length})</span>
+      </summary>
+      <p className="secondary">
+        Intune manages these Macs, but no Altiward agent has ever checked in from them. Check that the agent
+        profile and package reach them.
+      </p>
+      <div className="box">
+        <ul className="entries" aria-label="Macs in Intune that never reported">
+          {missing.map((d) => (
+            <li key={d.serial}>
+              <span className="data">{d.serial}</span>
+              <span className="secondary">
+                {d.last_check_in ? `Intune check-in ${relativeTime(d.last_check_in).toLowerCase()}` : "Never checked in to Intune"}
+              </span>
+              <span className="detail secondary">{[d.name, d.primary_upn].filter(Boolean).join(" · ")}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </details>
+  );
+}
+
+/** What Intune knows about the Mac, or that it knows nothing. */
+function IntuneGroup({ device }: { device: MDMDevice | undefined }) {
+  return (
+    <div className="group" role="group" aria-labelledby="intune-title">
+      <h3 id="intune-title">Intune</h3>
+      {device ? (
+        <Details rows={[
+          ["Name (Intune)", device.name || <Missing key="name">Not set</Missing>],
+          ["Primary user (Intune)", device.primary_upn || <Missing key="user">None</Missing>],
+          ["Last Intune check-in", device.last_check_in ? dateTime(device.last_check_in) : <Missing key="seen">Never</Missing>],
+        ]} />
+      ) : (
+        <div className="box"><p style={{ padding: "6px 0" }}><NotInIntune /></p></div>
+      )}
+    </div>
+  );
+}
+
+function DeviceInspector({ device: d, intune, severities, onClose }: {
   device: Device;
+  /** Intune's Macs by serial, or null while the connection is off or hasn't synced. */
+  intune: Map<string, MDMDevice> | null;
   severities: Record<string, string> | undefined;
   onClose: () => void;
 }) {
@@ -392,6 +451,8 @@ function DeviceInspector({ device: d, severities, onClose }: {
           ["Events queued", d.queue_depth == null ? <Missing key="queued">Not reported</Missing> : String(d.queue_depth)],
         ]} />
       </div>
+
+      {intune && <IntuneGroup device={intune.get(normaliseSerial(d.serial))} />}
 
       <div className="group">
         <h3>SAP Privileges</h3>

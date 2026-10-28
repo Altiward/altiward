@@ -125,6 +125,9 @@ export type CredentialStatus = "active" | "pending" | "revoked";
 /** Where the Mac said its key is kept when it enrolled; empty from agents before 0.2.0. */
 export type KeyStorage = "secure_enclave" | "software" | "";
 
+/** What Intune said about the device ID a Mac sent as it enrolled. */
+export type MDMCheck = "not_sent" | "invalid_id" | "match" | "mismatch" | "unknown_id" | "unavailable";
+
 export interface Enrollment {
   device_id: string;
   serial: string;
@@ -141,6 +144,9 @@ export interface Enrollment {
   rotated_from?: string;
   /** The key that replaced this one by rotation; present on a stale key, which is revoked. */
   rotated_to?: string;
+  /** Intune's check of the device ID the Mac sent when it enrolled; missing when Intune was off or the key predates the check.
+   *  The ID itself is never in the API. */
+  mdm_check?: MDMCheck;
 }
 
 export interface CommandResult {
@@ -176,6 +182,34 @@ export interface Settings {
   silent_alerts_off: boolean;
   /** How long history is kept: 0 the default, -1 for good, otherwise 90 to 3650 days. Left out, the stored value stays. */
   history_days?: number;
+  /** A new key whose Intune check isn't a match waits for approval. Applies only while Intune is connected. Left out, the stored value stays. */
+  require_intune_match?: boolean;
+}
+
+/** GET /v1/mdm: the Intune connection. Only `configured` is set while Intune is off. */
+export interface MDMStatus {
+  configured: boolean;
+  source?: string;
+  last_success_at?: string;
+  last_error_at?: string;
+  last_error?: string;
+  /** Macs in the copy at the last success. */
+  devices?: number;
+  silence_held_at?: string;
+  silence_held?: number;
+  /** Keys in use by the outcome of their Intune check. An outcome never seen is left out: read it as 0. */
+  checks?: Partial<Record<MDMCheck, number>>;
+  /** Keys in use that were never checked: they enrolled before Intune was connected, or while it was off. */
+  not_checked?: number;
+}
+
+/** A Mac in the copy of what Intune manages. The IDs that identify it to Intune are never sent. */
+export interface MDMDevice {
+  serial: string;
+  primary_upn: string;
+  name: string;
+  /** Missing when the Mac has never checked in with Intune. */
+  last_check_in?: string;
 }
 
 /** One console action from the audit log. */
@@ -365,6 +399,8 @@ export function createApi(credentials: Credentials, { fetch: fetchImpl = (u, i) 
       call<{ enrollments: Enrollment[] }>("GET", "/v1/enrollments", q).then((r) => r.enrollments),
     approveEnrollment: (deviceID: string) => call<Enrollment>("POST", `/v1/enrollments/${id(deviceID)}/approve`),
     revokeEnrollment: (deviceID: string) => call<Enrollment>("POST", `/v1/enrollments/${id(deviceID)}/revoke`),
+    mdmStatus: () => call<MDMStatus>("GET", "/v1/mdm"),
+    mdmDevices: () => call<{ devices: MDMDevice[] }>("GET", "/v1/mdm/devices").then((r) => r.devices),
     settings: () => call<Settings>("GET", "/v1/settings"),
     putSettings: (s: Settings) => call<Settings>("PUT", "/v1/settings", undefined, s),
     revokeSession: (sessionID: string) => call<Command>("POST", `/v1/sessions/${id(sessionID)}/revoke`),

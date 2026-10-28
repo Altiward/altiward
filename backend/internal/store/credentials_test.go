@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"strings"
 	"sync"
@@ -344,6 +345,123 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 		if got, _ := s.TenantSettings(ctx, tenant); got.ReenrollmentRequiresApproval {
 			t.Fatal("explicit opt-out not stored")
+		}
+	})
+
+	t.Run("requiring an Intune match is off unless set, and round-trips", func(t *testing.T) {
+		s, tenant, _ := setup(t)
+		if got, err := s.TenantSettings(ctx, tenant); err != nil || got.RequireIntuneMatch {
+			t.Fatalf("default = %+v, %v", got, err)
+		}
+		set := TenantSettings{ReenrollmentRequiresApproval: true, RequireIntuneMatch: true}
+		if err := s.PutTenantSettings(ctx, tenant, set, auditFor(t, tenant, AuditChangeSettings)); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := s.TenantSettings(ctx, tenant); err != nil || got != set {
+			t.Fatalf("stored = %+v, %v, want %+v", got, err, set)
+		}
+	})
+
+	// enrolStoresTheMDMCheck: the ID the Mac sent and Intune's answer are kept with the key,
+	// and a key made by rotation keeps its predecessor's.
+	t.Run("enrolment stores the MDM check, and a rotated key keeps it", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		const intuneID = "0a1b2c3d-0000-4000-8000-00000000000a"
+		key := newKey(t)
+		res, err := s.Enroll(ctx, DeviceCredential{
+			DeviceID: newUUID(t), TenantID: tenant, Serial: serial, HardwareUUID: "HW", PublicKey: key, CreatedAt: t0,
+			MDMDeviceID: intuneID, MDMCheck: MDMMatch,
+		}, EnrollLimits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		id := res.Credential.DeviceID
+		list, err := s.ListCredentials(ctx, tenant, CredentialFilter{})
+		if err != nil || len(list) != 1 {
+			t.Fatalf("list = %+v, %v", list, err)
+		}
+		for name, c := range map[string]DeviceCredential{"result": res.Credential, "stored": lookup(t, s, id), "listed": list[0]} {
+			if c.MDMDeviceID != intuneID || c.MDMCheck != MDMMatch {
+				t.Fatalf("%s = %q, %q", name, c.MDMDeviceID, c.MDMCheck)
+			}
+		}
+		// A retry claiming otherwise changes nothing.
+		again, err := s.Enroll(ctx, DeviceCredential{
+			DeviceID: newUUID(t), TenantID: tenant, Serial: serial, HardwareUUID: "HW", PublicKey: key, CreatedAt: t0.Add(time.Minute),
+			MDMDeviceID: "ffffffff-0000-4000-8000-000000000000", MDMCheck: MDMMismatch,
+		}, EnrollLimits{})
+		if err != nil || again.Credential.MDMDeviceID != intuneID || again.Credential.MDMCheck != MDMMatch {
+			t.Fatalf("retry = %+v, %v", again.Credential, err)
+		}
+		rotated, err := s.Rotate(ctx, rotateRequest(t, tenant, id, newKey(t), t0.Add(25*time.Hour)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, c := range map[string]DeviceCredential{"result": rotated.Credential, "stored": lookup(t, s, rotated.Credential.DeviceID)} {
+			if c.MDMDeviceID != intuneID || c.MDMCheck != MDMMatch {
+				t.Fatalf("rotated %s = %q, %q", name, c.MDMDeviceID, c.MDMCheck)
+			}
+		}
+	})
+
+	// credentialByKeyFindsARetry: the API skips Intune for a key that is already enrolled.
+	t.Run("a credential is found by its key, in its own tenant", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		key := newKey(t)
+		if _, err := s.CredentialByKey(ctx, tenant, key); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("before enrolling: %v", err)
+		}
+		res, err := s.Enroll(ctx, DeviceCredential{
+			DeviceID: newUUID(t), TenantID: tenant, Serial: serial, HardwareUUID: "HW", PublicKey: key, CreatedAt: t0,
+			MDMCheck: MDMUnknownID,
+		}, EnrollLimits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.CredentialByKey(ctx, tenant, key)
+		if err != nil || got.DeviceID != res.Credential.DeviceID || got.Serial != serial || got.MDMCheck != MDMUnknownID {
+			t.Fatalf("by key = %+v, %v", got, err)
+		}
+		if _, err := s.CredentialByKey(ctx, "other-"+tenant, key); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("another tenant: %v", err)
+		}
+		if _, err := s.CredentialByKey(ctx, tenant, newKey(t)); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("another key: %v", err)
+		}
+	})
+
+	// checkCountsCoverActiveOnly: GET /v1/mdm counts the outcomes of the keys in use.
+	t.Run("MDM check counts cover active keys only", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		enrolWith := func(serial string, check MDMCheck) DeviceCredential {
+			t.Helper()
+			res, err := s.Enroll(ctx, DeviceCredential{
+				DeviceID: newUUID(t), TenantID: tenant, Serial: serial, HardwareUUID: "HW-" + serial, PublicKey: newKey(t),
+				CreatedAt: t0, MDMCheck: check,
+			}, EnrollLimits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return res.Credential
+		}
+		enrolWith(serial+"A", MDMMatch)
+		enrolWith(serial+"B", MDMMatch)
+		enrolWith(serial+"C", MDMUnknownID)
+		enrolWith(serial+"D", MDMNotChecked)
+		if c := enrolWith(serial+"A", MDMMismatch); c.Status != CredentialPending {
+			t.Fatalf("re-enrolment = %s, want pending", c.Status)
+		}
+		revoked := enrolWith(serial+"E", MDMUnavailable)
+		if _, err := s.RevokeCredential(ctx, tenant, revoked.DeviceID, t0, auditFor(t, tenant, AuditRevokeEnrollment)); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.MDMCheckCounts(ctx, tenant)
+		want := map[MDMCheck]int{MDMMatch: 2, MDMUnknownID: 1, MDMNotChecked: 1}
+		if err != nil || !maps.Equal(got, want) {
+			t.Fatalf("counts = %v, %v, want %v", got, err, want)
+		}
+		if got, err := s.MDMCheckCounts(ctx, "other-"+tenant); err != nil || len(got) != 0 {
+			t.Fatalf("another tenant's counts = %v, %v", got, err)
 		}
 	})
 

@@ -39,6 +39,13 @@ func FuzzEnrollmentRequest(f *testing.F) {
 		validSeeds[string(raw)] = valid
 	}
 	add(true)
+	// The MDM's ID for the Mac, which an agent sends when its profile sets MDMDeviceID, and
+	// one too long to keep.
+	seed["mdm_device_id"] = "0a1b2c3d-0000-4000-8000-00000000000a"
+	add(true)
+	seed["mdm_device_id"] = strings.Repeat("m", event.MaxNameLength+1)
+	add(false)
+	delete(seed, "mdm_device_id")
 	// Older servers deliberately ignore fields and key-storage values from newer agents.
 	seed["future_agent_field"] = map[string]any{"nested": true}
 	seed["key_storage"] = "future_storage"

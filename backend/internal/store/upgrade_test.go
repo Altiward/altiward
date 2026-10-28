@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"slices"
 	"sort"
@@ -76,6 +77,14 @@ func TestPostgresUpgradesFromEveryMigration(t *testing.T) {
 				cred.RotatedFrom != "" || cred.RotatedTo != "" || cred.RotationSignedAt != nil {
 				t.Fatalf("old credential: %+v, %v", cred, err)
 			}
+			// A key enrolled before 0009 was never checked against Intune.
+			wantMDMID, wantCheck := "", MDMNotChecked
+			if slices.Contains(names[:applied], credentialMDMMigration) {
+				wantMDMID, wantCheck = oldMDMDeviceID, MDMMatch
+			}
+			if cred.MDMDeviceID != wantMDMID || cred.MDMCheck != wantCheck {
+				t.Fatalf("old credential's Intune check: %q, %q, want %q, %q", cred.MDMDeviceID, cred.MDMCheck, wantMDMID, wantCheck)
+			}
 			queued, err := s.ClaimExports(ctx, "splunk", 10, time.Minute, now)
 			if err != nil || len(queued) != 1 || queued[0].Audit != nil || queued[0].Event.User.LocalName != "jdoe" {
 				t.Fatalf("old export: %+v, %v", queued, err)
@@ -89,10 +98,13 @@ func TestPostgresUpgradesFromEveryMigration(t *testing.T) {
 			}
 			enrolled, err := s.Enroll(ctx, DeviceCredential{
 				DeviceID: newUUID(t), TenantID: "acme", Serial: "C02NEW000001", HardwareUUID: "HW-NEW", PublicKey: newKey(t),
-				KeyStorage: KeyStorageSecureEnclave, CreatedAt: now,
+				KeyStorage: KeyStorageSecureEnclave, CreatedAt: now, MDMDeviceID: oldMDMDeviceID, MDMCheck: MDMUnknownID,
 			}, DefaultEnrollLimits()) // the limits count the old rows too
 			if err != nil || enrolled.Credential.KeyStorage != KeyStorageSecureEnclave {
 				t.Fatalf("enroll after upgrade: %+v, %v", enrolled, err)
+			}
+			if c, err := s.Credential(ctx, enrolled.Credential.DeviceID); err != nil || c.MDMDeviceID != oldMDMDeviceID || c.MDMCheck != MDMUnknownID {
+				t.Fatalf("Intune check after upgrade: %+v, %v", c, err)
 			}
 			// The old key, activated an hour before now, rotates a day later.
 			rotated, err := s.Rotate(ctx, RotateRequest{
@@ -104,6 +116,15 @@ func TestPostgresUpgradesFromEveryMigration(t *testing.T) {
 			}
 			if old, err := s.Credential(ctx, cred.DeviceID); err != nil || old.Status != CredentialRevoked || old.RotatedTo != rotated.Credential.DeviceID {
 				t.Fatalf("old credential after rotation: %+v, %v", old, err)
+			}
+			if rotated.Credential.MDMCheck != wantCheck {
+				t.Fatalf("rotated credential's Intune check = %q, want %q", rotated.Credential.MDMCheck, wantCheck)
+			}
+			// The rotated key and the new one are active.
+			wantCounts := map[MDMCheck]int{MDMUnknownID: 1}
+			wantCounts[wantCheck]++
+			if counts, err := s.MDMCheckCounts(ctx, "acme"); err != nil || !maps.Equal(counts, wantCounts) {
+				t.Fatalf("Intune check counts after upgrade: %v, %v, want %v", counts, err, wantCounts)
 			}
 			if err := s.PutTenantSettings(ctx, "acme", TenantSettings{SilentAfterHours: 24}, auditFor(t, "acme", AuditChangeSettings)); err != nil {
 				t.Fatalf("settings after upgrade: %v", err)
@@ -199,7 +220,8 @@ const (
 	oldMDMDeviceID     = "9a0b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d"
 	mdmMigration       = "migrations/0007_mdm.sql"
 
-	retentionMigration = "migrations/0008_retention.sql"
+	retentionMigration     = "migrations/0008_retention.sql"
+	credentialMDMMigration = "migrations/0009_credential_mdm.sql"
 )
 
 func deviceBySerial(devices []Device, serial string) Device {
@@ -259,8 +281,8 @@ func applyFirst(t *testing.T, pool *pgxpool.Pool, names []string) {
 // sets, so a field added later must decode from its absence: a device, an open session
 // with its event and that event's export, a credential and an audit entry. A table a later
 // migration adds is seeded only when that migration is in applied, the migrations already
-// run: from 0007, a copy of one Mac from Intune and its sync. Before 0008, two Macs with
-// revoked keys for its retired_at backfill.
+// run: from 0007, a copy of one Mac from Intune and its sync, and from 0009, the Intune
+// check of the credential. Before 0008, Macs with revoked keys for its retired_at backfill.
 func seedOldData(t *testing.T, pool *pgxpool.Pool, now time.Time, applied []string) {
 	t.Helper()
 	ctx := context.Background()
@@ -302,6 +324,11 @@ func seedOldData(t *testing.T, pool *pgxpool.Pool, now time.Time, applied []stri
 				[]any{oldMDMDeviceID}},
 			seed{`INSERT INTO mdm_sync (tenant_id, source, last_success_at, devices) VALUES ('acme', 'intune', $1, 1)`, []any{seen}},
 		)
+	}
+	// From 0009, the old key's Intune check.
+	if slices.Contains(applied, credentialMDMMigration) {
+		seeds = append(seeds, seed{`UPDATE device_credentials SET mdm_device_id = $1, mdm_check = 'match'
+			WHERE device_id = '7e8f90a1-b2c3-4d4e-8f5a-6b7c8d9e0f1a'`, []any{oldMDMDeviceID}})
 	}
 	// Before 0008, Macs whose keys are all revoked, for its retired_at backfill. Only the
 	// first was retired by an admin; the rest must not be taken for it, though an admin's

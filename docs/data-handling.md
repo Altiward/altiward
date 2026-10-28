@@ -64,7 +64,8 @@ HTTPS. It contains no third-party code, and makes no connections to Apple, SAP, 
 or anyone else. It:
 
 - enrols with the enrolment token from your profile, registering a key it makes on the Mac
-  and saying whether that key is in the Mac's Secure Enclave;
+  and saying whether that key is in the Mac's Secure Enclave, and sends the MDM's ID for
+  the Mac, if the profile sets `MDMDeviceID`;
 - replaces that key from time to time (key rotation): a file key moves into the Secure
   Enclave where the Mac has one, and a file key on another Mac is replaced every 30 days.
   It sends the new key's public half, whether it is in the Secure Enclave, and a proof
@@ -88,14 +89,19 @@ Each connection exists only if you configure it.
 | Microsoft Entra ID (or, with a managed identity, the Azure VM's metadata service at 169.254.169.254, or the container app's identity endpoint) and your Azure Monitor endpoint | Sentinel export | `ALTIWARD_SENTINEL_*` |
 | Your syslog receiver, over TLS 1.2 or later by default | SIEM export | `ALTIWARD_SYSLOG_*` |
 | Your identity provider | Console sign-in | `ALTIWARD_OIDC_*` |
-| Microsoft Entra ID (or, with a managed identity, the Azure VM's metadata service at 169.254.169.254, or the container app's identity endpoint) and Microsoft Graph (`graph.microsoft.com`) | Reading the Macs Intune manages, every 15 minutes | `ALTIWARD_INTUNE_*` |
+| Microsoft Entra ID (or, with a managed identity, the Azure VM's metadata service at 169.254.169.254, or the container app's identity endpoint) and Microsoft Graph (`graph.microsoft.com`) | Reading the Macs Intune manages, every 15 minutes, and looking up a Mac as it enrols | `ALTIWARD_INTUNE_*` |
 
 **What the server reads from Intune:** the macOS devices Intune manages, with each one's
 Intune device ID, serial number, Entra device ID, primary user's UPN, device name and last
-check-in (and its operating system, which isn't kept). It asks Graph for those fields only,
-and never changes anything in Intune. The permission it needs,
-`DeviceManagementManagedDevices.Read.All`, would let it read every device Intune manages,
-on every platform. None of it is sent to your SIEM.
+check-in (and its operating system, which isn't kept). When a Mac enrols with a new key,
+it also looks up the device ID the Mac sent, reading the same fields for that one device
+and its UDID (which isn't kept), and, when the Mac isn't in its copy yet, the devices with
+the Mac's serial number. It makes at most 30 of these lookups a minute, and none when the
+same key enrols again. It asks Graph for those fields only, and never changes anything in
+Intune. The permission it needs, `DeviceManagementManagedDevices.Read.All`, would let it
+read every device Intune manages, on every platform. None of it is sent to your SIEM: an
+enrolment event carries only the outcome of the check, and whether Intune knows the
+serial, as described below.
 
 **What your SIEM receives:** each event as an OCSF record, with the Mac's serial and
 macOS version, the person's short name and UPN, the reason they typed, and the event's
@@ -122,8 +128,11 @@ by rotation, and `rotated_key_used` when a key that rotation
 replaced signs a request again. It carries the Mac's serial, hardware UUID and agent
 version (from the agent's `User-Agent`), the new key's device ID, its SHA-256 fingerprint
 and where the Mac says it is kept, and the enrolment token's name (`token:` and a short
-fingerprint, never the token), which a rotation doesn't use and so doesn't carry. When a
-key was active before, it also carries that key's device ID and storage and whether the
+fingerprint, never the token), which a rotation doesn't use and so doesn't carry. With
+Intune connected, it also carries the outcome of the Intune check of the device ID the Mac
+sent (`mdm_check`: `match`, `mismatch`, `unknown_id`, `invalid_id`, `not_sent` or
+`unavailable`), never the ID itself, and whether Intune knows the Mac's serial
+(`mdm_serial_known`), when that is known. When a key was active before, it also carries that key's device ID and storage and whether the
 two keys came from the same hardware UUID. A `rotated_key_used` event carries instead the
 replaced key's device ID and fingerprint, the device ID of the key that replaced it, the
 device ID of the key the server revoked because of it (if any), and the agent version
@@ -214,7 +223,7 @@ Everything is in your Postgres database.
 | Every event from every Mac, in full, health readings included, and each event the server raises itself (`agent.enrollment`, `agent.silent` and `agent.admin_group`) | For the history period, never while a SIEM still waits for it |
 | Elevation sessions, including the person's UPN and reason | For the history period once ended, with their events. A session still open stays, with all its events, however old |
 | Each Mac's latest state: versions, admins, health, the admin group last sent to your SIEM, whether an admin has retired the Mac, its newest 20 alerts, its open permanent admin sign-ins (up to 20) and its newest 20 other permanent admin uses (the console shows up to 10, open sign-ins first) | Replaced as it changes, until the Mac is removed. The newest alerts and uses can be older than the history period while the Mac is kept |
-| Each Mac's enrolment: serial, hardware UUID, **public** key, whether the Mac says its key is in its Secure Enclave, and the fingerprint of the enrolment token it used (never the token). For each key, also the key it replaced by rotation, when the Mac signed that rotation, and when a use of the key after it was replaced was last reported | Forever, even after the Mac is removed; revoking stops the Mac reporting |
+| Each Mac's enrolment: serial, hardware UUID, **public** key, whether the Mac says its key is in its Secure Enclave, and the fingerprint of the enrolment token it used (never the token). For each key, also the key it replaced by rotation, when the Mac signed that rotation, and when a use of the key after it was replaced was last reported. With Intune connected, also the MDM device ID the Mac sent as it enrolled and the outcome of its Intune check; a key made by rotation keeps its predecessor's. The ID is never shown in the console or the API, logged, or sent to your SIEM: only the outcome is | Forever, even after the Mac is removed; revoking stops the Mac reporting |
 | Commands sent from the console, who sent them, and their results | For the history period |
 | Activity: every change made in the console, every sign-in and sign-out through single sign-on, a sign-in for each hour a console token is used, with the route of its first request in that hour (such as `GET /v1/sessions/{id}`: the kind of request, never the address it asked for), and what the server does by itself | Forever by default; or from 365 days, with `ALTIWARD_AUDIT_RETENTION_DAYS` |
 | Console sign-in sessions: the person's email, name, identity-provider ID and role | 12 hours at most, 1 hour idle; removed on sign-out, or when an admin ends it |

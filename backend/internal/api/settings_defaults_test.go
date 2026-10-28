@@ -109,3 +109,39 @@ func TestSettingsHistoryDaysDefaultsToZero(t *testing.T) {
 		t.Fatalf("put without history_days: %d %s", rec.Code, rec.Body)
 	}
 }
+
+// Requiring an Intune match is off unless an admin sets it, round-trips, and a body with a
+// key the server doesn't know is still refused.
+func TestSettingsRequireIntuneMatch(t *testing.T) {
+	h := newServer(t)
+	if _, out := do(t, h, "GET", "/v1/settings", consoleToken, nil); out["require_intune_match"] != false {
+		t.Fatalf("default settings = %v", out)
+	}
+	if rec, out := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"require_intune_match": true}); rec.Code != http.StatusOK ||
+		out["require_intune_match"] != true || out["reenrollment_requires_approval"] != true {
+		t.Fatalf("turn on: %d %s", rec.Code, rec.Body)
+	}
+	if _, out := do(t, h, "GET", "/v1/settings", consoleToken, nil); out["require_intune_match"] != true {
+		t.Fatalf("stored settings = %v", out)
+	}
+	if rec, _ := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"require_intune_match": false, "require_intune": true}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("an unknown key: %d %s", rec.Code, rec.Body)
+	}
+	if _, out := do(t, h, "GET", "/v1/settings", consoleToken, nil); out["require_intune_match"] != true {
+		t.Fatalf("a refused body changed the settings: %v", out)
+	}
+	// A body that leaves it out (a script that only toggles approval, a console tab loaded
+	// before the setting existed) keeps it, as it keeps history_days.
+	if rec, out := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"reenrollment_requires_approval": false}); rec.Code != http.StatusOK ||
+		out["require_intune_match"] != true || out["reenrollment_requires_approval"] != false {
+		t.Fatalf("a body without it: %d %s", rec.Code, rec.Body)
+	}
+	if _, out := do(t, h, "GET", "/v1/settings", consoleToken, nil); out["require_intune_match"] != true {
+		t.Fatalf("stored settings after a body without it = %v", out)
+	}
+	// Only an explicit false turns it off.
+	putSettings(t, h, map[string]any{"require_intune_match": false})
+	if _, out := do(t, h, "GET", "/v1/settings", consoleToken, nil); out["require_intune_match"] != false {
+		t.Fatalf("stored settings after false = %v", out)
+	}
+}
