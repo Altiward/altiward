@@ -181,10 +181,13 @@ func (m *Memory) raiseAdminGroup(tenantID string, health event.Event, receivedAt
 		prev = &r
 	}
 	raised, next, ok := admingroup.OnHealth(prev, health, tenantID, m.installation.RaisedIDSecret, receivedAt)
-	if !ok || raised.Validate(receivedAt) != nil {
+	if !ok {
+		// Nothing to raise, but the report still takes the reading's details, so a daily
+		// snapshot says which reading it comes from.
+		next = admingroup.Refreshed(*prev, health)
+	} else if raised.Validate(receivedAt) != nil {
 		return
-	}
-	if had, taken := m.events[key{tenantID, raised.EventID}]; !taken {
+	} else if had, taken := m.events[key{tenantID, raised.EventID}]; !taken {
 		m.store(tenantID, raised, receivedAt)
 	} else if had.Type != raised.Type || had.Device.Serial != raised.Device.Serial {
 		res.RaisedIDTaken = append(res.RaisedIDTaken, raised.EventID)

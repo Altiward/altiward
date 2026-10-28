@@ -209,7 +209,8 @@ func (p *Postgres) queueExports(ctx context.Context, tx pgx.Tx, tenantID, eventI
 // raises (admingroup.OnHealth), compared with lastReported, the Mac's devices.admin_group as
 // applyDevice read it under the row's lock: so readings are compared in the order they
 // arrive. The event is stored and queued for every sink, with no session and no change to
-// the device's state, and the column then records the group. Nothing about the reading
+// the device's state, and the column then records the group. A reading that raises nothing
+// still refreshes the column with its own details (admingroup.Refreshed). Nothing about the reading
 // fails the batch: an event that doesn't validate is left out, and an ID already stored as
 // another type or Mac goes in res.RaisedIDTaken and isn't recorded. A database error is
 // returned like any other in the transaction, which can't go on after one.
@@ -218,27 +219,33 @@ func (p *Postgres) raiseAdminGroup(ctx context.Context, tx pgx.Tx, tenantID stri
 	if len(p.raisedIDSecret) == 0 {
 		return nil
 	}
-	raised, next, ok := admingroup.OnHealth(decodeReport(lastReported), health, tenantID, p.raisedIDSecret, receivedAt)
-	if !ok || raised.Validate(receivedAt) != nil {
+	prev := decodeReport(lastReported)
+	raised, next, ok := admingroup.OnHealth(prev, health, tenantID, p.raisedIDSecret, receivedAt)
+	if !ok {
+		// Nothing to raise, but the column still takes the reading's details, so a daily
+		// snapshot says which reading it comes from.
+		next = admingroup.Refreshed(*prev, health)
+	} else if raised.Validate(receivedAt) != nil {
 		return nil
-	}
-	stored, err := p.insertEvent(ctx, tx, tenantID, raised, receivedAt)
-	if err != nil {
-		return err
-	}
-	if stored {
-		if err := p.queueExports(ctx, tx, tenantID, raised.EventID, receivedAt); err != nil {
+	} else {
+		stored, err := p.insertEvent(ctx, tx, tenantID, raised, receivedAt)
+		if err != nil {
 			return err
 		}
-	} else {
-		var typ, serial string
-		if err := tx.QueryRow(ctx, `SELECT type, device_serial FROM events WHERE tenant_id = $1 AND event_id = $2`,
-			tenantID, raised.EventID).Scan(&typ, &serial); err != nil {
-			return fmt.Errorf("load raised event: %w", err)
-		}
-		if typ != string(raised.Type) || serial != raised.Device.Serial {
-			res.RaisedIDTaken = append(res.RaisedIDTaken, raised.EventID)
-			return nil
+		if stored {
+			if err := p.queueExports(ctx, tx, tenantID, raised.EventID, receivedAt); err != nil {
+				return err
+			}
+		} else {
+			var typ, serial string
+			if err := tx.QueryRow(ctx, `SELECT type, device_serial FROM events WHERE tenant_id = $1 AND event_id = $2`,
+				tenantID, raised.EventID).Scan(&typ, &serial); err != nil {
+				return fmt.Errorf("load raised event: %w", err)
+			}
+			if typ != string(raised.Type) || serial != raised.Device.Serial {
+				res.RaisedIDTaken = append(res.RaisedIDTaken, raised.EventID)
+				return nil
+			}
 		}
 	}
 	group, err := json.Marshal(next)

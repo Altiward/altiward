@@ -79,6 +79,19 @@ type Store interface {
 	// before seenBefore, or that have an agent.silent alert open.
 	SilenceCandidates(ctx context.Context, seenBefore time.Time) ([]Device, error)
 
+	// AdminGroupSnapshotCandidates returns the Macs, across all tenants, that are due a daily
+	// snapshot of their admin group: not retired, with a group reported, and checked in
+	// since the given time.
+	AdminGroupSnapshotCandidates(ctx context.Context, since time.Time) ([]DeviceRef, error)
+	// RaiseAdminGroupSnapshot stores the day's agent.admin_group snapshot of the group last
+	// reported for the Mac, and queues it for every sink, unless it is stored already. It
+	// reads the Mac's row under the tenant's ingest lock, so a change can't slip in between,
+	// and takes the day from the database's clock, so a server with a fast clock can't take
+	// tomorrow's ID. now is the event's time; the Mac must have checked in within 24 hours
+	// of it. It returns false when nothing was stored: the Mac is unknown, retired or
+	// quiet, has no group reported, or has today's snapshot already.
+	RaiseAdminGroupSnapshot(ctx context.Context, tenantID, serial string, now time.Time) (bool, error)
+
 	// ClaimExports leases up to limit due items for sink so concurrent workers don't double-send.
 	ClaimExports(ctx context.Context, sink string, limit int, lease time.Duration, now time.Time) ([]ExportItem, error)
 	// CompleteExports removes delivered items and records deliveredAt as their sinks' last
@@ -94,6 +107,11 @@ type Store interface {
 	RetryExportsNow(ctx context.Context, tenantID, sink string, now time.Time, a AuditEntry) (int64, error)
 
 	Close()
+}
+
+// DeviceRef names a Mac.
+type DeviceRef struct {
+	TenantID, Serial string
 }
 
 // MaxSessionPage caps ListSessions.

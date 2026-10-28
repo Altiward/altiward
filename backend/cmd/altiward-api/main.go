@@ -326,6 +326,11 @@ func run(log *slog.Logger) error {
 	silence := &monitor.Silence{Store: st, Log: log, Now: time.Now}
 	go silence.Run(ctx, time.Minute)
 
+	// The first sweep waits an hour: during an update, an older revision still running
+	// beside this one would mark the snapshots exported without sending them.
+	groups := &monitor.AdminGroups{Store: st, Log: log, Now: time.Now}
+	go groups.Run(ctx, time.Hour, time.Hour)
+
 	if days := cfg.AuditRetentionDays; days > 0 {
 		purge := &retention.Audit{Store: st, After: time.Duration(days) * 24 * time.Hour, Log: log, Now: time.Now}
 		go purge.Run(ctx, 24*time.Hour)

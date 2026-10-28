@@ -102,6 +102,19 @@ func TestOnHealthSameMembersRaiseNothing(t *testing.T) {
 	}
 }
 
+func TestRefreshedKeepsTheMembersAndTakesTheReading(t *testing.T) {
+	now := testfixture.Time(t, "2026-10-16T12:00:00Z")
+	first := reading(t, 0, "itadmin", "backdoor")
+	_, prev, _ := admingroup.OnHealth(nil, first, tenant, secret, now)
+	again := reading(t, 1, "itadmin", "backdoor", "itadmin")
+	again.Detail["permanent_admins"] = []any{"itadmin"}
+	got := admingroup.Refreshed(prev, again)
+	if !slices.Equal(got.Members, prev.Members) || !slices.Equal(got.PermanentAdmins, []string{"itadmin"}) ||
+		got.HealthEventID != again.EventID || !got.AsOf.Equal(again.Timestamp) || got.Truncated != 0 {
+		t.Fatalf("refreshed = %+v, from %+v", got, prev)
+	}
+}
+
 func TestOnHealthAddedAndRemovedGiveChanged(t *testing.T) {
 	now := testfixture.Time(t, "2026-10-16T12:00:00Z")
 	_, prev, _ := admingroup.OnHealth(nil, reading(t, 0, "backdoor", "itadmin"), tenant, secret, now)

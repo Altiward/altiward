@@ -460,6 +460,133 @@ func suite(t *testing.T, newStore func(t *testing.T, sink string) Store) {
 				t.Fatalf("queued %+v, want a snapshot of the next reading", got)
 			}
 		})
+
+		t.Run("a reading in the same batch is compared with the one before it", func(t *testing.T) {
+			s, tenant, sink := setup(t)
+			_, _, _, health := fixtures(t)
+			first := reading(t, "3e9c9d85-9d3b-4a6b-8c8b-000000000006", health.Timestamp, "itadmin")
+			second := reading(t, "3e9c9d85-9d3b-4a6b-8c8b-000000000007", health.Timestamp.Add(time.Minute),
+				"backdoor", "itadmin")
+			res, err := s.Ingest(ctx, tenant, []event.Event{first, second}, now)
+			if err != nil || !slices.Equal(res.Accepted, []string{first.EventID, second.EventID}) {
+				t.Fatalf("res = %+v err = %v", res, err)
+			}
+			got := queued(t, s, sink)
+			if len(got) != 2 || state(got[0]) != event.AdminGroupSnapshot || state(got[1]) != event.AdminGroupChanged ||
+				got[0].EventID != idFor(t, s, tenant, "first/"+first.EventID) ||
+				got[1].EventID != idFor(t, s, tenant, "changed/"+second.EventID) {
+				t.Fatalf("queued %+v, want a snapshot of the first and a change for the second", got)
+			}
+			added, _ := json.Marshal(got[1].Detail["added"])
+			removed, _ := json.Marshal(got[1].Detail["removed"])
+			if string(added) != `[{"name":"backdoor"}]` || string(removed) != `[]` {
+				t.Fatalf("added %s, removed %s", added, removed)
+			}
+		})
+
+		t.Run("snapshots once a day", func(t *testing.T) {
+			s, tenant, sink := setup(t)
+			_, _, _, health := fixtures(t)
+			serial := health.Device.Serial
+			if ok, err := s.RaiseAdminGroupSnapshot(ctx, tenant, serial, now); err != nil || ok {
+				t.Fatalf("snapshot of a Mac with no group = %v, %v", ok, err)
+			}
+			if _, err := s.Ingest(ctx, tenant, []event.Event{health}, now); err != nil {
+				t.Fatal(err)
+			}
+			if got := queued(t, s, sink); len(got) != 1 {
+				t.Fatalf("queued %+v, want the first reading's snapshot", got)
+			}
+			refs, err := s.AdminGroupSnapshotCandidates(ctx, now.Add(-24*time.Hour))
+			if err != nil || !slices.Contains(refs, DeviceRef{TenantID: tenant, Serial: serial}) {
+				t.Fatalf("candidates = %v, %v", refs, err)
+			}
+			if refs, _ = s.AdminGroupSnapshotCandidates(ctx, now.Add(time.Minute)); slices.Contains(refs, DeviceRef{TenantID: tenant, Serial: serial}) {
+				t.Fatalf("candidates = %v, but the Mac hasn't checked in since", refs)
+			}
+
+			ok, err := s.RaiseAdminGroupSnapshot(ctx, tenant, serial, now.Add(time.Hour))
+			if err != nil || !ok {
+				t.Fatalf("snapshot = %v, %v", ok, err)
+			}
+			got := queued(t, s, sink)
+			day := time.Now().UTC().Format("2006-01-02")
+			if len(got) != 1 || state(got[0]) != event.AdminGroupSnapshot || got[0].EventID != idFor(t, s, tenant, "snapshot/"+day) ||
+				!got[0].Timestamp.Equal(now.Add(time.Hour)) || got[0].Device.Serial != serial ||
+				got[0].Device.HardwareUUID != health.Device.HardwareUUID || got[0].Detail["health_event_id"] != health.EventID {
+				t.Fatalf("queued %+v, want the day's snapshot of the reading", got)
+			}
+			if ok, err = s.RaiseAdminGroupSnapshot(ctx, tenant, serial, now.Add(2*time.Hour)); err != nil || ok {
+				t.Fatalf("second snapshot = %v, %v", ok, err)
+			}
+			if got = queued(t, s, sink); len(got) != 0 {
+				t.Fatalf("queued %+v, want nothing", got)
+			}
+			// Raising it isn't a check-in, and doesn't change the group reported.
+			devices, _ := s.ListDevices(ctx, tenant)
+			if len(devices) != 1 || !devices[0].LastReceivedAt.Equal(now) {
+				t.Fatalf("devices = %+v", devices)
+			}
+		})
+
+		t.Run("a retired Mac gets no snapshot", func(t *testing.T) {
+			s, tenant, sink := setup(t)
+			_, _, _, health := fixtures(t)
+			serial := health.Device.Serial
+			key := enrolFirst(t, s, tenant, serial, health.Device.HardwareUUID, now)
+			if _, err := s.Ingest(ctx, tenant, []event.Event{health}, now); err != nil {
+				t.Fatal(err)
+			}
+			queued(t, s, sink)
+			ref := DeviceRef{TenantID: tenant, Serial: serial}
+			if refs, _ := s.AdminGroupSnapshotCandidates(ctx, now.Add(-24*time.Hour)); !slices.Contains(refs, ref) {
+				t.Fatalf("candidates = %v, want the Mac before it is retired", refs)
+			}
+			if _, err := s.RevokeCredential(ctx, tenant, key.DeviceID, now.Add(time.Minute), auditFor(t, tenant, AuditRevokeEnrollment)); err != nil {
+				t.Fatal(err)
+			}
+			if refs, _ := s.AdminGroupSnapshotCandidates(ctx, now.Add(-24*time.Hour)); slices.Contains(refs, ref) {
+				t.Fatalf("candidates = %v, but the Mac is retired", refs)
+			}
+			if ok, err := s.RaiseAdminGroupSnapshot(ctx, tenant, serial, now.Add(time.Hour)); err != nil || ok {
+				t.Fatalf("snapshot of a retired Mac = %v, %v", ok, err)
+			}
+			if got := queued(t, s, sink); len(got) != 0 {
+				t.Fatalf("queued %+v", got)
+			}
+		})
+
+		t.Run("every reading refreshes the group a snapshot carries", func(t *testing.T) {
+			s, tenant, sink := setup(t)
+			_, _, _, health := fixtures(t)
+			first := reading(t, "3e9c9d85-9d3b-4a6b-8c8b-000000000008", health.Timestamp, "backdoor", "itadmin")
+			first.Detail["permanent_admins"] = []any{"itadmin"}
+			second := reading(t, "3e9c9d85-9d3b-4a6b-8c8b-000000000009", health.Timestamp.Add(5*time.Minute),
+				"backdoor", "itadmin")
+			second.Detail["permanent_admins"] = []any{"backdoor", "itadmin"}
+			for i, e := range []event.Event{first, second} {
+				if _, err := s.Ingest(ctx, tenant, []event.Event{e}, now.Add(time.Duration(i)*5*time.Minute)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := queued(t, s, sink); len(got) != 1 || state(got[0]) != event.AdminGroupSnapshot {
+				t.Fatalf("queued %+v, want only the first reading's snapshot", got)
+			}
+			if ok, err := s.RaiseAdminGroupSnapshot(ctx, tenant, health.Device.Serial, now.Add(time.Hour)); err != nil || !ok {
+				t.Fatalf("snapshot = %v, %v", ok, err)
+			}
+			got := queued(t, s, sink)
+			if len(got) != 1 {
+				t.Fatalf("queued %+v", got)
+			}
+			d := got[0].Detail
+			permanent, _ := json.Marshal(d["permanent_admins"])
+			members, _ := json.Marshal(d["members"])
+			if d["health_event_id"] != second.EventID || d["as_of"] != second.Timestamp.UTC().Format(time.RFC3339Nano) ||
+				string(permanent) != `["backdoor","itadmin"]` || string(members) != `["backdoor","itadmin"]` {
+				t.Fatalf("snapshot detail = %v, want the second reading's", d)
+			}
+		})
 	})
 
 	t.Run("export outbox claim, retry and complete", func(t *testing.T) {

@@ -104,6 +104,17 @@ func OnHealth(prev *Report, health event.Event, tenantID string, secret []byte, 
 	return raise(secret, tenantID, "changed/"+health.EventID, health.Device, now, d), next, true
 }
 
+// Refreshed is the group last reported, prev, updated with a newer reading whose members
+// are the same (OnHealth raised nothing for it): the reading's standing admins, event ID,
+// time and truncated count, with the members as they were compared. The stores keep it, so
+// that a daily snapshot says which reading it comes from and what that reading showed, not
+// those of the last change.
+func Refreshed(prev Report, health event.Event) Report {
+	next, _ := FromHealth(health)
+	next.Members = prev.Members
+	return next
+}
+
 // Snapshot is the daily snapshot of the group last reported for a Mac, r, keyed by the
 // day it is for (the database's UTC date, YYYY-MM-DD), so a Mac has one a day. d is the
 // Mac's last known identity and versions.
