@@ -22,7 +22,9 @@
 //	                              is detected or Privileges blocks an attempt on itself; Close (Resolved, Informational) when it passes again,
 //	                              or Close (Other: "No longer checked") when it stops applying
 //	agent.silent                → Detection Finding (2004): Create, Medium, when a Mac stops checking
-//	                              in; Close (Resolved, Informational) when it checks in again
+//	                              in, or High when Intune still hears from it (basis
+//	                              mdm_check_in); Close (Resolved, Informational) when it checks
+//	                              in again
 //	admin.permanent_use         → Authentication (3002), Informational: Logon when a permanent admin
 //	                              account signs in or uses an approval, sudo or su; Logoff when
 //	                              the Mac saw the sign-in end. A sign-in's two records share
@@ -48,6 +50,7 @@ package ocsf
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/Altiward/altiward/backend/internal/event"
@@ -329,7 +332,9 @@ func tamper(e store.StoredEvent, tenantID string) Record {
 }
 
 // silent maps an agent.silent event, raised by the backend. The resumed event closes the
-// finding its silent event opened: both use the silent event's ID as the finding uid.
+// finding its silent event opened: both use the silent event's ID as the finding uid. A
+// silence raised early, because the MDM still hears from the Mac, is High: its agent has
+// probably been removed or stopped.
 func silent(e store.StoredEvent, tenantID string) Record {
 	const title = "Altiward agent stopped checking in"
 	lastSeen, _ := e.Detail["last_seen_at"].(string)
@@ -342,21 +347,43 @@ func silent(e store.StoredEvent, tenantID string) Record {
 		r["status_id"], r["status"] = 4, "Resolved"
 	} else {
 		uid = e.EventID
-		desc = fmt.Sprintf("%s has not checked in since %s", e.Device.Serial, lastSeen)
-		// A number is an int straight from the monitor and a float64 after a JSON round trip.
-		var secs int
-		switch v := e.Detail["silent_after_seconds"].(type) {
-		case int:
-			secs = v
-		case float64:
-			secs = int(v)
+		mdmCheckIn := detailString(e.Detail, "mdm_last_check_in")
+		severity := SeverityMedium
+		if detailString(e.Detail, "basis") == event.SilentBasisMDMCheckIn {
+			severity = SeverityHigh
+			desc = fmt.Sprintf("Intune heard from %s at %s, but it hasn't checked in with Altiward since %s: "+
+				"the agent may have been removed or stopped, or can't reach the agent hostname", e.Device.Serial, mdmCheckIn, lastSeen)
+		} else {
+			desc = fmt.Sprintf("%s has not checked in since %s", e.Device.Serial, lastSeen)
+			if secs := detailInt(e.Detail, "silent_after_seconds"); secs > 0 {
+				desc += fmt.Sprintf(" (the limit is %d hours)", secs/3600)
+			}
+			desc += "; the agent may have been removed, the Mac is off, or it can't reach the agent hostname " +
+				"(check the hostname is reachable from outside your network)"
+			if mdmCheckIn != "" {
+				desc += ". Intune last heard from it at " + mdmCheckIn
+			}
 		}
-		if secs > 0 {
-			desc += fmt.Sprintf(" (the limit is %d hours)", secs/3600)
+		// Left out by servers before 1.2.0, which didn't send the admins. Each name is quoted,
+		// so a name can't read as part of the sentence or break the line.
+		if _, ok := e.Detail["admin_members"]; ok {
+			admins := "none"
+			if names := detailStrings(e.Detail, "admin_members"); len(names) > 0 {
+				quoted := make([]string, len(names))
+				for i, name := range names {
+					quoted[i] = strconv.Quote(name)
+				}
+				admins = strings.Join(quoted, ", ")
+			}
+			if more := detailInt(e.Detail, "admin_members_truncated"); more > 0 {
+				admins += fmt.Sprintf(", and %d more", more)
+			}
+			desc += ". Admins at its last check-in: " + admins
 		}
-		desc += "; the agent may have been removed, the Mac is off, or it can't reach the agent hostname " +
-			"(check the hostname is reachable from outside your network)"
-		r = base(e, tenantID, 2004, "Detection Finding", 2, "Findings", 1, "Create", SeverityMedium)
+		if id := detailString(e.Detail, "pending_device_id"); id != "" {
+			desc += ". A new key for it, " + id + ", is waiting for approval: the agent can't report with it until it is approved"
+		}
+		r = base(e, tenantID, 2004, "Detection Finding", 2, "Findings", 1, "Create", severity)
 		r["is_alert"] = true
 		r["status_id"], r["status"] = 1, "New"
 	}
@@ -368,6 +395,18 @@ func silent(e store.StoredEvent, tenantID string) Record {
 	}
 	r["message"] = desc
 	return r
+}
+
+// detailInt is a detail field that is a number: an int straight from the monitor and a
+// float64 after a JSON round trip. 0 when missing.
+func detailInt(detail map[string]any, key string) int {
+	switch v := detail[key].(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	}
+	return 0
 }
 
 // intuneReasons says, in an enrolment's message, what Intune said about the device ID the

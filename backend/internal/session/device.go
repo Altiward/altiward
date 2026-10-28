@@ -6,18 +6,24 @@ import (
 	"time"
 
 	"github.com/Altiward/altiward/backend/internal/event"
+	"github.com/Altiward/altiward/backend/internal/release"
 )
 
 // Device is the fleet-inventory record for one Mac and its current admins.
 type Device struct {
-	TenantID          string    `json:"tenant_id"`
-	Serial            string    `json:"serial"`
-	HardwareUUID      string    `json:"hardware_uuid"`
-	OSVersion         string    `json:"os_version"`
-	AgentVersion      string    `json:"agent_version"`
-	PrivilegesVersion *string   `json:"privileges_version"`
-	FirstSeenAt       time.Time `json:"first_seen_at"`
-	LastSeenAt        time.Time `json:"last_seen_at"` // newest event, by the Mac's clock
+	TenantID     string `json:"tenant_id"`
+	Serial       string `json:"serial"`
+	HardwareUUID string `json:"hardware_uuid"`
+	OSVersion    string `json:"os_version"`
+	AgentVersion string `json:"agent_version"`
+	// HighestAgentVersion is the newest agent version the Mac has ever reported, so a
+	// downgrade doesn't hide that it ran a later one (release.NewerAgent; over-long versions
+	// are ignored). Empty when unknown: no readable version reported, or state stored before
+	// server 1.2.0.
+	HighestAgentVersion string    `json:"highest_agent_version,omitempty"`
+	PrivilegesVersion   *string   `json:"privileges_version"`
+	FirstSeenAt         time.Time `json:"first_seen_at"`
+	LastSeenAt          time.Time `json:"last_seen_at"` // newest event, by the Mac's clock
 	// LastReceivedAt is when the server last received an event from the Mac, by the
 	// server's clock, so a Mac whose clock is wrong isn't silent or late by mistake. Zero
 	// when unknown; see CheckedInAt.
@@ -46,12 +52,19 @@ type Device struct {
 	Silence *Silence `json:"silence"`
 }
 
+// maxAgentVersionLength is the longest agent version HighestAgentVersion takes: a real one
+// is far shorter.
+const maxAgentVersionLength = 64
+
 // Silence is the backend noticing a Mac stopped checking in, or that it came back.
 type Silence struct {
 	EventID    string    `json:"event_id"`
 	At         time.Time `json:"at"`           // when the backend raised it
 	State      string    `json:"state"`        // silent or resumed
 	LastSeenAt time.Time `json:"last_seen_at"` // the Mac's last check-in when it was raised
+	// Basis is why it was raised: event.SilentBasisNoContact or event.SilentBasisMDMCheckIn.
+	// Empty for a resume, and for a silence raised before server 1.2.0, which was no_contact.
+	Basis string `json:"basis,omitempty"`
 }
 
 // CheckedInAt is when the Mac last checked in, by the server's clock when it is known.
@@ -137,6 +150,9 @@ func (d *Device) Apply(e event.Event) {
 	if d.FirstSeenAt.IsZero() || e.Timestamp.Before(d.FirstSeenAt) {
 		d.FirstSeenAt = e.Timestamp
 	}
+	if v := e.Device.AgentVersion; len(v) <= maxAgentVersionLength && release.NewerAgent(v, d.HighestAgentVersion) {
+		d.HighestAgentVersion = e.Device.AgentVersion
+	}
 	if !e.Timestamp.Before(d.LastSeenAt) {
 		d.LastSeenAt = e.Timestamp
 		d.HardwareUUID = e.Device.HardwareUUID
@@ -187,6 +203,7 @@ func (d *Device) applySilence(e event.Event) {
 	}
 	s := &Silence{EventID: e.EventID, At: e.Timestamp}
 	s.State, _ = e.Detail["state"].(string)
+	s.Basis, _ = e.Detail["basis"].(string)
 	if v, ok := e.Detail["last_seen_at"].(string); ok {
 		s.LastSeenAt, _ = time.Parse(time.RFC3339Nano, v)
 	}

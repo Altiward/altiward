@@ -99,9 +99,11 @@ and its UDID (which isn't kept), and, when the Mac isn't in its copy yet, the de
 the Mac's serial number. It makes at most 30 of these lookups a minute, and none when the
 same key enrols again. It asks Graph for those fields only, and never changes anything in
 Intune. The permission it needs, `DeviceManagementManagedDevices.Read.All`, would let it
-read every device Intune manages, on every platform. None of it is sent to your SIEM: an
+read every device Intune manages, on every platform. Of what it reads, only a Mac's last
+Intune check-in is sent to your SIEM, in the "not checking in" alert described below. An
 enrolment event carries only the outcome of the check, and whether Intune knows the
-serial, as described below.
+serial. The rest, the device IDs, the primary user and the device name included, is never
+sent.
 
 **What your SIEM receives:** each event as an OCSF record, with the Mac's serial and
 macOS version, the person's short name and UPN, the reason they typed, and the event's
@@ -174,6 +176,19 @@ history expiry waits for it. They wait another hour before they are sent, so tha
 of the older version still running during the update can't take them. `replay-exports`
 sends them to a SIEM connected later like any other event, while they are kept.
 
+**Not checking in.** The server raises an `agent.silent` event of its own when a Mac stops
+checking in: after the alert limit in Settings, or, with Intune connected, as soon as
+Intune has heard from the Mac at least 2 hours after its last check-in with Altiward. It
+carries the Mac's serial, hardware UUID and versions, its last check-in, the limit, why it
+was raised, and the Mac's admin group at its newest health reading (up to 50 macOS short
+names, and how many more there were). With Intune connected, it also carries the time Intune last heard from the
+Mac, and the device ID of a key enrolled since the Mac's last check-in that has waited 4
+hours or more for approval. When the Mac checks in again, a second event says so. None of
+this is new data on the server, which already keeps the Mac's latest state and the copy of
+Intune's Macs; the admins and Intune's check-in are new to the SIEM. The server also keeps,
+in each Mac's latest state, the highest agent version the Mac has reported, and records in
+the Intune sync's status when it last held these alerts back and for how many Macs.
+
 In the example deployment, Caddy also asks Let's Encrypt for TLS certificates unless you
 provide your own. If you pull the image from the registry instead of loading the file,
 Docker connects to `ghcr.io`. With the Deploy to Azure template, Azure pulls the images
@@ -222,7 +237,7 @@ Everything is in your Postgres database.
 | --- | --- |
 | Every event from every Mac, in full, health readings included, and each event the server raises itself (`agent.enrollment`, `agent.silent` and `agent.admin_group`) | For the history period, never while a SIEM still waits for it |
 | Elevation sessions, including the person's UPN and reason | For the history period once ended, with their events. A session still open stays, with all its events, however old |
-| Each Mac's latest state: versions, admins, health, the admin group last sent to your SIEM, whether an admin has retired the Mac, its newest 20 alerts, its open permanent admin sign-ins (up to 20) and its newest 20 other permanent admin uses (the console shows up to 10, open sign-ins first) | Replaced as it changes, until the Mac is removed. The newest alerts and uses can be older than the history period while the Mac is kept |
+| Each Mac's latest state: versions (and the highest agent version it has reported), admins, health, the admin group last sent to your SIEM, whether an admin has retired the Mac, its newest 20 alerts, its open permanent admin sign-ins (up to 20) and its newest 20 other permanent admin uses (the console shows up to 10, open sign-ins first) | Replaced as it changes, until the Mac is removed. The newest alerts and uses can be older than the history period while the Mac is kept |
 | Each Mac's enrolment: serial, hardware UUID, **public** key, whether the Mac says its key is in its Secure Enclave, and the fingerprint of the enrolment token it used (never the token). For each key, also the key it replaced by rotation, when the Mac signed that rotation, and when a use of the key after it was replaced was last reported. With Intune connected, also the MDM device ID the Mac sent as it enrolled and the outcome of its Intune check; a key made by rotation keeps its predecessor's. The ID is never shown in the console or the API, logged, or sent to your SIEM: only the outcome is | Forever, even after the Mac is removed; revoking stops the Mac reporting |
 | Commands sent from the console, who sent them, and their results | For the history period |
 | Activity: every change made in the console, every sign-in and sign-out through single sign-on, a sign-in for each hour a console token is used, with the route of its first request in that hour (such as `GET /v1/sessions/{id}`: the kind of request, never the address it asked for), and what the server does by itself | Forever by default; or from 365 days, with `ALTIWARD_AUDIT_RETENTION_DAYS` |
@@ -231,7 +246,7 @@ Everything is in your Postgres database.
 | When each SIEM last accepted something | Replaced at each delivery |
 | Each SIEM's coverage date (an hour after a server running this version first started with it configured, or after a start that configured it again), or the date its history was replayed from if earlier, and whether the last start was without it | Until `drop-exports` drops that SIEM's queue |
 | When the server was set up, whether the admin group has been sent from stored readings, and the secret that makes the IDs of the server's own events unguessable | Forever |
-| With Intune connected, each Mac Intune manages: its Intune device ID, serial number, Entra device ID, primary user's UPN, device name and last check-in. Also when the copy was last refreshed, and its last error | Replaced at every sync, every 15 minutes; a failed sync keeps the last copy. Deleted when Intune is turned off, at the server's next start |
+| With Intune connected, each Mac Intune manages: its Intune device ID, serial number, Entra device ID, primary user's UPN, device name and last check-in. Also when the copy was last refreshed, its last error, and when early "not checking in" alerts were last held back and for how many Macs | Replaced at every sync, every 15 minutes; a failed sync keeps the last copy. Deleted when Intune is turned off, at the server's next start |
 
 ### How long history is kept
 

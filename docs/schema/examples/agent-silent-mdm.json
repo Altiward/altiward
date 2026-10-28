@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "event_id": "5b8f3e4c-0d6a-5c91-9e2f-3a4b5c6d7e8f",
+  "type": "agent.silent",
+  "session_id": null,
+  "timestamp": "2026-10-16T11:30:00Z",
+  "device": {
+    "serial": "C02XK0AAJGH5",
+    "hardware_uuid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+    "os_version": "26.1.0",
+    "agent_version": "1.2.0",
+    "privileges_version": "2.5.3"
+  },
+  "user": null,
+  "elevation": null,
+  "delayed": false,
+  "detail": {
+    "state": "silent",
+    "basis": "mdm_check_in",
+    "last_seen_at": "2026-10-16T09:05:00Z",
+    "mdm_last_check_in": "2026-10-16T11:20:00Z",
+    "silent_after_seconds": 259200,
+    "admin_members": ["itadmin", "jdoe"]
+  }
+}

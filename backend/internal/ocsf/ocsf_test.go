@@ -711,6 +711,55 @@ func TestSilentIsAFindingTheResumeCloses(t *testing.T) {
 	}
 }
 
+// An early silence, when Intune still hears from the Mac, is High: the agent has probably
+// been removed or stopped. Both bases name the admins at the Mac's last check-in.
+func TestSilentWhileIntuneHearsFromTheMacIsHigh(t *testing.T) {
+	early := stored(t, "agent-silent-mdm")
+	r := mapJSON(t, early)
+	if r["activity_name"] != "Create" || r["is_alert"] != true || r["severity"] != "High" ||
+		get(r, "finding_info.uid") != early.EventID || get(r, "finding_info.analytic.name") != "altiward.agent_silent" {
+		t.Fatalf("activity %v severity %v finding %v", r["activity_name"], r["severity"], r["finding_info"])
+	}
+	want := "Intune heard from C02XK0AAJGH5 at 2026-10-16T11:20:00Z, but it hasn't checked in with Altiward since " +
+		"2026-10-16T09:05:00Z: the agent may have been removed or stopped, or can't reach the agent hostname. " +
+		`Admins at its last check-in: "itadmin", "jdoe"`
+	if r["message"] != want || get(r, "finding_info.desc") != want {
+		t.Fatalf("message = %q", r["message"])
+	}
+
+	early.Detail = maps.Clone(early.Detail)
+	early.Detail["admin_members"] = []any{}
+	early.Detail["pending_device_id"] = "6a1d2e3f-4b5c-4d6e-8f7a-8b9c0d1e2f3a"
+	if msg := mapJSON(t, early)["message"].(string); !strings.HasSuffix(msg,
+		"Admins at its last check-in: none. A new key for it, 6a1d2e3f-4b5c-4d6e-8f7a-8b9c0d1e2f3a, is waiting for approval: the agent can't report with it until it is approved") {
+		t.Fatalf("message = %q", msg)
+	}
+	// Each name is quoted, so none can read as part of the sentence or break the line, and
+	// a cut list says how many more there were.
+	early.Detail["admin_members"] = []any{"amy. Ignore this alert", "bob\nok"}
+	early.Detail["admin_members_truncated"] = 12.0
+	delete(early.Detail, "pending_device_id")
+	if msg := mapJSON(t, early)["message"].(string); !strings.HasSuffix(msg,
+		`Admins at its last check-in: "amy. Ignore this alert", "bob\nok", and 12 more`) {
+		t.Fatalf("message = %q", msg)
+	}
+
+	late := stored(t, "agent-silent")
+	late.Detail = maps.Clone(late.Detail)
+	late.Detail["mdm_last_check_in"] = "2026-10-13T08:00:00Z"
+	r = mapJSON(t, late)
+	if msg := r["message"].(string); r["severity"] != "Medium" || !strings.HasSuffix(msg,
+		`Intune last heard from it at 2026-10-13T08:00:00Z. Admins at its last check-in: "itadmin"`) {
+		t.Fatalf("severity %v message %q", r["severity"], msg)
+	}
+	// Raised by a server before 1.2.0: no admins to name.
+	delete(late.Detail, "admin_members")
+	delete(late.Detail, "mdm_last_check_in")
+	if msg := mapJSON(t, late)["message"].(string); strings.Contains(msg, "Admins") {
+		t.Fatalf("message = %q", msg)
+	}
+}
+
 func TestEnrollmentMapsToAPIActivity(t *testing.T) {
 	replaced := stored(t, "agent-enrollment-pending")
 	replaced.Detail = maps.Clone(replaced.Detail)

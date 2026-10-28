@@ -84,7 +84,7 @@ func (p *Postgres) RecordSilenceHeld(ctx context.Context, tenantID, source strin
 func (p *Postgres) MDMDevicesBySerial(ctx context.Context, tenantID, source, serial string) ([]MDMDevice, error) {
 	return p.mdmDevices(ctx, `SELECT `+mdmColumns+` FROM mdm_devices
 		WHERE tenant_id = $1 AND source = $2 AND upper(btrim(serial)) = $3
-		ORDER BY last_check_in DESC, device_id COLLATE "C"`, tenantID, source, mdmSerial(serial))
+		ORDER BY last_check_in DESC, device_id COLLATE "C"`, tenantID, source, MDMSerial(serial))
 }
 
 func (p *Postgres) MDMDevices(ctx context.Context, tenantID, source string) ([]MDMDevice, error) {

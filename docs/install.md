@@ -661,7 +661,9 @@ In the console, under **Settings › General**:
   checked, and applies again once Intune is reconnected. A settings API update that leaves it
   out keeps it as it is.
 - **Alert when a Mac stops checking in.** Hours without a check-in before Altiward raises
-  an alert. The default of 72 rides out a weekend with laptops closed.
+  an alert. The default of 72 rides out a weekend with laptops closed. With Intune
+  connected, a Mac that Intune still hears from is reported within hours instead
+  ([step 7](#what-it-adds-to-the-console)). Turning the alert off turns that off too.
 - **Keep history for.** How long Altiward keeps events, ended elevation sessions, commands and
   Macs that stopped checking in. **Default** is one year when a SIEM is connected and for good
   when none is. **Days** takes 90 to 3650, whether or not a SIEM is connected. **Keep for
@@ -766,8 +768,9 @@ read-only, and the server connects out to Microsoft Graph, so nothing needs to r
 **What it reads.** The macOS devices Intune manages: each one's serial number, name,
 primary user, last check-in, and Intune and Entra ID device IDs. It asks Graph for the
 macOS devices and those fields only, every 15 minutes, and keeps the last good copy if a
-sync fails. It never changes anything in Intune, and sends none of it to your SIEM.
-Turning Intune off deletes the copy when the server next starts.
+sync fails. It never changes anything in Intune. Of what it reads, only a Mac's last Intune
+check-in reaches your SIEM, in a "not checking in" alert. Turning Intune off deletes the
+copy when the server next starts.
 
 **Who can see it.** Everyone who can sign in to the console, viewers included, sees each
 Mac's serial number, name, primary user and last check-in, including Macs that don't run
@@ -943,6 +946,26 @@ what the errors mean.
   matched it, and how many enrolled before and haven't been checked yet. It links back here
   while Intune isn't connected. Everyone who can sign in sees these, as they see the Intune
   records themselves.
+- **Not checking in** comes early. When Intune hears from a Mac at least 2 hours after its
+  last check-in with Altiward, the Mac is on and online but its agent isn't reporting: it
+  may have been removed or stopped, or it can't reach the agent hostname. Altiward then
+  raises its "not checking in" alert at once, at High rather than Medium, instead of
+  waiting for the alert limit. A closed laptop stays quiet, as Intune doesn't hear from it
+  either. The alert, on either basis, names who was in the Mac's admin group at its last
+  check-in (up to 50 people) and, with Intune connected, when Intune last heard from it.
+  Each silence is raised once. This applies to Macs whose agent has reported version 1.2.0
+  or later, which checks in at least hourly, during the first day of a silence, from 2
+  hours and 10 minutes after the server starts. A Mac with a new key waiting for approval
+  in **Enrollments** is raised early only once the key has waited 4 hours, and the alert
+  names it; a key made in the last 4 hours of that first day means the Mac waits for the
+  alert limit. When many Macs meet this rule at once (more than
+  the larger of 5 and a fifth of the Macs in Intune, counting those already raised), none
+  is raised early: Altiward itself is then probably unreachable (the agent hostname, its
+  certificate or a proxy), not every agent removed. Those Macs are reported when they
+  reach the alert limit, even if fewer Macs trip later. **Settings › MDM** shows a banner
+  for a day, and the server logs a warning. The alert limit is the backstop when Intune
+  can't reach the Mac either, such as a Mac cut off from the network, or one where Intune
+  is blocked too.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/install/settings-mdm-dark.png">
@@ -1556,7 +1579,9 @@ Logs aren't included. If a maintainer asks for them:
 | `upgrade.sh` couldn't download a file | The version doesn't exist, or the server can't reach GitHub: check the version and `HTTPS_PROXY`, or give a directory of release files ([Releases and updates](#releases-and-updates)) |
 | `upgrade.sh` says a file doesn't match `SHA256SUMS` | The download is incomplete or was changed: download the release again |
 | A Mac shows **Not checking in** while it's on and online | Something between the Mac and the server answers or drops its key rotation request, so it holds its reports. `altiward-agent status` shows `key rotation:` and the last answer ([Key rotation](#key-rotation)) |
+| A Mac shows **Not checking in**, and its details say Intune still hears from it | The agent has stopped reporting while the Mac is on and online: it may have been removed or stopped, or it can't reach the agent hostname. Run `altiward-agent status` on the Mac. |
 | A Mac shows **Not checking in** | It has been off, offline or unable to reach the agent hostname for longer than the limit. Its events wait on the Mac and arrive when it reconnects. If laptops show this when they're away from the office, the agent hostname isn't reachable from the internet ([Two hostnames](#what-youre-installing)). |
+| **Settings › MDM** says early alerts were held back | Many Macs stopped checking in with Altiward while Intune still heard from them, so Altiward is probably what they can't reach: check the agent hostname from outside your network, its certificate and any proxy. Those Macs aren't raised early: each is reported when it reaches the alert limit. |
 | **Needs attention** on a Mac | An integrity check failed, for example the agent's files changed, or `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`, `OutOfBandEnforcement`, `OutOfBandGraceMinutes`, `UserPrincipalNames`, `PlatformSSOIdentity` or `HookCodeRequirement` was set outside MDM. The Mac's details say which. |
 
 For anything else, run the [diagnostics report](#diagnostics-for-a-bug-report) and check its

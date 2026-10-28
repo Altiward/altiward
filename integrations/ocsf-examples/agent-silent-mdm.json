@@ -1,0 +1,73 @@
+[
+  {
+    "activity_id": 1,
+    "activity_name": "Create",
+    "category_name": "Findings",
+    "category_uid": 2,
+    "class_name": "Detection Finding",
+    "class_uid": 2004,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "finding_info": {
+      "analytic": {
+        "name": "altiward.agent_silent",
+        "type": "Rule",
+        "type_id": 1
+      },
+      "created_time": 1792150200000,
+      "desc": "Intune heard from C02XK0AAJGH5 at 2026-10-16T11:20:00Z, but it hasn't checked in with Altiward since 2026-10-16T09:05:00Z: the agent may have been removed or stopped, or can't reach the agent hostname. Admins at its last check-in: \"itadmin\", \"jdoe\"",
+      "first_seen_time": 1792150200000,
+      "title": "Altiward agent stopped checking in",
+      "types": [
+        "Defense Evasion"
+      ],
+      "uid": "5b8f3e4c-0d6a-5c91-9e2f-3a4b5c6d7e8f"
+    },
+    "is_alert": true,
+    "message": "Intune heard from C02XK0AAJGH5 at 2026-10-16T11:20:00Z, but it hasn't checked in with Altiward since 2026-10-16T09:05:00Z: the agent may have been removed or stopped, or can't reach the agent hostname. Admins at its last check-in: \"itadmin\", \"jdoe\"",
+    "metadata": {
+      "logged_time": 1792150200000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "1.2.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "5b8f3e4c-0d6a-5c91-9e2f-3a4b5c6d7e8f",
+      "version": "1.9.0"
+    },
+    "severity": "High",
+    "severity_id": 4,
+    "status": "New",
+    "status_id": 1,
+    "time": 1792150200000,
+    "type_name": "Detection Finding: Create",
+    "type_uid": 200401,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "admin_members": [
+            "itadmin",
+            "jdoe"
+          ],
+          "basis": "mdm_check_in",
+          "last_seen_at": "2026-10-16T09:05:00Z",
+          "mdm_last_check_in": "2026-10-16T11:20:00Z",
+          "silent_after_seconds": 259200,
+          "state": "silent"
+        },
+        "event_type": "agent.silent"
+      }
+    }
+  }
+]

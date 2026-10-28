@@ -70,9 +70,9 @@ func (m *Memory) MDMDevicesBySerial(_ context.Context, tenantID, source, serial 
 	defer m.mu.Unlock()
 	out := []MDMDevice{}
 	if c, ok := m.mdm[key{tenantID, source}]; ok {
-		want := mdmSerial(serial)
+		want := MDMSerial(serial)
 		for _, d := range c.devices {
-			if mdmSerial(d.Serial) == want {
+			if MDMSerial(d.Serial) == want {
 				out = append(out, d)
 			}
 		}

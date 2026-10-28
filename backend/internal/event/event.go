@@ -46,6 +46,13 @@ const (
 	SilentStateResumed = "resumed"
 )
 
+// Why agent.silent was raised (detail.basis): the Mac went the tenant's limit without
+// checking in, or the MDM still heard from it well after it last checked in.
+const (
+	SilentBasisNoContact  = "no_contact"
+	SilentBasisMDMCheckIn = "mdm_check_in"
+)
+
 // States of a use of a permanent admin account (admin.permanent_use).
 const (
 	UseStateStarted = "started"

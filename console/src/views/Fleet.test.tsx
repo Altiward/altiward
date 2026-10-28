@@ -278,6 +278,20 @@ describe("Fleet", () => {
     expect(within(inspector).getByText(/Alert raised .* ago/)).toBeInTheDocument();
   });
 
+  it("says when the alert was raised because Intune still hears from the Mac", async () => {
+    const quiet: Device = {
+      ...mac, last_seen_at: "2026-10-12T09:00:00Z", last_health_at: "2026-10-12T09:00:00Z",
+      silence: { event_id: "q1", at: "2026-10-12T11:30:00Z", state: "silent", last_seen_at: "2026-10-12T09:00:00Z", basis: "mdm_check_in" },
+    };
+    const api = fakeApi({ devices: vi.fn(async () => [quiet]) });
+    render(<ApiContext.Provider value={api}><MemoryRouter><FleetView /></MemoryRouter></ApiContext.Provider>);
+    await userEvent.click(await screen.findByText("C02ZM1BBMD6T"));
+    const inspector = screen.getByRole("complementary", { name: "Mac details" });
+    expect(within(inspector).getByText(/Intune still hears from it: the agent may have been removed or stopped, or it can’t reach the agent hostname\./))
+      .toBeInTheDocument();
+    expect(within(inspector).queryByText(/the Mac is off/)).toBeNull();
+  });
+
   it("tags Macs whose agent is older than the server supports", async () => {
     const api = fakeApi({
       devices: vi.fn(async () => [{ ...mac, agent_version: "0.0.4" }, { ...mac, serial: "C02CURRENT01" }]),
