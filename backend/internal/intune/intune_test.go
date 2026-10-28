@@ -87,7 +87,7 @@ func TestMacsFollowsPagesAndKeepsOnlyMacs(t *testing.T) {
 	}
 	want := Device{
 		ID: "id-1", Serial: "C02AAA", EntraDeviceID: "entra-1", PrimaryUPN: "ann@example.com", Name: "Ann's MacBook",
-		LastCheckIn: time.Date(2026, 10, 20, 8, 30, 0, 0, time.UTC),
+		LastCheckIn: time.Date(2026, 10, 20, 8, 30, 0, 0, time.UTC), OperatingSystem: "macOS",
 	}
 	if got[0] != want {
 		t.Errorf("first device = %+v, want %+v", got[0], want)
@@ -222,10 +222,10 @@ func TestDeviceNotFound(t *testing.T) {
 func TestDeviceReturnsUDID(t *testing.T) {
 	const id = "0f8fad5b-d9cb-469f-a165-70867728950e"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("$select"); got != "id,serialNumber,udid,azureADDeviceId,userPrincipalName,deviceName,lastSyncDateTime" {
+		if got := r.URL.Query().Get("$select"); got != "id,serialNumber,udid,azureADDeviceId,userPrincipalName,deviceName,lastSyncDateTime,operatingSystem" {
 			t.Errorf("$select = %q", got)
 		}
-		fmt.Fprintf(w, `{"id":%q,"serialNumber":"C02AAA","udid":"UDID-1","azureADDeviceId":"entra-1","userPrincipalName":"ann@example.com","deviceName":"Mac","lastSyncDateTime":"2026-10-20T08:30:00Z"}`, id)
+		fmt.Fprintf(w, `{"id":%q,"serialNumber":"C02AAA","udid":"UDID-1","azureADDeviceId":"entra-1","userPrincipalName":"ann@example.com","deviceName":"Mac","lastSyncDateTime":"2026-10-20T08:30:00Z","operatingSystem":"macOS"}`, id)
 	}))
 	defer srv.Close()
 	c, _ := newClient(srv)
@@ -234,7 +234,7 @@ func TestDeviceReturnsUDID(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Device{ID: id, Serial: "C02AAA", UDID: "UDID-1", EntraDeviceID: "entra-1", PrimaryUPN: "ann@example.com", Name: "Mac",
-		LastCheckIn: time.Date(2026, 10, 20, 8, 30, 0, 0, time.UTC)}
+		LastCheckIn: time.Date(2026, 10, 20, 8, 30, 0, 0, time.UTC), OperatingSystem: "macOS"}
 	if d != want {
 		t.Errorf("device = %+v, want %+v", d, want)
 	}
@@ -392,12 +392,13 @@ func TestDevicesBySerialEscapesAndValidates(t *testing.T) {
 		if got := r.URL.Query().Get("$filter"); got != "serialNumber eq 'C02XK0AAJGH5'" {
 			t.Errorf("$filter = %q", got)
 		}
-		fmt.Fprint(w, `{"value":[{"id":"id-1","serialNumber":"C02XK0AAJGH5","deviceName":"Mac","lastSyncDateTime":"2026-10-20T08:30:00Z"}]}`)
+		fmt.Fprint(w, `{"value":[{"id":"id-1","serialNumber":"C02XK0AAJGH5","deviceName":"Mac","lastSyncDateTime":"2026-10-20T08:30:00Z","operatingSystem":"Windows"}]}`)
 	}))
 	defer srv.Close()
 	c, _ := newClient(srv)
 	got, err := c.DevicesBySerial(context.Background(), "C02XK0AAJGH5")
-	if err != nil || len(got) != 1 || got[0].ID != "id-1" {
+	// Every platform's devices, each with its operating system: the caller decides.
+	if err != nil || len(got) != 1 || got[0].ID != "id-1" || got[0].OperatingSystem != "Windows" {
 		t.Fatalf("got %+v, err %v", got, err)
 	}
 	for _, bad := range []string{"x' or 1 eq 1", "", strings.Repeat("A", 33), "C02 XK", "C02\n"} {
@@ -407,6 +408,22 @@ func TestDevicesBySerialEscapesAndValidates(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("calls = %d, want 1 (the bad serials must not reach Graph)", calls)
+	}
+}
+
+func TestValidSerial(t *testing.T) {
+	for in, want := range map[string]bool{
+		"C02XK0AAJGH5":          true,
+		strings.Repeat("A", 32): true,
+		strings.Repeat("A", 33): false,
+		"":                      false,
+		" C02XK0AAJGH5":         false,
+		"C02 XK":                false,
+		"x' or 1 eq 1":          false,
+	} {
+		if got := ValidSerial(in); got != want {
+			t.Errorf("ValidSerial(%q) = %v, want %v", in, got, want)
+		}
 	}
 }
 

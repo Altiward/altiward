@@ -182,7 +182,7 @@ export interface Settings {
   silent_alerts_off: boolean;
   /** How long history is kept: 0 the default, -1 for good, otherwise 90 to 3650 days. Left out, the stored value stays. */
   history_days?: number;
-  /** A new key whose Intune check isn't a match waits for approval. Applies only while Intune is connected; off when missing. */
+  /** A new key whose Intune check isn't a match waits for approval. Applies only while Intune is connected. Left out, the stored value stays. */
   require_intune_match?: boolean;
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,6 +32,7 @@ const (
 	warnInvalidID = "MDMDeviceID isn't an Intune device ID: use {{deviceid}}"
 	warnEntraID   = "MDMDeviceID is the Mac's Entra device ID: use {{deviceid}}"
 	warnCapped    = "more than 30 Intune lookups in a minute: enrolments are checked as unavailable until there is room"
+	warnTimedOut  = "Intune didn't answer an enrolment's lookup in time"
 )
 
 // errUnavailable is a live lookup that wasn't made, or wasn't answered in time.
@@ -58,8 +60,9 @@ type lookup struct {
 //
 // It gives MDMNotChecked for a tenant Intune isn't connected for, MDMNotSent for an empty
 // ID, and MDMInvalidID for one that isn't a GUID. Otherwise it looks the device up, live:
-// MDMUnknownID when Intune has no such device or one without a serial, MDMMismatch when its
-// serial isn't exactly the Mac's, and MDMMatch when it is. An ID Intune doesn't have is
+// MDMMismatch when the device isn't a Mac (a Mac can't honestly send another platform's
+// ID), MDMUnknownID when Intune has no such device or one without a serial, MDMMismatch
+// when its serial isn't exactly the Mac's, and MDMMatch when it is. An ID Intune doesn't have is
 // MDMInvalidID instead when it is the Entra device ID of a Mac in the copy. Only then is the
 // copy read, so that read sits under the same bounds as the lookup, and for notFoundFor
 // both the outcome is answered from memory, without a lookup or a read.
@@ -124,6 +127,8 @@ func (c *Checker) Check(ctx context.Context, tenantID, deviceID, serial, hardwar
 	}
 	intuneSerial := strings.TrimSpace(d.Serial)
 	switch {
+	case !isMac(d):
+		return store.MDMMismatch
 	case intuneSerial == "":
 		return store.MDMUnknownID
 	case intuneSerial != strings.TrimSpace(serial):
@@ -136,11 +141,14 @@ func (c *Checker) Check(ctx context.Context, tenantID, deviceID, serial, hardwar
 // SerialKnown reports whether Intune manages a Mac with serial. It is nil when that isn't
 // known: Intune isn't connected for the tenant, the copy has never been synced, or the
 // serial isn't in the copy and can't be looked up. With SerialFilter, a serial not in the
-// copy, which is up to 15 minutes old, is looked up live, within the same bounds as Check.
+// copy, which is up to 15 minutes old, is looked up live, within the same bounds as Check;
+// only a Mac counts. A serial Graph wouldn't take (intune.ValidSerial) isn't looked up, and
+// costs none of the minute's lookups.
 func (c *Checker) SerialKnown(ctx context.Context, tenantID, serial string) *bool {
 	if c == nil || tenantID != c.TenantID || c.Store == nil {
 		return nil
 	}
+	serial = strings.TrimSpace(serial)
 	status, err := c.Store.MDMSyncStatus(ctx, tenantID, store.MDMIntune)
 	if err != nil {
 		c.logger().Warn("can't read the Intune sync's status", "tenant", tenantID, "err", err)
@@ -158,10 +166,9 @@ func (c *Checker) SerialKnown(ctx context.Context, tenantID, serial string) *boo
 	if known {
 		return &known
 	}
-	if !c.SerialFilter || c.Source == nil {
+	if !c.SerialFilter || c.Source == nil || !intune.ValidSerial(serial) {
 		return nil
 	}
-	serial = strings.TrimSpace(serial)
 	devices, err := live(c, ctx, tenantID, "serial:"+serial, func(ctx context.Context) ([]intune.Device, error) {
 		return c.Source.DevicesBySerial(ctx, serial)
 	})
@@ -171,8 +178,13 @@ func (c *Checker) SerialKnown(ctx context.Context, tenantID, serial string) *boo
 		}
 		return nil
 	}
-	known = len(devices) > 0
+	known = slices.ContainsFunc(devices, isMac)
 	return &known
+}
+
+// isMac reports whether Intune's record is a Mac's.
+func isMac(d intune.Device) bool {
+	return strings.EqualFold(strings.TrimSpace(d.OperatingSystem), "macOS")
 }
 
 // live runs fn in a goroutine, so that a source that ignores its context (a token source
@@ -224,7 +236,7 @@ func live[T any](c *Checker, ctx context.Context, tenantID, key string, fn func(
 		v, _ := l.val.(T)
 		return v, l.err
 	case <-after(timeout):
-		c.logger().Warn("Intune didn't answer an enrolment's lookup in time", "tenant", tenantID, "timeout", timeout)
+		c.warnOnce(warnTimedOut, tenantID, "")
 		return zero, errUnavailable
 	case <-ctx.Done():
 		return zero, errUnavailable

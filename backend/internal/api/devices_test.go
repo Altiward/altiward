@@ -1044,8 +1044,8 @@ type fakeIntune struct {
 }
 
 var intuneMacs = []intune.Device{
-	{ID: macIntuneID, Serial: fixtureSerial, EntraDeviceID: macEntraID},
-	{ID: otherIntuneID, Serial: "C02OTHERMAC1"},
+	{ID: macIntuneID, Serial: fixtureSerial, EntraDeviceID: macEntraID, OperatingSystem: "macOS"},
+	{ID: otherIntuneID, Serial: "C02OTHERMAC1", OperatingSystem: "macOS"},
 }
 
 func (f *fakeIntune) Macs(context.Context) ([]intune.Device, error) { return intuneMacs, nil }

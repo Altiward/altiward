@@ -627,7 +627,7 @@ In the console, under **Settings › General**:
   didn't match, or haven't been checked, turning it on asks you to confirm and says how many.
   A key sent with another Mac's device ID waits for approval whatever this says. The setting
   stays set while Intune is off, when the switch is hidden and nothing is checked, and applies
-  again once Intune is reconnected.
+  again once Intune is reconnected. A settings API update that leaves it out keeps it as it is.
 - **Alert when a Mac stops checking in.** Hours without a check-in before Altiward raises
   an alert. The default of 72 rides out a weekend with laptops closed.
 - **Keep history for.** How long Altiward keeps events, ended elevation sessions, commands and

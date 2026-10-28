@@ -35,11 +35,13 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, p auth.Prin
 		writeError(w, http.StatusBadRequest, "invalid settings: "+err.Error())
 		return
 	}
-	// Whether the body names history_days at all: one that leaves it out (a console tab
-	// loaded before this setting existed, a script that only toggles approval) keeps the
-	// stored value instead of resetting it, which could otherwise start removing history.
+	// Whether the body names history_days and require_intune_match at all: one that leaves
+	// either out (a console tab loaded before the setting existed, a script that only toggles
+	// approval) keeps the stored value instead of resetting it, which could otherwise start
+	// removing history, or stop holding keys that don't match Intune.
 	var named struct {
-		HistoryDays *int `json:"history_days"`
+		HistoryDays        *int  `json:"history_days"`
+		RequireIntuneMatch *bool `json:"require_intune_match"`
 	}
 	if err := json.Unmarshal(body, &named); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid settings: "+err.Error())
@@ -64,6 +66,9 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, p auth.Prin
 	}
 	if named.HistoryDays == nil {
 		settings.HistoryDays = previous.HistoryDays
+	}
+	if named.RequireIntuneMatch == nil {
+		settings.RequireIntuneMatch = previous.RequireIntuneMatch
 	}
 	a, err := s.auditEntry(p, store.AuditChangeSettings, "settings", map[string]any{"previous": previous, "settings": settings})
 	if err != nil {

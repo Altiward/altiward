@@ -119,7 +119,7 @@ func newCheck(t *testing.T) *checkEnv {
 	t.Helper()
 	env := &checkEnv{
 		src: &fakeIntune{devices: map[string]intune.Device{
-			intuneID: {ID: intuneID, Serial: macSerial, EntraDeviceID: entraID},
+			intuneID: {ID: intuneID, Serial: macSerial, EntraDeviceID: entraID, OperatingSystem: "macOS"},
 		}},
 		st:    store.NewMemory(nil),
 		clock: &fakeClock{t: testfixture.Time(t, "2026-10-28T12:00:00Z")},
@@ -187,7 +187,7 @@ func TestCheckSerialIsExact(t *testing.T) {
 	env.want(t, intuneID, macSerial+"0", store.MDMMismatch)
 	// Surrounding spaces, on either side, are not part of a serial.
 	env.want(t, intuneID, " "+macSerial+" ", store.MDMMatch)
-	env.src.devices[intuneID] = intune.Device{ID: intuneID, Serial: macSerial + " "}
+	env.src.devices[intuneID] = intune.Device{ID: intuneID, Serial: macSerial + " ", OperatingSystem: "macOS"}
 	env.want(t, intuneID, macSerial, store.MDMMatch)
 }
 
@@ -210,8 +210,24 @@ func TestCheckUnknownIDIsRemembered(t *testing.T) {
 
 func TestCheckEmptyIntuneSerialIsUnknown(t *testing.T) {
 	env := newCheck(t)
-	env.src.devices[intuneID] = intune.Device{ID: intuneID, Serial: " "}
+	env.src.devices[intuneID] = intune.Device{ID: intuneID, Serial: " ", OperatingSystem: "macOS"}
 	env.want(t, intuneID, macSerial, store.MDMUnknownID)
+}
+
+// TestCheckMatchIsAMac: a Mac can't honestly send the ID of a device on another platform, so
+// a record that isn't a Mac's is a mismatch, even with the Mac's serial.
+func TestCheckMatchIsAMac(t *testing.T) {
+	env := newCheck(t)
+	for _, os := range []string{"Windows", "iOS", ""} {
+		env.src.devices[intuneID] = intune.Device{ID: intuneID, Serial: macSerial, OperatingSystem: os}
+		env.want(t, intuneID, macSerial, store.MDMMismatch)
+	}
+	// Even one without a serial.
+	env.src.devices[intuneID] = intune.Device{ID: intuneID, Serial: "", OperatingSystem: "Windows"}
+	env.want(t, intuneID, macSerial, store.MDMMismatch)
+	// Graph's name for the platform, in any case.
+	env.src.devices[intuneID] = intune.Device{ID: intuneID, Serial: macSerial, OperatingSystem: "macos"}
+	env.want(t, intuneID, macSerial, store.MDMMatch)
 }
 
 func TestCheckUnavailableWhenIntuneFails(t *testing.T) {
@@ -255,6 +271,15 @@ func TestCheckTimesOutBehindABlockedToken(t *testing.T) {
 	fire <- env.clock.now().Add(10 * time.Second)
 	if c := <-got; c != store.MDMUnavailable {
 		t.Fatalf("Check = %q, want unavailable", c)
+	}
+	// A second time out within the hour isn't logged again.
+	const warning = "Intune didn't answer an enrolment's lookup in time"
+	go func() { got <- env.check(t, intuneID, macSerial) }()
+	<-asked
+	fire <- env.clock.now().Add(10 * time.Second)
+	<-got
+	if n := strings.Count(env.log.String(), warning); n != 1 {
+		t.Fatalf("warned %d times, want once an hour:\n%s", n, env.log)
 	}
 
 	// The request's own context ends the wait too.
@@ -458,7 +483,7 @@ func TestSerialKnown(t *testing.T) {
 
 	// With one, Intune is asked.
 	env.c.SerialFilter = true
-	env.src.bySerial = map[string][]intune.Device{"C02NEWMAC001": {{ID: intuneID, Serial: "C02NEWMAC001"}}}
+	env.src.bySerial = map[string][]intune.Device{"C02NEWMAC001": {{ID: intuneID, Serial: "C02NEWMAC001", OperatingSystem: "macOS"}}}
 	is(t, env.c.SerialKnown(ctx, "acme", "C02NEWMAC001"), &yes)
 	is(t, env.c.SerialKnown(ctx, "acme", "C02NOTKNOWN1"), &no)
 	if _, serialCalls := env.src.counts(); serialCalls != 2 {
@@ -466,6 +491,56 @@ func TestSerialKnown(t *testing.T) {
 	}
 	env.src.err = errors.New("intune: HTTP 503")
 	is(t, env.c.SerialKnown(ctx, "acme", "C02NOTKNOWN1"), nil)
+}
+
+// SerialKnown counts only Macs: another platform's device with the serial isn't the Mac.
+func TestSerialKnownCountsOnlyMacs(t *testing.T) {
+	ctx := context.Background()
+	env := newCheck(t)
+	env.c.SerialFilter = true
+	if err := env.st.ReplaceMDMDevices(ctx, "acme", store.MDMIntune, nil, env.clock.now()); err != nil {
+		t.Fatal(err)
+	}
+	env.src.bySerial = map[string][]intune.Device{
+		"C02WINDOWS01": {{ID: intuneID, Serial: "C02WINDOWS01", OperatingSystem: "Windows"}},
+		"C02BOTH00001": {{ID: intuneID, Serial: "C02BOTH00001", OperatingSystem: "Windows"},
+			{ID: entraID, Serial: "C02BOTH00001", OperatingSystem: "macOS"}},
+	}
+	if got := env.c.SerialKnown(ctx, "acme", "C02WINDOWS01"); got == nil || *got {
+		t.Fatalf("a Windows device's serial = %v, want false", show(got))
+	}
+	if got := env.c.SerialKnown(ctx, "acme", "C02BOTH00001"); got == nil || !*got {
+		t.Fatalf("a serial a Mac has too = %v, want true", show(got))
+	}
+}
+
+// SerialKnown checks a serial before it spends one of the minute's lookups on it: one Graph
+// wouldn't take is unknown, with no lookup and nothing logged. Surrounding spaces don't count.
+func TestSerialKnownChecksTheSerialFirst(t *testing.T) {
+	ctx := context.Background()
+	env := newCheck(t)
+	env.c.SerialFilter = true
+	if err := env.st.ReplaceMDMDevices(ctx, "acme", store.MDMIntune, nil, env.clock.now()); err != nil {
+		t.Fatal(err)
+	}
+	for range 40 {
+		for _, bad := range []string{"", "C02 XK", "x' or 1 eq 1", strings.Repeat("A", 33)} {
+			if got := env.c.SerialKnown(ctx, "acme", bad); got != nil {
+				t.Fatalf("SerialKnown(%q) = %v, want nil", bad, show(got))
+			}
+		}
+	}
+	if _, serialCalls := env.src.counts(); serialCalls != 0 {
+		t.Fatalf("serial lookups = %d, want none", serialCalls)
+	}
+	if env.log.String() != "" {
+		t.Fatalf("logged:\n%s", env.log)
+	}
+	// The cap is untouched, and a serial with spaces around it is looked up without them.
+	env.src.bySerial = map[string][]intune.Device{"C02NEWMAC001": {{ID: intuneID, Serial: "C02NEWMAC001", OperatingSystem: "macOS"}}}
+	if got := env.c.SerialKnown(ctx, "acme", " C02NEWMAC001 "); got == nil || !*got {
+		t.Fatalf("a valid serial = %v, want true", show(got))
+	}
 }
 
 func show(b *bool) string {
