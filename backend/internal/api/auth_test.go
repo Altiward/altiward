@@ -320,7 +320,9 @@ func TestSignInRefusals(t *testing.T) {
 // break-glass alert.
 func TestSingleSignOnRefusesTokenLikeNames(t *testing.T) {
 	env := newSSOServer(t)
-	for _, name := range []string{"break-glass:3f2a9c1b", "token:3f2a9c1b"} {
+	// The SIEM's rules match the prefix in any case.
+	names := []string{"break-glass:3f2a9c1b", "token:3f2a9c1b", "Break-Glass:3f2a9c1b", "TOKEN:3f2a9c1b", " break-glass:3f2a9c1b"}
+	for _, name := range names {
 		b := env.browser(t)
 		rec, _ := b.do("GET", "/v1/auth/login", nil)
 		claims := person("g-admin")
@@ -342,8 +344,20 @@ func TestSingleSignOnRefusesTokenLikeNames(t *testing.T) {
 	if len(sessions) != 0 || len(entries) != 0 {
 		t.Fatalf("sessions = %+v, audit = %+v", sessions, entries)
 	}
-	if n := strings.Count(env.log.String(), "the name looks like a console token"); n != 2 {
-		t.Errorf("want two refusals logged, log:\n%s", env.log)
+	if n := strings.Count(env.log.String(), "the name looks like a console token"); n != len(names) {
+		t.Errorf("want %d refusals logged, log:\n%s", len(names), env.log)
+	}
+
+	// Anyone else still signs in.
+	b := env.browser(t)
+	if to := b.signIn(env.idp, "/", person("g-admin")); to != "/" {
+		t.Fatalf("returned to %q", to)
+	}
+	if _, ok := b.cookies["__Host-altiward_session"]; !ok {
+		t.Fatal("a person got no session")
+	}
+	if entries := signIns(t, env.store); len(entries) != 1 || entries[0].Actor != "jane.doe@example.com" {
+		t.Fatalf("sign-ins = %+v", entries)
 	}
 }
 

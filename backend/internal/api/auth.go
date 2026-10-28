@@ -220,8 +220,9 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Some identity providers let people choose their names, and one like a console
-	// token's would pass for the token in the audit log.
-	if strings.HasPrefix(id.Email, "token:") || strings.HasPrefix(id.Email, "break-glass:") {
+	// token's would pass for the token in the audit log. The SIEM's rules match the prefix
+	// in any case.
+	if name := strings.ToLower(strings.TrimSpace(id.Email)); strings.HasPrefix(name, "token:") || strings.HasPrefix(name, "break-glass:") {
 		s.log.Warn("sign-in refused: the name looks like a console token", "actor", id.Email)
 		signInFailed(w, r, "failed")
 		return

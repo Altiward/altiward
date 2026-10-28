@@ -123,11 +123,20 @@ func TestTokenUseSurvivesARestart(t *testing.T) {
 	}
 	// A restarted server, or another replica, finds the entry in the store.
 	clock.advance(30 * time.Minute)
-	if rec, _ := do(t, newTokenServer(t, st, clock), "GET", "/v1/devices", consoleToken, nil); rec.Code != 200 {
+	restarted := newTokenServer(t, st, clock)
+	if rec, _ := do(t, restarted, "GET", "/v1/devices", consoleToken, nil); rec.Code != 200 {
 		t.Fatalf("devices after a restart: %d %s", rec.Code, rec.Body)
 	}
 	if entries := signIns(t, st); len(entries) != 1 {
 		t.Fatalf("sign-ins = %+v", entries)
+	}
+	// That entry covers it for the rest of its own hour, not for an hour from the restart.
+	clock.advance(31 * time.Minute)
+	if rec, _ := do(t, restarted, "GET", "/v1/devices", consoleToken, nil); rec.Code != 200 {
+		t.Fatalf("devices: %d %s", rec.Code, rec.Body)
+	}
+	if entries := signIns(t, st); len(entries) != 2 || !entries[0].At.Equal(clock.now()) {
+		t.Fatalf("sign-ins an hour after the first = %+v", entries)
 	}
 }
 
