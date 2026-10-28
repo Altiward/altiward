@@ -14,6 +14,7 @@
 //	POST /v1/enrollments/{id}/revoke    admin             revoke a device credential
 //	GET  /v1/settings                   viewer            tenant settings
 //	PUT  /v1/settings                   admin             change them
+//	GET  /v1/retention                  viewer            how long history is kept now, and why
 //	GET  /v1/console-sessions           admin             who is signed in to the console
 //	DELETE /v1/console-sessions/{id}    admin             end one of those sign-ins
 //	POST /v1/sessions/{id}/revoke       operator          revoke one session
@@ -120,6 +121,7 @@ func New(s store.Store, tokens *auth.Tokens, log *slog.Logger, now func() time.T
 	mux.Handle("POST /v1/enrollments/{id}/revoke", srv.console(auth.Admin, srv.revokeEnrollment))
 	mux.Handle("GET /v1/settings", srv.console(auth.Viewer, srv.getSettings))
 	mux.Handle("PUT /v1/settings", srv.console(auth.Admin, srv.putSettings))
+	mux.Handle("GET /v1/retention", srv.console(auth.Viewer, srv.getRetention))
 	mux.Handle("POST /v1/sessions/{id}/revoke", srv.console(auth.Operator, srv.revokeSession))
 	mux.Handle("POST /v1/devices/{serial}/revoke", srv.console(auth.Operator, srv.revokeDevice))
 	mux.Handle("GET /v1/commands", srv.console(auth.Viewer, srv.listCommands))

@@ -244,6 +244,11 @@ type TenantSettings struct {
 	// quiet Macs in its SIEM. A Mac already reported silent still sends "resumed" when it
 	// checks in, so its alert closes. False, the zero value, keeps them on.
 	SilentAlertsOff bool `json:"silent_alerts_off"`
+	// HistoryDays is how long the server keeps history of Macs: 0 is the default (a year
+	// with a SIEM connected, for good without one), HistoryKeptForGood (-1) keeps it for
+	// good, and MinHistoryDays to MaxHistoryDays is a period an admin chose. Settings
+	// stored before this field existed decode to 0, so they read as the default.
+	HistoryDays int `json:"history_days"`
 }
 
 // DefaultTenantSettings requires approval before a new key can replace an enrolled Mac.
@@ -260,6 +265,39 @@ const (
 	MinSilentAfterHours     = 1
 	MaxSilentAfterHours     = 30 * 24
 )
+
+// Bounds for TenantSettings.HistoryDays. The minimum is the Overview's longest period, so
+// it always stays complete.
+const (
+	HistoryKeptForGood = -1
+	MinHistoryDays     = 90
+	MaxHistoryDays     = 3650
+	DefaultHistoryDays = 365
+)
+
+// Why History gave the period it did.
+const (
+	HistoryReasonDefaultSIEM   = "default_siem"
+	HistoryReasonDefaultNoSIEM = "default_no_siem"
+	HistoryReasonSet           = "set"
+	HistoryReasonKeptForGood   = "kept_for_good"
+)
+
+// History is the period the server keeps history for, in days, and why. siem says whether
+// the server has at least one export sink configured. 0 days means nothing is removed.
+// An explicit period applies with or without a SIEM: the admin chose it on purpose.
+func (s TenantSettings) History(siem bool) (days int, reason string) {
+	switch {
+	case s.HistoryDays == HistoryKeptForGood:
+		return 0, HistoryReasonKeptForGood
+	case s.HistoryDays > 0:
+		return s.HistoryDays, HistoryReasonSet
+	case siem:
+		return DefaultHistoryDays, HistoryReasonDefaultSIEM
+	default:
+		return 0, HistoryReasonDefaultNoSIEM
+	}
+}
 
 // SilentAfter is how long a Mac may go without checking in before it is reported silent.
 func (s TenantSettings) SilentAfter() time.Duration {

@@ -279,6 +279,129 @@ func TestSilentAfterHoursIsBounded(t *testing.T) {
 	}
 }
 
+func TestHistoryDaysIsBounded(t *testing.T) {
+	h := newServer(t)
+	for _, c := range []struct{ days, want int }{{0, 200}, {-1, 200}, {90, 200}, {3650, 200}, {89, 400}, {3651, 400}, {-2, 400}} {
+		rec, out := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"history_days": c.days})
+		if rec.Code != c.want {
+			t.Errorf("history_days %d: %d %s", c.days, rec.Code, rec.Body)
+		}
+		if c.want == 400 && out["error"] != "history_days must be 0 for the default, -1 to keep history for good, or between 90 and 3650" {
+			t.Errorf("history_days %d: error = %v", c.days, out["error"])
+		}
+	}
+	// The last accepted value stays after the refused ones.
+	if rec, out := do(t, h, "GET", "/v1/settings", consoleToken, nil); rec.Code != 200 || out["history_days"] != 3650.0 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+// A console tab or script that doesn't know the setting must not reset it.
+func TestPutSettingsWithoutHistoryKeepsIt(t *testing.T) {
+	h := newServer(t)
+	if rec, _ := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"history_days": -1}); rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	for _, body := range []map[string]any{{"silent_after_hours": 48}, {"history_days": nil}} {
+		if rec, _ := do(t, h, "PUT", "/v1/settings", consoleToken, body); rec.Code != 200 {
+			t.Fatalf("%v: %d %s", body, rec.Code, rec.Body)
+		}
+		if _, out := do(t, h, "GET", "/v1/settings", consoleToken, nil); out["history_days"] != -1.0 {
+			t.Fatalf("%v: history_days = %v, want -1", body, out["history_days"])
+		}
+	}
+}
+
+func TestRetentionReportsThePolicy(t *testing.T) {
+	history := func(t *testing.T, h http.Handler) map[string]any {
+		t.Helper()
+		rec, out := do(t, h, "GET", "/v1/retention", consoleToken, nil)
+		if rec.Code != 200 {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+		got, _ := out["history"].(map[string]any)
+		return got
+	}
+	tokens, _ := auth.Parse("acme="+agentToken, "acme="+consoleToken)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	now := serverNow(t)
+
+	t.Run("no SIEM", func(t *testing.T) {
+		h := api.New(store.NewMemory(nil), tokens, log, func() time.Time { return now })
+		got := history(t, h)
+		if got["reason"] != "default_no_siem" || got["kept_for_good"] != true || got["days"] != 0.0 ||
+			got["held_before"] != nil || got["waiting_for_backfill"] != true {
+			t.Fatalf("history = %v", got)
+		}
+	})
+
+	t.Run("with a SIEM", func(t *testing.T) {
+		st := store.NewMemory([]string{"splunk"})
+		if err := st.RecordSinks(context.Background(), []string{"splunk"}, now.Add(-time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		h := api.New(st, tokens, log, func() time.Time { return now }, api.WithSinks([]string{"splunk"}))
+		got := history(t, h)
+		if got["reason"] != "default_siem" || got["kept_for_good"] != false || got["days"] != 365.0 ||
+			got["held_before"] != now.Add(-time.Hour).Format(time.RFC3339) {
+			t.Fatalf("history = %v", got)
+		}
+		if rec, _ := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"history_days": 120}); rec.Code != 200 {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+		got = history(t, h)
+		if got["reason"] != "set" || got["days"] != 120.0 || got["kept_for_good"] != false || got["held_before"] != nil {
+			t.Fatalf("history = %v", got)
+		}
+		if rec, _ := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"history_days": -1}); rec.Code != 200 {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+		got = history(t, h)
+		if got["reason"] != "kept_for_good" || got["kept_for_good"] != true || got["days"] != 0.0 {
+			t.Fatalf("history = %v", got)
+		}
+	})
+
+	t.Run("backfill done", func(t *testing.T) {
+		st := store.NewMemory(nil)
+		if _, err := st.BackfillAdminGroups(context.Background(), now); err != nil {
+			t.Fatal(err)
+		}
+		h := api.New(st, tokens, log, func() time.Time { return now })
+		if got := history(t, h); got["waiting_for_backfill"] != false {
+			t.Fatalf("history = %v", got)
+		}
+	})
+
+	t.Run("a viewer may ask", func(t *testing.T) {
+		if rec, _ := do(t, newServer(t), "GET", "/v1/retention", "", nil); rec.Code != 401 {
+			t.Fatalf("no token: %d", rec.Code)
+		}
+	})
+}
+
+// History turns the setting into days, and says why.
+func TestSettingsHistory(t *testing.T) {
+	for _, c := range []struct {
+		days       int
+		siem       bool
+		want       int
+		wantReason string
+	}{
+		{0, true, 365, "default_siem"},
+		{0, false, 0, "default_no_siem"},
+		{120, true, 120, "set"},
+		{120, false, 120, "set"},
+		{-1, true, 0, "kept_for_good"},
+		{-1, false, 0, "kept_for_good"},
+	} {
+		days, reason := store.TenantSettings{HistoryDays: c.days}.History(c.siem)
+		if days != c.want || reason != c.wantReason {
+			t.Errorf("History(%d, %v) = %d, %q; want %d, %q", c.days, c.siem, days, reason, c.want, c.wantReason)
+		}
+	}
+}
+
 func TestAboutReportsVersionAndOldestAgent(t *testing.T) {
 	tokens, _ := auth.Parse("acme="+agentToken, "acme="+consoleToken)
 	h := api.New(store.NewMemory(nil), tokens, slog.New(slog.NewTextHandler(io.Discard, nil)), time.Now, api.WithVersion("0.1.0"))

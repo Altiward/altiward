@@ -269,6 +269,12 @@ func run(log *slog.Logger) error {
 	}
 	defer st.Close()
 
+	// Notes when each configured SIEM was connected, so history expiry never removes what
+	// a SIEM added to an old database was not sent. A sink already noted keeps its time.
+	if err := st.RecordSinks(ctx, cfg.SinkNames(), time.Now()); err != nil {
+		return err
+	}
+
 	// Sends the admin group from readings stored before this version. It does nothing once
 	// it has finished, and a failure is tried again at the next start.
 	go func() {

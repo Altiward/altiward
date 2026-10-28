@@ -36,6 +36,60 @@ func suite(t *testing.T, newStore func(t *testing.T, sink string) Store) {
 			testfixture.Event(t, "admin-out-of-band"), testfixture.Event(t, "agent-health")
 	}
 
+	t.Run("coverage", func(t *testing.T) {
+		s, _, _ := setup(t)
+		first, second := "sink-a-"+randomHex(t), "sink-b-"+randomHex(t)
+		t1 := now
+		t2 := now.Add(time.Hour)
+		if got, err := s.SinkCoverage(ctx, []string{first, second}); err != nil || got != nil {
+			t.Fatalf("coverage before anything is recorded = %v, %v", got, err)
+		}
+		if got, err := s.SinkCoverage(ctx, nil); err != nil || got != nil {
+			t.Fatalf("coverage of no sinks = %v, %v", got, err)
+		}
+		if err := s.RecordSinks(ctx, []string{first}, t1); err != nil {
+			t.Fatal(err)
+		}
+		// A second start keeps the first time, and a new sink gets its own.
+		if err := s.RecordSinks(ctx, []string{first, second}, t2); err != nil {
+			t.Fatal(err)
+		}
+		coverage := func(sinks ...string) time.Time {
+			t.Helper()
+			got, err := s.SinkCoverage(ctx, sinks)
+			if err != nil || got == nil {
+				t.Fatalf("coverage of %v = %v, %v", sinks, got, err)
+			}
+			return *got
+		}
+		if got := coverage(first); !got.Equal(t1) {
+			t.Fatalf("coverage after a second RecordSinks = %v, want %v", got, t1)
+		}
+		if got := coverage(first, second); !got.Equal(t2) {
+			t.Fatalf("coverage of two sinks = %v, want the later %v", got, t2)
+		}
+		// Replaying from earlier moves the sink's coverage back; replaying from later doesn't.
+		if r, ok := s.(interface {
+			ReplayExports(ctx context.Context, sink string, since, now time.Time) (int64, error)
+		}); ok {
+			if _, err := r.ReplayExports(ctx, second, t1.Add(-24*time.Hour), t2); err != nil {
+				t.Fatal(err)
+			}
+			if got := coverage(second); !got.Equal(t1.Add(-24 * time.Hour)) {
+				t.Fatalf("coverage after replaying from earlier = %v", got)
+			}
+			if got := coverage(first, second); !got.Equal(t1) {
+				t.Fatalf("coverage of two sinks after the replay = %v, want %v", got, t1)
+			}
+			if _, err := r.ReplayExports(ctx, second, t2, t2); err != nil {
+				t.Fatal(err)
+			}
+			if got := coverage(second); !got.Equal(t1.Add(-24 * time.Hour)) {
+				t.Fatalf("replaying from later moved the coverage to %v", got)
+			}
+		}
+	})
+
 	t.Run("builds a session from grant and revoke", func(t *testing.T) {
 		s, tenant, _ := setup(t)
 		granted, revoked, _, _ := fixtures(t)

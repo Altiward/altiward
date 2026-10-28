@@ -44,6 +44,8 @@ type Memory struct {
 	staleUseReported map[string]time.Time
 
 	consoleSessions map[string]ConsoleSession // by token hash
+	// coverage is each SIEM sink's covered-from time (export_sinks in Postgres).
+	coverage map[string]time.Time
 	// installation starts when the store does: a memory store is a new server each run.
 	installation Installation
 
@@ -78,6 +80,7 @@ func NewMemory(exportSinks []string) *Memory {
 
 		adminGroups:     map[key]admingroup.Report{},
 		consoleSessions: map[string]ConsoleSession{},
+		coverage:        map[string]time.Time{},
 		installation:    newMemoryInstallation(),
 
 		mdm: map[key]*memMDM{},

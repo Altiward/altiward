@@ -58,6 +58,7 @@ type ExportItem struct {
 type Store interface {
 	Credentials
 	Installations
+	Coverage
 	Commands
 	Audit
 	ConsoleSessions

@@ -558,21 +558,35 @@ func (p *Postgres) DropExports(ctx context.Context, sink string) (int64, error) 
 // ReplayExports queues for sink the events received, and the console actions recorded,
 // since since, oldest first, and returns how many it queued. It is for a sink added after
 // they were written, which they were never queued for. Anything already waiting for sink
-// stays as it is; anything sent before is sent again. The caller checks sink is configured.
+// stays as it is; anything sent before is sent again. It moves the sink's coverage back to
+// since when that is earlier, so history expiry may then remove what was replayed once it
+// is sent. The caller checks sink is configured.
 func (p *Postgres) ReplayExports(ctx context.Context, sink string, since, now time.Time) (int64, error) {
-	tag, err := p.pool.Exec(ctx, `
-		INSERT INTO export_outbox (tenant_id, sink, event_id, audit_id, next_attempt_at)
-		SELECT tenant_id, $1, event_id, audit_id, $3 FROM (
-			SELECT tenant_id, event_id, NULL::uuid AS audit_id, received_at AS t, 0 AS seq
-				FROM events WHERE received_at >= $2
-			UNION ALL
-			SELECT tenant_id, NULL::uuid, id, at, seq FROM audit_log WHERE at >= $2
-		) owed ORDER BY t, seq
-		ON CONFLICT DO NOTHING`, sink, since, now)
+	var queued int64
+	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO export_outbox (tenant_id, sink, event_id, audit_id, next_attempt_at)
+			SELECT tenant_id, $1, event_id, audit_id, $3 FROM (
+				SELECT tenant_id, event_id, NULL::uuid AS audit_id, received_at AS t, 0 AS seq
+					FROM events WHERE received_at >= $2
+				UNION ALL
+				SELECT tenant_id, NULL::uuid, id, at, seq FROM audit_log WHERE at >= $2
+			) owed ORDER BY t, seq
+			ON CONFLICT DO NOTHING`, sink, since, now)
+		if err != nil {
+			return err
+		}
+		queued = tag.RowsAffected()
+		_, err = tx.Exec(ctx, `
+			INSERT INTO export_sinks (sink, covered_from) VALUES ($1, $2)
+			ON CONFLICT (sink) DO UPDATE SET covered_from = LEAST(export_sinks.covered_from, EXCLUDED.covered_from)`,
+			sink, since)
+		return err
+	})
 	if err != nil {
 		return 0, fmt.Errorf("replay exports: %w", err)
 	}
-	return tag.RowsAffected(), nil
+	return queued, nil
 }
 
 func collectJSON[T any](rows pgx.Rows) ([]T, error) {
