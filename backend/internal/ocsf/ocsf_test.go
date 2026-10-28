@@ -973,12 +973,12 @@ func TestAdminGroupRecordsHaveDistinctUIDs(t *testing.T) {
 	}
 }
 
-// An enrolment with another Mac's Intune device ID is High; the other outcomes keep the
+// An enrolment with another Mac's or another device's Intune device ID is High; the other outcomes keep the
 // state's severity and say what Intune said.
 func TestEnrollmentNamesTheIntuneCheck(t *testing.T) {
 	mismatch := mapJSON(t, stored(t, "agent-enrollment-pending-mdm-mismatch"))
 	if mismatch["severity"] != "High" || mismatch["is_alert"] != true ||
-		mismatch["message"] != "C02XK0AAJGH5 enrolled a new key with another Mac's Intune device ID, waiting for approval" ||
+		mismatch["message"] != "C02XK0AAJGH5 enrolled a new key with another Mac's or another device's Intune device ID, waiting for approval" ||
 		get(mismatch, "unmapped.altiward.detail.mdm_check") != "mismatch" || get(mismatch, "unmapped.altiward.detail.mdm_serial_known") != true {
 		t.Fatalf("mismatch = %v", mismatch)
 	}

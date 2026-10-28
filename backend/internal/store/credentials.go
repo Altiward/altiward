@@ -81,9 +81,10 @@ const (
 	MDMInvalidID MDMCheck = "invalid_id"
 	// MDMMatch: Intune has the device, with the serial the Mac enrolled with.
 	MDMMatch MDMCheck = "match"
-	// MDMMismatch: Intune has the device under another serial. The ID is another Mac's.
+	// MDMMismatch: Intune has the device under another serial, or on another platform. The
+	// ID is another Mac's or another device's.
 	MDMMismatch MDMCheck = "mismatch"
-	// MDMUnknownID: Intune has no device with the ID, or one without a serial.
+	// MDMUnknownID: Intune has no device with the ID, or one without a serial or platform.
 	MDMUnknownID MDMCheck = "unknown_id"
 	// MDMUnavailable: Intune couldn't be asked in time.
 	MDMUnavailable MDMCheck = "unavailable"
@@ -176,7 +177,8 @@ func (l EnrollLimits) refusesKey(n int) bool {
 //   - whatever the tenant chose, when the Mac has an active key and the new one claims other
 //     hardware: it may be a different Mac under the same serial;
 //   - whatever the tenant chose, when Intune has the device ID the Mac sent under another
-//     serial (check is MDMMismatch): the ID is another Mac's;
+//     serial or on another platform (check is MDMMismatch): the ID is another Mac's or
+//     another device's;
 //   - when the tenant requires an Intune match, for every check but a match, or no check at
 //     all (Intune not connected);
 //   - otherwise, when the tenant requires approval for a Mac that enrolled before, or for a

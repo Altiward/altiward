@@ -99,8 +99,8 @@ so a rule can close that finding.
   `act=Close` with the same `cs5` means it was fixed.
 - **Keys enrolled:** signature `agent.enrollment`, named `API Activity: Create`. Severity 1
   is a Mac's first key, 5 a new key waiting for approval and 8 a key that replaced the
-  previous one without approval, or one enrolled with another Mac's Intune device ID
-  (`msg` says "with another Mac's Intune device ID"). Alert on 5 and 8. `dvchost` is the
+  previous one without approval, or one enrolled with another Mac's or another device's
+  Intune device ID (`msg` says "with another Mac's or another device's Intune device ID"). Alert on 5 and 8. `dvchost` is the
   serial, `deviceExternalId` the hardware UUID the Mac claimed, and `msg` says which it was,
   and with Intune connected adds what Intune said in brackets, such as "(Intune doesn't
   know the device ID)".

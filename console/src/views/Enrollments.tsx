@@ -52,7 +52,7 @@ function KeyKeptIn({ storage }: { storage: KeyStorage }) {
  *  can send a real Mac's. */
 const intuneCheckLook: Record<MDMCheck, [string, "plain" | "denied" | "attention"]> = {
   match: ["Matches Intune", "plain"],
-  mismatch: ["Intune has this device ID for another Mac", "denied"],
+  mismatch: ["Intune has this device ID for another Mac or device", "denied"],
   unknown_id: ["Intune doesn't know this device ID", "attention"],
   unavailable: ["Intune couldn't be reached; check it before approving", "attention"],
   invalid_id: ["The profile's MDMDeviceID isn't an Intune device ID", "attention"],
@@ -70,9 +70,12 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
   const { data, error, reload } = useLoad(() => api.enrollments(), [], 30_000);
   const mdm = useMDM();
   // Only a key in use or waiting: a revoked or replaced one says nothing about the Mac now. A key
-  // that matched Intune was checked live, and the copy can be 15 minutes older than that.
+  // that matched Intune live after the last sync is newer than the copy, so the copy can't say
+  // yet; after the next sync it decides again.
+  const newerMatch = (e: Enrollment) => e.mdm_check === "match" && !!mdm.status?.last_success_at
+    && new Date(e.created_at) > new Date(mdm.status.last_success_at);
   const notInIntune = (e: Enrollment) => hasSynced(mdm.status) && (e.status === "active" || e.status === "pending")
-    && e.mdm_check !== "match" && !mdm.bySerial.has(normaliseSerial(e.serial));
+    && !newerMatch(e) && !mdm.bySerial.has(normaliseSerial(e.serial));
   const [evidenceVersion, setEvidenceVersion] = useState(0);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
@@ -273,8 +276,8 @@ function EnrollmentInspector({ enrollment: e, notInIntune, active, retiresMac, p
       )}
       {otherMacsID && (
         <p className="secondary" style={{ marginTop: 12 }}>
-          The device ID this Mac sent is another Mac’s in Intune, or the profile reached the wrong Mac. Find out why
-          before you approve it.
+          The device ID this Mac sent is another Mac’s or another device’s in Intune, or the profile reached the
+          wrong Mac. Find out why before you approve it.
         </p>
       )}
       {e.status === "pending" && replacesEnclaveKey && e.key_storage !== "secure_enclave" && (

@@ -402,12 +402,12 @@ func enrollment(e store.StoredEvent, tenantID string) Record {
 		severity, alert = SeverityHigh, true
 		msg = fmt.Sprintf("%s enrolled again; the new key replaced the previous one without approval", e.Device.Serial)
 	}
-	// What Intune said about the device ID the Mac sent. Another Mac's ID is High, whatever
-	// the state; the other outcomes keep the state's severity and say why.
+	// What Intune said about the device ID the Mac sent. Another Mac's or another device's
+	// ID is High, whatever the state; the other outcomes keep the state's severity and say why.
 	switch check := detailString(e.Detail, "mdm_check"); {
 	case check == "mismatch":
 		severity, alert = SeverityHigh, true
-		msg = fmt.Sprintf("%s enrolled a new key with another Mac's Intune device ID", e.Device.Serial)
+		msg = fmt.Sprintf("%s enrolled a new key with another Mac's or another device's Intune device ID", e.Device.Serial)
 		if state == event.EnrollmentStatePending {
 			msg += ", waiting for approval"
 		}

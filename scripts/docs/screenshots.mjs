@@ -133,7 +133,7 @@ try {
     await shot("enrollments", "replaces it every 30 days");
     // A reinstalled Mac waiting for approval, whose profile sent another Mac's Intune device ID.
     await select("Enrollments", /C02XK0AAJGH5.*Waiting for approval/);
-    await shot("enrollment-intune-mismatch", "Intune has this device ID for another Mac", ".inspector");
+    await shot("enrollment-intune-mismatch", "Intune has this device ID for another Mac or device", ".inspector");
     await open("/settings/mdm");
     await shot("settings-mdm", "Require an Intune match", ".form");
     // Macs Intune manages that no agent has reached: the panel is closed until opened.

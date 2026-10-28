@@ -680,7 +680,7 @@ describe("Enrollments and Intune", () => {
 
   it.each<[MDMCheck, string]>([
     ["match", "Matches Intune"],
-    ["mismatch", "Intune has this device ID for another Mac"],
+    ["mismatch", "Intune has this device ID for another Mac or device"],
     ["unknown_id", "Intune doesn't know this device ID"],
     ["unavailable", "Intune couldn't be reached; check it before approving"],
     ["invalid_id", "The profile's MDMDeviceID isn't an Intune device ID"],
@@ -703,15 +703,27 @@ describe("Enrollments and Intune", () => {
     expect(within(screen.getByRole("complementary", { name: "Enrollment details" })).getByText("Not in Intune")).toBeInTheDocument();
   });
 
-  it("doesn't tag a Mac Not in Intune when its key matched Intune: the copy can be 15 minutes old", async () => {
+  it("doesn't tag a Mac Not in Intune while its key that matched Intune is newer than the last sync", async () => {
+    // The sync was at 11:45; the key matched Intune live at 11:50, so the copy can't know the Mac yet.
     const api = fakeApi({
-      enrollments: vi.fn(async () => [enrollment({ serial: "NEW-IN-INTUNE", mdm_check: "match" })]), ...connected(),
+      enrollments: vi.fn(async () => [enrollment({ serial: "NEW-IN-INTUNE", mdm_check: "match", created_at: "2026-10-18T11:50:00Z" })]),
+      ...connected(),
     });
     renderView(api, <EnrollmentsView />);
     await screen.findByText("NEW-IN-INTUNE");
     await waitFor(() => expect(api.mdmDevices).toHaveBeenCalled());
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByText("Not in Intune")).toBeNull();
+  });
+
+  it("lets the copy decide again for a key that matched Intune before the last sync", async () => {
+    const api = fakeApi({
+      enrollments: vi.fn(async () => [enrollment({ serial: "LEFT-INTUNE", mdm_check: "match", created_at: "2026-10-18T11:40:00Z" })]),
+      ...connected(),
+    });
+    renderView(api, <EnrollmentsView />);
+    const row = (await screen.findByText("LEFT-INTUNE")).closest("tr")!;
+    await waitFor(() => expect(within(row).getByText("Not in Intune")).toBeInTheDocument());
   });
 
   it("shows a match plainly and says it isn't proof", async () => {
@@ -742,7 +754,7 @@ describe("Enrollments and Intune", () => {
       expect(inspector).toHaveTextContent("This Mac enrolled again with a new key.");
       expect(inspector).not.toHaveTextContent("reinstall");
       expect(within(inspector).getByText(
-        "The device ID this Mac sent is another Mac’s in Intune, or the profile reached the wrong Mac. Find out why before you approve it.",
+        "The device ID this Mac sent is another Mac’s or another device’s in Intune, or the profile reached the wrong Mac. Find out why before you approve it.",
       )).toBeInTheDocument();
     });
 

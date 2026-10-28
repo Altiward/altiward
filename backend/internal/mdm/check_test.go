@@ -215,12 +215,17 @@ func TestCheckEmptyIntuneSerialIsUnknown(t *testing.T) {
 }
 
 // TestCheckMatchIsAMac: a Mac can't honestly send the ID of a device on another platform, so
-// a record that isn't a Mac's is a mismatch, even with the Mac's serial.
+// a record that names another platform is a mismatch, even with the Mac's serial. One that
+// names none is a gap in Intune's data, as a missing serial is: unknown.
 func TestCheckMatchIsAMac(t *testing.T) {
 	env := newCheck(t)
-	for _, os := range []string{"Windows", "iOS", ""} {
+	for _, os := range []string{"Windows", "iOS"} {
 		env.src.devices[intuneID] = intune.Device{ID: intuneID, Serial: macSerial, OperatingSystem: os}
 		env.want(t, intuneID, macSerial, store.MDMMismatch)
+	}
+	for _, os := range []string{"", "  "} {
+		env.src.devices[intuneID] = intune.Device{ID: intuneID, Serial: macSerial, OperatingSystem: os}
+		env.want(t, intuneID, macSerial, store.MDMUnknownID)
 	}
 	// Even one without a serial.
 	env.src.devices[intuneID] = intune.Device{ID: intuneID, Serial: "", OperatingSystem: "Windows"}
@@ -493,7 +498,8 @@ func TestSerialKnown(t *testing.T) {
 	is(t, env.c.SerialKnown(ctx, "acme", "C02NOTKNOWN1"), nil)
 }
 
-// SerialKnown counts only Macs: another platform's device with the serial isn't the Mac.
+// SerialKnown counts only Macs: another platform's device with the serial isn't the Mac. A
+// device whose platform Intune doesn't name can't say either way.
 func TestSerialKnownCountsOnlyMacs(t *testing.T) {
 	ctx := context.Background()
 	env := newCheck(t)
@@ -505,12 +511,25 @@ func TestSerialKnownCountsOnlyMacs(t *testing.T) {
 		"C02WINDOWS01": {{ID: intuneID, Serial: "C02WINDOWS01", OperatingSystem: "Windows"}},
 		"C02BOTH00001": {{ID: intuneID, Serial: "C02BOTH00001", OperatingSystem: "Windows"},
 			{ID: entraID, Serial: "C02BOTH00001", OperatingSystem: "macOS"}},
+		"C02NOOS00001": {{ID: intuneID, Serial: "C02NOOS00001", OperatingSystem: " "}},
+		"C02NOOSMAC01": {{ID: intuneID, Serial: "C02NOOSMAC01"},
+			{ID: entraID, Serial: "C02NOOSMAC01", OperatingSystem: "macOS"}},
+		"C02NOOSWIN01": {{ID: intuneID, Serial: "C02NOOSWIN01"},
+			{ID: entraID, Serial: "C02NOOSWIN01", OperatingSystem: "Windows"}},
 	}
 	if got := env.c.SerialKnown(ctx, "acme", "C02WINDOWS01"); got == nil || *got {
 		t.Fatalf("a Windows device's serial = %v, want false", show(got))
 	}
 	if got := env.c.SerialKnown(ctx, "acme", "C02BOTH00001"); got == nil || !*got {
 		t.Fatalf("a serial a Mac has too = %v, want true", show(got))
+	}
+	if got := env.c.SerialKnown(ctx, "acme", "C02NOOSMAC01"); got == nil || !*got {
+		t.Fatalf("a Mac beside a device with no platform = %v, want true", show(got))
+	}
+	for _, serial := range []string{"C02NOOS00001", "C02NOOSWIN01"} {
+		if got := env.c.SerialKnown(ctx, "acme", serial); got != nil {
+			t.Fatalf("%s, with a device of no named platform = %v, want nil", serial, show(got))
+		}
 	}
 }
 

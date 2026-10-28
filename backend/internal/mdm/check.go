@@ -60,9 +60,10 @@ type lookup struct {
 //
 // It gives MDMNotChecked for a tenant Intune isn't connected for, MDMNotSent for an empty
 // ID, and MDMInvalidID for one that isn't a GUID. Otherwise it looks the device up, live:
-// MDMMismatch when the device isn't a Mac (a Mac can't honestly send another platform's
-// ID), MDMUnknownID when Intune has no such device or one without a serial, MDMMismatch
-// when its serial isn't exactly the Mac's, and MDMMatch when it is. An ID Intune doesn't have is
+// MDMMismatch when the device is on another platform (a Mac can't honestly send another
+// platform's ID), MDMUnknownID when Intune has no such device, or one without a serial or
+// a platform (gaps in Intune's data, not something a Mac causes), MDMMismatch when its
+// serial isn't exactly the Mac's, and MDMMatch when it is. An ID Intune doesn't have is
 // MDMInvalidID instead when it is the Entra device ID of a Mac in the copy. Only then is the
 // copy read, so that read sits under the same bounds as the lookup, and for notFoundFor
 // both the outcome is answered from memory, without a lookup or a read.
@@ -127,6 +128,8 @@ func (c *Checker) Check(ctx context.Context, tenantID, deviceID, serial, hardwar
 	}
 	intuneSerial := strings.TrimSpace(d.Serial)
 	switch {
+	case platform(d) == "":
+		return store.MDMUnknownID
 	case !isMac(d):
 		return store.MDMMismatch
 	case intuneSerial == "":
@@ -142,7 +145,7 @@ func (c *Checker) Check(ctx context.Context, tenantID, deviceID, serial, hardwar
 // known: Intune isn't connected for the tenant, the copy has never been synced, or the
 // serial isn't in the copy and can't be looked up. With SerialFilter, a serial not in the
 // copy, which is up to 15 minutes old, is looked up live, within the same bounds as Check;
-// only a Mac counts. A serial Graph wouldn't take (intune.ValidSerial) isn't looked up, and
+// only a Mac counts, and a device whose platform Intune doesn't name leaves it unknown. A serial Graph wouldn't take (intune.ValidSerial) isn't looked up, and
 // costs none of the minute's lookups.
 func (c *Checker) SerialKnown(ctx context.Context, tenantID, serial string) *bool {
 	if c == nil || tenantID != c.TenantID || c.Store == nil {
@@ -178,14 +181,20 @@ func (c *Checker) SerialKnown(ctx context.Context, tenantID, serial string) *boo
 		}
 		return nil
 	}
+	// A device whose platform Intune doesn't name could be the Mac: without one that is a
+	// Mac, that leaves it unknown.
 	known = slices.ContainsFunc(devices, isMac)
+	if !known && slices.ContainsFunc(devices, func(d intune.Device) bool { return platform(d) == "" }) {
+		return nil
+	}
 	return &known
 }
 
+// platform is Intune's name for the device's operating system, empty when it gives none.
+func platform(d intune.Device) string { return strings.TrimSpace(d.OperatingSystem) }
+
 // isMac reports whether Intune's record is a Mac's.
-func isMac(d intune.Device) bool {
-	return strings.EqualFold(strings.TrimSpace(d.OperatingSystem), "macOS")
-}
+func isMac(d intune.Device) bool { return strings.EqualFold(platform(d), "macOS") }
 
 // live runs fn in a goroutine, so that a source that ignores its context (a token source
 // that blocks) can't hold the caller, and waits for it for LookupTimeout at most. A lookup

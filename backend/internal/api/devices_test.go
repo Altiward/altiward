@@ -1155,7 +1155,7 @@ func TestEnrollWithAMismatchWaits(t *testing.T) {
 		t.Fatalf("event detail = %v", e.Detail)
 	}
 	r := ocsf.Map(store.StoredEvent{Event: e}, "acme")[0]
-	if r["severity"] != "High" || r["is_alert"] != true || !strings.Contains(r["message"].(string), "with another Mac's Intune device ID") {
+	if r["severity"] != "High" || r["is_alert"] != true || !strings.Contains(r["message"].(string), "with another Mac's or another device's Intune device ID") {
 		t.Fatalf("OCSF severity %v, alert %v, message %q", r["severity"], r["is_alert"], r["message"])
 	}
 	// Approving it is still the admin's call.

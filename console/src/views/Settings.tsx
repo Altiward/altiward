@@ -475,7 +475,7 @@ function SinkRow({ sink, canAct, busy, onRetry }: {
 const unmatchedWords: Record<Exclude<MDMCheck, "match">, string> = {
   not_sent: "sent no Intune device ID",
   invalid_id: "sent an invalid device ID",
-  mismatch: "sent another Mac's device ID",
+  mismatch: "sent another Mac's or another device's ID",
   unknown_id: "sent a device ID Intune doesn't know",
   unavailable: "enrolled while Intune couldn't be reached",
 };
@@ -594,7 +594,7 @@ function MdmSettings() {
                 <p className="hint">
                   Off by default. A new key waits for approval in Enrollments unless the device ID the Mac sent matched
                   Intune: a Mac that sent none, an invalid or unknown ID, or that Intune couldn't be asked about waits too.
-                  A key sent with another Mac's device ID waits whatever this says. Keys already in use keep working.
+                  A key sent with the device ID of another Mac or device waits whatever this says. Keys already in use keep working.
                 </p>
               </span>
               <input type="checkbox" role="switch" disabled={!settings.data || saving || !canChange}

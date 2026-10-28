@@ -670,7 +670,7 @@ describe("Settings MDM", () => {
     expect(screen.getByText("212")).toBeInTheDocument();
     expect(screen.getByText(dateTime("2026-10-18T11:45:00Z"))).toBeInTheDocument();
     expect(screen.getByText("Of the 43 active Macs checked since Intune was connected, 40 matched Intune.")).toBeInTheDocument();
-    expect(screen.getByText(/1 sent another Mac's device ID/)).toBeInTheDocument();
+    expect(screen.getByText(/1 sent another Mac's or another device's ID/)).toBeInTheDocument();
     expect(screen.getByText(/2 sent no Intune device ID/)).toBeInTheDocument();
     expect(screen.queryByText("Not connected")).toBeNull();
   });
