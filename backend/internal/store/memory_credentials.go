@@ -28,7 +28,8 @@ func (m *Memory) Enroll(_ context.Context, c DeviceCredential, limits EnrollLimi
 	if hasActive {
 		res.Previous = ptr(active)
 	}
-	if holdsForApproval(m.tenantSettings(c.TenantID), m.enrolledBefore(c.TenantID, c.Serial),
+	_, retired := m.retired[key{c.TenantID, c.Serial}]
+	if retired || holdsForApproval(m.tenantSettings(c.TenantID), m.enrolledBefore(c.TenantID, c.Serial),
 		res.Previous, c.HardwareUUID) {
 		c.Status = CredentialPending
 	} else {
@@ -40,7 +41,9 @@ func (m *Memory) Enroll(_ context.Context, c DeviceCredential, limits EnrollLimi
 		}
 	}
 	m.creds[c.DeviceID] = c
-	delete(m.retired, key{c.TenantID, c.Serial})
+	if c.Status == CredentialActive {
+		delete(m.retired, key{c.TenantID, c.Serial})
+	}
 	res.Credential = c
 	return res, nil
 }

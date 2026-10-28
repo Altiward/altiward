@@ -115,9 +115,10 @@ next.
 The server also raises an `agent.enrollment` event of its own each time a key enrols, a
 Mac replaces its key by rotation, or a key that rotation replaced is used again. Its state
 is `enrolled` for a Mac's first key, or its first after earlier ones were revoked with
-approval off, `pending` for a new key waiting for an admin's approval, `replaced` for a
-new key that took the place of the active one without approval, `rotated` for a new key
-that replaced the Mac's own by rotation, and `rotated_key_used` when a key that rotation
+approval off if the Mac is not retired, `pending` for a new key waiting for an admin's
+approval (always required for a retired Mac), `replaced` for a new key that took the place
+of the active one without approval, `rotated` for a new key that replaced the Mac's own
+by rotation, and `rotated_key_used` when a key that rotation
 replaced signs a request again. It carries the Mac's serial, hardware UUID and agent
 version (from the agent's `User-Agent`), the new key's device ID, its SHA-256 fingerprint
 and where the Mac says it is kept, and the enrolment token's name (`token:` and a short
@@ -328,8 +329,10 @@ security records ([Backups](install.md#backups)).
   **Approve Macs that enrol again** is on by default: a new key for a serial that enrolled
   before waits for approval, even after its earlier key was revoked. An earlier active key
   stays valid until approval. A new key whose hardware UUID differs from the earlier active
-  key's waits for approval whatever the setting. With approval off, anyone with the shared
-  token can replace an enrolled Mac's identity by naming its serial and hardware UUID,
+  key's waits for approval whatever the setting. A retired Mac's new key always waits too:
+  pending enrolment and rejection leave it retired, and approval restores it. A stale-key
+  contest that raises a `rotated_key_used` alert also restores it. With approval off, anyone
+  with the shared token can replace an enrolled Mac's identity by naming its serial and hardware UUID,
   even when the earlier key is protected by the Secure Enclave. The hardware UUID is the
   agent's own claim, not a secret, so that rule catches a key made on another Mac, not
   someone who names the UUID. The shared token cannot verify ownership of a serial

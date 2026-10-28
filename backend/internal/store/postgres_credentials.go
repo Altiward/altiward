@@ -145,7 +145,7 @@ func enforceEnrollLimits(ctx context.Context, tx pgx.Tx, c DeviceCredential, enr
 	return nil
 }
 
-// clearRetired takes the Mac back into Fleet: any new key for it, pending or active, does.
+// clearRetired takes the Mac back into Fleet when a key activates.
 func clearRetired(ctx context.Context, tx pgx.Tx, tenantID, serial string) error {
 	_, err := tx.Exec(ctx, `UPDATE devices SET retired_at = NULL WHERE tenant_id = $1 AND serial = $2 AND retired_at IS NOT NULL`,
 		tenantID, serial)
@@ -194,7 +194,13 @@ func (p *Postgres) Enroll(ctx context.Context, c DeviceCredential, limits Enroll
 		if err != nil {
 			return err
 		}
-		if holdsForApproval(settings, enrolledBefore, res.Previous, c.HardwareUUID) {
+		// Retirement always needs an explicit approval, under the same serial lock.
+		var retired bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM devices WHERE tenant_id = $1 AND serial = $2 AND retired_at IS NOT NULL)`,
+			c.TenantID, c.Serial).Scan(&retired); err != nil {
+			return err
+		}
+		if retired || holdsForApproval(settings, enrolledBefore, res.Previous, c.HardwareUUID) {
 			c.Status = CredentialPending
 		} else {
 			c.Status, c.ActivatedAt = CredentialActive, ptr(c.CreatedAt)
@@ -219,7 +225,10 @@ func (p *Postgres) Enroll(ctx context.Context, c DeviceCredential, limits Enroll
 			return fmt.Errorf("insert credential: %w", err)
 		}
 		res.Credential = c
-		return clearRetired(ctx, tx, c.TenantID, c.Serial)
+		if c.Status == CredentialActive {
+			return clearRetired(ctx, tx, c.TenantID, c.Serial)
+		}
+		return nil
 	})
 	return res, err
 }

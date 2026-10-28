@@ -301,7 +301,8 @@ Mac needs a new key because its old one was revoked. (The agent also replaces it
 from time to time without the token or an approval: see [Key rotation](#key-rotation).)
 The token is readable on every Mac, so anyone with it can enrol a key for a serial number. By default,
 a new key for a serial that enrolled before waits for approval, including after its earlier
-key was revoked. The current key keeps reporting until you approve the replacement.
+key was revoked. A retired Mac always needs approval for a new key, whatever this setting.
+An existing active key keeps reporting until you approve the replacement.
 **Approve Macs that enrol again** should stay on ([step 6](#6-settings-worth-reviewing)).
 Turning it off lets anyone with the token replace an enrolled Mac's identity by naming
 its serial and hardware UUID. Neither is a secret, and Secure Enclave key protection does
@@ -319,11 +320,12 @@ waits in **Enrollments**. The event names the Mac, the new key's fingerprint and
 the Mac enrolled with, and its `state` says what happened:
 
 - `enrolled`: the Mac's first key, or its first after earlier ones were revoked with
-  approval off. Check these against your device inventory.
+  approval off if the Mac is not retired. Check these against your device inventory.
 - `pending`: a Mac that already had a key enrolled another, and the new one waits in
   **Enrollments** for your approval. An active earlier key keeps reporting meanwhile.
   Expect it after a reinstall or a replaced logic board. A new key from different hardware
-  than the active one always waits, even with approval off
+  than the active one always waits, even with approval off. Any new key for a retired Mac
+  also waits, whatever the setting
   ([step 6](#6-settings-worth-reviewing)).
 - `replaced`: a new key took the place of the active one without approval. It happens
   only with approval off and the same hardware UUID.
@@ -599,7 +601,8 @@ In the console, under **Settings › General**:
   explicit `false` disables it.
 
   Whatever you choose, a new key whose hardware UUID differs from the Mac's active key waits
-  for approval. The hardware UUID is what the agent says about itself, so this catches a key
+  for approval. A new key for a retired Mac also waits for approval, whatever the setting.
+  The hardware UUID is what the agent says about itself, so this catches a key
   made on another Mac, not someone who sets it by hand. **Enrollments** warns when a key
   waiting for approval reports a different hardware UUID, and shows when the Mac last
   checked in with its current key.
@@ -635,7 +638,8 @@ Two more settings go in `.env`; `0` turns one off:
   24 hours, in any status. It stops the enrolment token piling keys onto one serial.
 
 A Mac over a limit is refused with HTTP 429 and `Retry-After: 3600`. The agent waits that
-hour before asking again (an agent that restarts asks once more straight away). A Mac
+hour before asking again. Changing the limit on the server does not reset this in-memory
+wait; restarting the agent makes it ask once more straight away. A Mac
 sending a key that is already enrolled is never refused. The server logs
 `enrolment rate limited` with the tenant, the serial and which limit. To keep a flood of
 refusals out of the log, it logs one per tenant and limit in each window (an hour, or a
@@ -657,13 +661,16 @@ To retire a Mac, revoke its enrollment in **Enrollments**. Revoking a Mac's only
 with no key waiting for approval, retires it. It then stops being able to report and never
 raises a "not checking in" alert. It leaves **Fleet**, which shows Macs in use: choose
 **Retired** in the **Show** control to see it, with when it was retired and when its history is
-removed. It no longer counts in the Overview's Mac figures. The revoke asks you to confirm and
-says so, and warns if someone still has admin rights on the Mac or it is failing an integrity
-check. Anyone with an open session on a retired Mac stays in **Admins now**, tagged
-**Mac retired**, because nothing reaches the Mac to end it. Rejecting a key waiting for
+removed. It no longer counts in the Overview's Mac figures. Revoking the key leaves admin
+rights in place. To end them, go to **Admins now > Revoke** before revoking the key. The revoke
+asks you to confirm and says so, and warns if someone still has admin rights on the Mac or it
+is failing an integrity check. Anyone with an open session on a retired Mac stays in
+**Admins now**, tagged **Mac retired**, because nothing reaches the Mac to end it. Rejecting a key waiting for
 approval doesn't retire a Mac, nor does the revoke Altiward makes itself when a replaced key is
-used again. A new key for a retired Mac, such as when it enrols again, brings it back to Fleet,
-and so does an alert that one of its replaced keys was used again: someone still holds it.
+used again. A new key for a retired Mac always waits for approval, even with **Approve Macs
+that enrol again** off. Pending enrolment, retries and rejection leave it retired. Approving
+a key activates it and brings the Mac back to Fleet. An alert that one of its replaced keys
+was used again also brings it back: someone still holds it.
 Revoking is also how you re-key a Mac that is still in use. A key that rotation replaced shows as
 **Rotated**, not **Revoked**, and offers no actions: revoke the Mac's key in use, which
 its inspector links to. A key in a file shows a note that the agent moves it into the
@@ -1484,8 +1491,9 @@ persistence snapshot: (none yet)
   reach the server. If the server's logs show `enrolment rate limited` for its serial, it
   is over an [enrolment limit](#6-settings-worth-reviewing) and the agent tries again later.
 - A device ID but **queued events** that never go down: the Mac enrolled but can't deliver.
-  If **Approve Macs that enrol again** is on, or the Mac's key came from different hardware
-  than its earlier one, look in **Enrollments** for a Mac waiting for approval.
+  If **Approve Macs that enrol again** is on, the Mac is retired, or the Mac's key came
+  from different hardware than its earlier one, look in **Enrollments** for a Mac waiting
+  for approval.
 - `device key: Secure Enclave` after the device ID: only the agent's daemon can use that
   key, so `altiward-agent flush`, `heartbeat` and `commands` run by hand say the daemon
   sends instead. It does, within a minute.

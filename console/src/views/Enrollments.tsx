@@ -272,8 +272,8 @@ function RevokeSheet({ enrollment: e, active, retiresMac, busy, onConfirm, onCan
   onConfirm: () => void; onCancel: () => void;
 }) {
   const api = useApi();
-  // Asked only when the revoke retires the Mac; a failed ask leaves the warnings out. Revoke
-  // waits until both have answered or failed, so nobody confirms before reading them.
+  // Ask for extra evidence only when the revoke retires the Mac. The admin rights warning
+  // is unconditional. Revoke waits until both requests have answered or failed.
   const sessions = useLoad(async () => (retiresMac ? api.sessions({ open: true, device: e.serial }) : []), [e.serial, retiresMac]);
   const devices = useLoad(async () => (retiresMac ? api.devices() : []), [e.serial, retiresMac]);
   const warningsLoading = sessions.loading || devices.loading;
@@ -281,11 +281,13 @@ function RevokeSheet({ enrollment: e, active, retiresMac, busy, onConfirm, onCan
   const message = pending
     ? active
       ? "The Mac keeps reporting with its previous key."
-      : "This Mac has no active key, so it can’t report until it enrols again with a new key."
+      : "This Mac has no active key. A new key may need approval before it can report. A retired Mac stays retired until a key is approved."
     : [
-      "The Mac can’t report with this key. Unless re-enrolment needs approval, it enrols again on its next check-in.",
+      "The Mac can’t report with this key.",
+      "Revoking a key leaves admin rights in place. To end them, go to Admins now > Revoke before revoking this key.",
       ...(retiresMac ? [
         "This retires the Mac: it leaves Fleet and the Overview.",
+        "Any new key for this retired Mac waits for approval.",
         (sessions.data ?? []).length > 0 && "Someone still has admin rights on this Mac.",
         (devices.data ?? []).some((d) => d.serial === e.serial && hasFailingCheck(d)) && "It is failing an integrity check.",
       ] : []),

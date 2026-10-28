@@ -73,7 +73,7 @@ describe("Enrollments", () => {
     await userEvent.click(await screen.findByText("C02XK0AAJGH5"));
     await userEvent.click(within(screen.getByRole("complementary", { name: "Enrollment details" })).getByRole("button", { name: "Reject…" }));
     const dialog = screen.getByRole("dialog");
-    expect(dialog).toHaveTextContent("This Mac has no active key, so it can’t report until it enrols again with a new key.");
+    expect(dialog).toHaveTextContent("This Mac has no active key. A new key may need approval before it can report. A retired Mac stays retired until a key is approved.");
     expect(dialog).not.toHaveTextContent("previous key");
   });
 });
@@ -475,6 +475,7 @@ describe("Enrollments, rotated keys", () => {
 describe("Revoking a Mac's only key", () => {
   const active = enrollment({ device_id: "d-only", serial: "ONLY-MAC" });
   const retires = "This retires the Mac: it leaves Fleet and the Overview.";
+  const rightsWarning = "Revoking a key leaves admin rights in place. To end them, go to Admins now > Revoke before revoking this key.";
   const openSheet = async (serial: string, button = "Revoke…") => {
     await userEvent.click(await screen.findByText(serial));
     await userEvent.click(within(screen.getByRole("complementary", { name: "Enrollment details" })).getByRole("button", { name: button }));
@@ -485,6 +486,8 @@ describe("Revoking a Mac's only key", () => {
     renderView(fakeApi({ enrollments: vi.fn(async () => [active]) }), <EnrollmentsView />);
     const sheet = await openSheet("ONLY-MAC");
     expect(await within(sheet).findByText(new RegExp(retires))).toBeInTheDocument();
+    expect(sheet).toHaveTextContent(rightsWarning);
+    expect(sheet).toHaveTextContent("Any new key for this retired Mac waits for approval.");
     expect(sheet).not.toHaveTextContent("Someone still has admin rights");
     expect(sheet).not.toHaveTextContent("failing an integrity check");
   });
@@ -521,6 +524,18 @@ describe("Revoking a Mac's only key", () => {
     fail(new Error("unavailable"));
     await waitFor(() => expect(revoke).toBeEnabled());
     expect(sheet).not.toHaveTextContent("failing an integrity check");
+    expect(sheet).toHaveTextContent(rightsWarning);
+  });
+
+  it("keeps the admin rights warning when evidence requests fail", async () => {
+    renderView(fakeApi({
+      enrollments: vi.fn(async () => [active]),
+      sessions: vi.fn(async () => { throw new Error("unavailable"); }),
+      devices: vi.fn(async () => { throw new Error("unavailable"); }),
+    }), <EnrollmentsView />);
+    const sheet = await openSheet("ONLY-MAC");
+    await waitFor(() => expect(within(sheet).getByRole("button", { name: "Revoke" })).toBeEnabled());
+    expect(sheet).toHaveTextContent(rightsWarning);
   });
 
   it("doesn't say so when the Mac has another key waiting for approval", async () => {
@@ -546,6 +561,7 @@ describe("Revoking a Mac's only key", () => {
     renderView(fakeApi({ enrollments: vi.fn(async () => [{ ...pending, serial: "NEW-MAC" }]) }), <EnrollmentsView />);
     const sheet = await openSheet("NEW-MAC", "Reject…");
     expect(sheet).not.toHaveTextContent("retires");
+    expect(sheet).toHaveTextContent("This Mac has no active key. A new key may need approval before it can report. A retired Mac stays retired until a key is approved.");
   });
 });
 
