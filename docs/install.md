@@ -273,6 +273,25 @@ In any MDM, the SAP Privileges keys go into the profile that already configures
 Privileges. The ready-made `.mobileconfig` files keep their identifiers, so an edited copy
 replaces the earlier profile on a Mac rather than installing beside it.
 
+**Scope Privileges to the same groups as Altiward.** Assign the Privileges app and its
+profiles to exactly the groups you assign Altiward's profiles and package to, and to none
+wider. A Mac with Privileges but no Altiward lets people become admins with nothing
+recorded. In Intune, assign the Privileges app, its profile and its system extension
+profile to the same group as the three Altiward profiles and the package:
+`Push-AltiwardProfiles.ps1` assigns only the profiles, so add the apps to that group
+yourself. In Jamf Pro, give the Privileges policy and profiles the same scope, or the same
+smart group, as Altiward's.
+
+Altiward records who becomes an admin. It doesn't stop anyone. Revoking someone in
+**Admins now** ends the rights they have, but Privileges lets them ask again a minute later,
+and Altiward records that too. To stop a person or a Mac elevating, change Privileges'
+profile in your MDM: SAP's
+[Privileges settings](https://github.com/SAP/macOS-enterprise-privileges/wiki/Managing-Privileges)
+can limit who may use it (`LimitToUser`, `LimitToGroup`), or keep everyone a standard user
+(`EnforcePrivileges`). Leave Altiward in place on that
+Mac so you see whether the change took. Don't revoke the Mac's key for this: that stops
+Altiward hearing from the Mac and retires it, while Privileges keeps working.
+
 **You should see**, on a pilot Mac, the Altiward profiles under **System Settings ›
 General › Device Management**. The Mac then appears in the console ([step 3](#3-check-it-works)).
 
