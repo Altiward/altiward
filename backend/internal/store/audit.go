@@ -24,7 +24,15 @@ const (
 	AuditRetryExports      = "retry_exports" // retrying a sink's failed exports now
 	// An admin ending someone's console sign-in; the target is that person's actor.
 	AuditEndConsoleSession = "end_console_session"
+	// The server removing an organisation's history past the period it keeps, once per run
+	// that removed anything; the target is "history".
+	AuditExpireHistory = "expire_history"
 )
+
+// ServerActor is the actor of what the server does by itself, such as expiring history.
+// No person or token can carry it: tokens are "token:" or "break-glass:" and a fingerprint,
+// and single sign-on refuses anyone whose name starts with any of these prefixes.
+const ServerActor = "altiward:server"
 
 // AuditEntry is one console action.
 type AuditEntry struct {

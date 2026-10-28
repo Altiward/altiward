@@ -643,6 +643,245 @@ func suite(t *testing.T, newStore func(t *testing.T, sink string) Store) {
 		})
 	})
 
+	// History expiry. Both stores refuse to remove anything received in the last 90 days by
+	// the real clock, so these tests receive events in 2025.
+	old := testfixture.Time(t, "2025-01-01T12:00:00Z")
+	cutoff := testfixture.Time(t, "2025-06-01T00:00:00Z")
+	// sendAll delivers everything queued for sink, as a SIEM that has had it all.
+	sendAll := func(t *testing.T, s Store, sink string) {
+		t.Helper()
+		items, err := s.ClaimExports(ctx, sink, 1000, time.Minute, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		delivered := []int64{}
+		for _, it := range items {
+			delivered = append(delivered, it.ID)
+		}
+		if err := s.CompleteExports(ctx, delivered, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// expireAll calls ExpireHistory in small batches until it removes nothing, and adds up
+	// what it removed.
+	expireAll := func(t *testing.T, s Store, tenant string, c HistoryCutoff) ExpiryCounts {
+		t.Helper()
+		var total ExpiryCounts
+		for range 100 {
+			n, err := s.ExpireHistory(ctx, tenant, c, 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n == (ExpiryCounts{}) {
+				return total
+			}
+			total.Add(n)
+		}
+		t.Fatal("ExpireHistory kept removing")
+		return total
+	}
+	oldCommand := func(t *testing.T, s Store, tenant string, at time.Time) command.Command {
+		t.Helper()
+		c := command.Command{CommandID: newUUID(t), TenantID: tenant, Serial: "C02XK0AAJGH5", Type: command.TypeRevokeAdmin,
+			IssuedBy: "token:test", CreatedAt: at, ExpiresAt: at.Add(command.Lifetime)}
+		a := auditFor(t, tenant, AuditRevokeDevice)
+		a.At = at
+		if err := s.CreateCommand(ctx, c, a); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+
+	t.Run("tenants", func(t *testing.T) {
+		s, tenant, _ := setup(t)
+		_, _, _, health := fixtures(t)
+		if _, err := s.Ingest(ctx, tenant, []event.Event{health}, now); err != nil {
+			t.Fatal(err)
+		}
+		configured, quiet := "tenant-"+randomHex(t), "tenant-"+randomHex(t)
+		for _, tn := range []string{tenant, configured} {
+			if err := s.PutTenantSettings(ctx, tn, DefaultTenantSettings(), auditFor(t, tn, AuditChangeSettings)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Ingesting into quiet only what the server raised gives it neither a device nor settings.
+		if _, err := s.Ingest(ctx, quiet, []event.Event{testfixture.Event(t, "agent-enrollment-enrolled")}, now); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Tenants(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		count := func(tn string) int {
+			n := 0
+			for _, g := range got {
+				if g == tn {
+					n++
+				}
+			}
+			return n
+		}
+		if count(tenant) != 1 || count(configured) != 1 || count(quiet) != 0 {
+			t.Fatalf("tenants = %v, want %s and %s once each, and not %s", got, tenant, configured, quiet)
+		}
+	})
+
+	t.Run("expires old history", func(t *testing.T) {
+		s, tenant, sink := setup(t)
+		granted, revoked, oob, health := fixtures(t)
+		if _, err := s.Ingest(ctx, tenant, []event.Event{granted, revoked, oob, health}, old); err != nil {
+			t.Fatal(err)
+		}
+		cmd := oldCommand(t, s, tenant, old)
+		// Another organisation with the same old history keeps it.
+		other := "tenant-" + randomHex(t)
+		if _, err := s.Ingest(ctx, other, []event.Event{granted, revoked}, old); err != nil {
+			t.Fatal(err)
+		}
+		sendAll(t, s, sink)
+		// As old, but the SIEM hasn't had it yet.
+		tamper := testfixture.Event(t, "agent-tamper")
+		if _, err := s.Ingest(ctx, tenant, []event.Event{tamper}, old); err != nil {
+			t.Fatal(err)
+		}
+
+		// The ended session with its grant and revoke, the reading and the admin group it
+		// raised, and the command.
+		got := expireAll(t, s, tenant, HistoryCutoff{Before: cutoff})
+		if want := (ExpiryCounts{Events: 4, Sessions: 1, Commands: 1}); got != want {
+			t.Fatalf("removed %+v, want %+v", got, want)
+		}
+		if _, _, err := s.GetSession(ctx, tenant, *granted.SessionID); err != ErrNotFound {
+			t.Fatalf("ended session: %v, want ErrNotFound", err)
+		}
+		if _, err := s.GetCommand(ctx, tenant, cmd.CommandID); err != ErrNotFound {
+			t.Fatalf("command: %v, want ErrNotFound", err)
+		}
+		// An open session keeps its events, however old: someone may still hold admin rights.
+		open, evs, err := s.GetSession(ctx, tenant, *oob.SessionID)
+		if err != nil || !open.Open() || len(evs) != 1 {
+			t.Fatalf("open session = %+v, %d events, %v", open, len(evs), err)
+		}
+		// The event the SIEM is waiting for is still there to send.
+		queued, err := s.ClaimExports(ctx, sink, 10, time.Minute, time.Now())
+		if err != nil || len(queued) != 1 || queued[0].Event.EventID != tamper.EventID {
+			t.Fatalf("queued = %+v, %v", queued, err)
+		}
+		if _, evs, err := s.GetSession(ctx, other, *granted.SessionID); err != nil || len(evs) != 2 {
+			t.Fatalf("the other organisation's session: %d events, %v", len(evs), err)
+		}
+		// The Mac itself stays.
+		if devices, err := s.ListDevices(ctx, tenant); err != nil || len(devices) != 1 {
+			t.Fatalf("devices = %+v, %v", devices, err)
+		}
+		// A resend says what is stored: the reading was removed, the others were kept.
+		res, err := s.Ingest(ctx, tenant, []event.Event{health, tamper, oob}, time.Now())
+		if err != nil || !slices.Equal(res.Accepted, []string{health.EventID}) ||
+			!slices.Equal(res.Duplicate, []string{tamper.EventID, oob.EventID}) {
+			t.Fatalf("resend = %+v, %v", res, err)
+		}
+	})
+
+	t.Run("a session stays whole while any of its events waits", func(t *testing.T) {
+		s, tenant, sink := setup(t)
+		granted, revoked, _, _ := fixtures(t)
+		if _, err := s.Ingest(ctx, tenant, []event.Event{granted}, old); err != nil {
+			t.Fatal(err)
+		}
+		sendAll(t, s, sink)
+		if _, err := s.Ingest(ctx, tenant, []event.Event{revoked}, old); err != nil {
+			t.Fatal(err)
+		}
+		if got := expireAll(t, s, tenant, HistoryCutoff{Before: cutoff}); got != (ExpiryCounts{}) {
+			t.Fatalf("removed %+v", got)
+		}
+		if ended, evs, err := s.GetSession(ctx, tenant, *granted.SessionID); err != nil || ended.Open() || len(evs) != 2 {
+			t.Fatalf("session = %+v, %d events, %v", ended, len(evs), err)
+		}
+	})
+
+	t.Run("coverage holds old history", func(t *testing.T) {
+		s, tenant, sink := setup(t)
+		granted, revoked, _, health := fixtures(t)
+		later := testfixture.Time(t, "2025-04-01T12:00:00Z")
+		if _, err := s.Ingest(ctx, tenant, []event.Event{granted}, old); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Ingest(ctx, tenant, []event.Event{revoked, health}, later); err != nil {
+			t.Fatal(err)
+		}
+		sendAll(t, s, sink)
+		// The SIEM has had everything received since March. The session ended after that,
+		// but it began before, so it stays whole; the April reading and its admin group go.
+		covered := testfixture.Time(t, "2025-03-01T00:00:00Z")
+		got := expireAll(t, s, tenant, HistoryCutoff{Before: cutoff, NotBefore: &covered})
+		if want := (ExpiryCounts{Events: 2}); got != want {
+			t.Fatalf("removed %+v, want %+v", got, want)
+		}
+		if _, evs, err := s.GetSession(ctx, tenant, *granted.SessionID); err != nil || len(evs) != 2 {
+			t.Fatalf("session: %d events, %v", len(evs), err)
+		}
+		// A reading on its own from before the coverage stays too.
+		earlier := testfixture.Event(t, "agent-health")
+		earlier.EventID = newUUID(t)
+		if _, err := s.Ingest(ctx, tenant, []event.Event{earlier}, old); err != nil {
+			t.Fatal(err)
+		}
+		sendAll(t, s, sink)
+		if got := expireAll(t, s, tenant, HistoryCutoff{Before: cutoff, NotBefore: &covered}); got != (ExpiryCounts{}) {
+			t.Fatalf("removed %+v from before the coverage", got)
+		}
+	})
+
+	t.Run("never removes the last 90 days", func(t *testing.T) {
+		s, tenant, sink := setup(t)
+		granted, revoked, _, health := fixtures(t)
+		recent := time.Now().AddDate(0, 0, -30)
+		if _, err := s.Ingest(ctx, tenant, []event.Event{granted, revoked, health}, recent); err != nil {
+			t.Fatal(err)
+		}
+		cmd := oldCommand(t, s, tenant, recent)
+		sendAll(t, s, sink)
+		// Asked for everything up to now, the stores keep the last 90 days all the same.
+		if got := expireAll(t, s, tenant, HistoryCutoff{Before: time.Now()}); got != (ExpiryCounts{}) {
+			t.Fatalf("removed %+v", got)
+		}
+		if _, evs, err := s.GetSession(ctx, tenant, *granted.SessionID); err != nil || len(evs) != 2 {
+			t.Fatalf("session: %d events, %v", len(evs), err)
+		}
+		if _, err := s.GetCommand(ctx, tenant, cmd.CommandID); err != nil {
+			t.Fatalf("command: %v", err)
+		}
+		if res, err := s.Ingest(ctx, tenant, []event.Event{health}, time.Now()); err != nil || len(res.Duplicate) != 1 {
+			t.Fatalf("reading resent = %+v, %v; want a duplicate", res, err)
+		}
+	})
+
+	t.Run("a resent event after expiry is stored again", func(t *testing.T) {
+		s, tenant, sink := setup(t)
+		granted, revoked, _, _ := fixtures(t)
+		if _, err := s.Ingest(ctx, tenant, []event.Event{granted, revoked}, old); err != nil {
+			t.Fatal(err)
+		}
+		sendAll(t, s, sink)
+		if got := expireAll(t, s, tenant, HistoryCutoff{Before: cutoff}); got != (ExpiryCounts{Events: 2, Sessions: 1}) {
+			t.Fatalf("removed %+v", got)
+		}
+		// Nothing remembers the removed session, so a grant the agent sends again is a new
+		// event, and its session looks open (accepted: see ExpireHistory).
+		res, err := s.Ingest(ctx, tenant, []event.Event{granted}, time.Now())
+		if err != nil || !slices.Equal(res.Accepted, []string{granted.EventID}) || len(res.Duplicate) != 0 {
+			t.Fatalf("resend = %+v, %v", res, err)
+		}
+		again, evs, err := s.GetSession(ctx, tenant, *granted.SessionID)
+		if err != nil || !again.Open() || again.EventCount != 1 || len(evs) != 1 {
+			t.Fatalf("session after the resend = %+v, %d events, %v", again, len(evs), err)
+		}
+		if queued, _ := s.ClaimExports(ctx, sink, 10, time.Minute, time.Now()); len(queued) != 1 || queued[0].Event.EventID != granted.EventID {
+			t.Fatalf("the resent grant isn't queued for the SIEM: %+v", queued)
+		}
+	})
+
 	t.Run("export outbox claim, retry and complete", func(t *testing.T) {
 		s, tenant, sink := setup(t)
 		granted, revoked, _, _ := fixtures(t)

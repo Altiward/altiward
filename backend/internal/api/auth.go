@@ -214,6 +214,12 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		signInFailed(w, r, "failed")
 		return
 	}
+	if reservedActor(id.Email) {
+		s.log.Warn("sign-in refused: the account's name is one Altiward keeps for the server and tokens",
+			"actor", id.Email, "subject", id.Subject)
+		signInFailed(w, r, "failed")
+		return
+	}
 	role, ok := s.sso.RoleFor(id.Groups)
 	if !ok {
 		s.log.Warn("sign-in refused: no role for the person's groups", "actor", id.Email, "groups", len(id.Groups))
@@ -241,6 +247,20 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	s.log.Info("signed in", "tenant", sess.TenantID, "actor", sess.Actor, "role", role)
 	s.setCookie(w, "altiward_session", token, 0)
 	http.Redirect(w, r, st.Next, http.StatusFound)
+}
+
+// reservedActor reports whether a person's actor would read as the server
+// (store.ServerActor) or as a token in the audit log. A person's actor is their email, but
+// can fall back to their preferred username or subject, which the identity provider may
+// let them choose.
+func reservedActor(actor string) bool {
+	actor = strings.ToLower(strings.TrimSpace(actor))
+	for _, prefix := range []string{"altiward:", "token:", "break-glass:"} {
+		if strings.HasPrefix(actor, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // signInFailed sends the browser back to the console's sign-in page with a reason it can

@@ -1,7 +1,8 @@
 // altiward-api serves agent ingestion and the console read API, and, with
 // ALTIWARD_CONSOLE_DIR set, the console itself. It runs the SIEM export workers and the
 // monitor that notices Macs that stop checking in, keeps a copy of the Macs Intune manages
-// when connected to it, and, with a retention period set, removes old audit entries.
+// when connected to it, removes each organisation's history past the period it keeps, and,
+// with a retention period set, removes old audit entries.
 // Configuration: ALTIWARD_* environment variables (see backend/internal/config and
 // backend/README.md).
 //
@@ -353,6 +354,10 @@ func run(log *slog.Logger) error {
 		purge := &retention.Audit{Store: st, After: time.Duration(days) * 24 * time.Hour, Log: log, Now: time.Now}
 		go purge.Run(ctx, 24*time.Hour)
 	}
+	// Removes history past each organisation's period, once the backfill above has finished,
+	// and never what a SIEM hasn't had.
+	history := &retention.History{Store: st, Sinks: cfg.SinkNames(), Log: log, Now: time.Now}
+	go history.Run(ctx, 24*time.Hour)
 
 	// Closed when shutdown starts, releasing requests held for agents' next commands.
 	stopping := make(chan struct{})

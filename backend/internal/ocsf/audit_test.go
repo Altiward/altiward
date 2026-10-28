@@ -137,3 +137,33 @@ func TestRetryNowNamesTheSink(t *testing.T) {
 		t.Errorf("resources = %v", res)
 	}
 }
+
+func TestHistoryExpiryIsADeleteByTheServer(t *testing.T) {
+	a := auditEntry(store.AuditExpireHistory, "history", map[string]any{
+		"before": "2025-06-01T00:00:00Z", "days": 365.0, "reason": store.HistoryReasonDefaultSIEM,
+		"held_before": "2024-12-01T00:00:00Z",
+		"counts":      map[string]any{"events": 4.0, "sessions": 1.0, "commands": 0.0, "macs": 0.0},
+	})
+	a.Actor = store.ServerActor
+	r := auditJSON(t, a)
+	for path, want := range map[string]any{
+		"class_uid": 6003.0, "activity_id": 4.0, "activity_name": "Delete", "type_uid": 600304.0, "severity_id": 1.0,
+		"actor.user.name": "altiward:server", "actor.user.type": "System", "actor.user.type_id": 3.0,
+		"actor.app_name": "Altiward server", "src_endpoint.name": "Altiward server", "api.service.name": "Altiward server",
+		"api.operation": "expire_history", "unmapped.altiward.event_type": "console.expire_history",
+		"message": "Altiward removed history received before 2025-06-01T00:00:00Z, past the 365 days it keeps " +
+			"(the default with a SIEM connected): 4 events, 1 session, 0 commands",
+	} {
+		if got := get(r, path); got != want {
+			t.Errorf("%s = %v, want %v", path, got, want)
+		}
+	}
+	if res := r["resources"].([]any)[0].(map[string]any); res["type"] != "History" || res["uid"] != "history" {
+		t.Errorf("resources = %v", res)
+	}
+	// A person's action keeps the console as its source.
+	if r := auditJSON(t, auditEntry(store.AuditRetryExports, "sentinel", nil)); get(r, "src_endpoint.name") != "Altiward console" ||
+		get(r, "actor.user.type") != nil {
+		t.Errorf("a person's entry: %v", r)
+	}
+}

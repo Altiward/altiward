@@ -5,6 +5,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/Altiward/altiward/backend/internal/event"
+	"github.com/Altiward/altiward/backend/internal/testfixture"
 )
 
 // TestPostgresRetentionFloor checks the database's own refusal to delete history younger
@@ -70,4 +74,35 @@ func TestPostgresRetentionFloor(t *testing.T) {
 // floorColumn is the column each table's delete floor reads.
 func floorColumn(table string) string {
 	return map[string]string{"events": "received_at", "sessions": "updated_at", "devices": "last_seen_at", "agent_commands": "created_at"}[table]
+}
+
+// TestPostgresDeleteFloor checks the floor on an event the store itself stored: a DELETE of
+// one received yesterday fails with the trigger's error, and history expiry, asked to remove
+// everything up to now, removes nothing and doesn't meet the trigger.
+func TestPostgresDeleteFloor(t *testing.T) {
+	url := os.Getenv("ALTIWARD_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("ALTIWARD_TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	s, err := OpenPostgres(ctx, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	tenant := "tenant-" + randomHex(t)
+	health := testfixture.Event(t, "agent-health")
+	if _, err := s.Ingest(ctx, tenant, []event.Event{health}, time.Now().AddDate(0, 0, -1)); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.pool.Exec(ctx, `DELETE FROM events WHERE tenant_id = $1`, tenant)
+	if err == nil || !strings.Contains(err.Error(), "events rows younger than 90 days cannot be deleted") {
+		t.Fatalf("delete of yesterday's event: %v", err)
+	}
+	if got, err := s.ExpireHistory(ctx, tenant, HistoryCutoff{Before: time.Now()}, 100); err != nil || got != (ExpiryCounts{}) {
+		t.Fatalf("expiry removed %+v, %v", got, err)
+	}
+	if res, err := s.Ingest(ctx, tenant, []event.Event{health}, time.Now()); err != nil || len(res.Duplicate) != 1 {
+		t.Fatalf("the event is gone: %+v, %v", res, err)
+	}
 }

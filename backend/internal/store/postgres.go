@@ -605,3 +605,87 @@ func collectJSON[T any](rows pgx.Rows) ([]T, error) {
 	}
 	return out, rows.Err()
 }
+
+func (p *Postgres) Tenants(ctx context.Context) ([]string, error) {
+	rows, err := p.pool.Query(ctx, `SELECT tenant_id FROM devices UNION SELECT tenant_id FROM tenant_settings ORDER BY 1`)
+	if err != nil {
+		return nil, err
+	}
+	out, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if out == nil {
+		out = []string{}
+	}
+	return out, err
+}
+
+// ExpireHistory runs one statement for each kind of row, each in its own transaction and
+// outside the ingest lock: rows another replica is removing are skipped, not waited for.
+// Every statement keeps to the database's 90-day floor itself, by now(), so the delete
+// triggers of migration 0008 never fire, and filters out events a sink is still waiting
+// for with NOT EXISTS: a delete that met the outbox's foreign key would fail the whole
+// statement.
+func (p *Postgres) ExpireHistory(ctx context.Context, tenantID string, c HistoryCutoff, limit int) (ExpiryCounts, error) {
+	var n ExpiryCounts
+	limit = max(limit, 1)
+	// Ended sessions, each with every one of its events. A session stays whole while any
+	// of its events can't go: received at or after the cutoff or inside the floor, before
+	// the coverage, or waiting for a sink.
+	if err := p.pool.QueryRow(ctx, `
+		WITH doomed AS (
+			SELECT s.tenant_id, s.session_id FROM sessions s
+			WHERE s.tenant_id = $1 AND s.ended_at IS NOT NULL
+			  AND s.updated_at < $2 AND s.updated_at < now() - interval '90 days'
+			  AND NOT EXISTS (
+				SELECT 1 FROM events e
+				WHERE e.tenant_id = s.tenant_id AND e.session_id = s.session_id
+				  AND (e.received_at >= $2 OR e.received_at >= now() - interval '90 days'
+				       OR ($3::timestamptz IS NOT NULL AND e.received_at < $3)
+				       OR EXISTS (SELECT 1 FROM export_outbox o WHERE o.tenant_id = e.tenant_id AND o.event_id = e.event_id)))
+			ORDER BY s.updated_at
+			LIMIT $4
+			FOR UPDATE OF s SKIP LOCKED
+		), events_gone AS (
+			DELETE FROM events e USING doomed d
+			WHERE e.tenant_id = d.tenant_id AND e.session_id = d.session_id
+			RETURNING 1
+		), sessions_gone AS (
+			DELETE FROM sessions s USING doomed d
+			WHERE s.tenant_id = d.tenant_id AND s.session_id = d.session_id
+			RETURNING 1
+		)
+		SELECT (SELECT count(*) FROM sessions_gone), (SELECT count(*) FROM events_gone)`,
+		tenantID, c.Before, c.NotBefore, limit).Scan(&n.Sessions, &n.Events); err != nil {
+		return n, fmt.Errorf("expire sessions: %w", err)
+	}
+	// Events in no session, or in one that is gone.
+	tag, err := p.pool.Exec(ctx, `
+		WITH doomed AS (
+			SELECT e.tenant_id, e.event_id FROM events e
+			WHERE e.tenant_id = $1 AND e.received_at < $2 AND e.received_at < now() - interval '90 days'
+			  AND ($3::timestamptz IS NULL OR e.received_at >= $3)
+			  AND (e.session_id IS NULL OR NOT EXISTS (
+				SELECT 1 FROM sessions s WHERE s.tenant_id = e.tenant_id AND s.session_id = e.session_id))
+			  AND NOT EXISTS (SELECT 1 FROM export_outbox o WHERE o.tenant_id = e.tenant_id AND o.event_id = e.event_id)
+			ORDER BY e.received_at
+			LIMIT $4
+			FOR UPDATE OF e SKIP LOCKED
+		)
+		DELETE FROM events e USING doomed d WHERE e.tenant_id = d.tenant_id AND e.event_id = d.event_id`,
+		tenantID, c.Before, c.NotBefore, limit)
+	if err != nil {
+		return n, fmt.Errorf("expire events: %w", err)
+	}
+	n.Events += tag.RowsAffected()
+	tag, err = p.pool.Exec(ctx, `
+		DELETE FROM agent_commands WHERE command_id IN (
+			SELECT command_id FROM agent_commands
+			WHERE tenant_id = $1 AND created_at < $2 AND created_at < now() - interval '90 days'
+			ORDER BY created_at
+			LIMIT $3
+			FOR UPDATE SKIP LOCKED)`, tenantID, c.Before, limit)
+	if err != nil {
+		return n, fmt.Errorf("expire commands: %w", err)
+	}
+	n.Commands = tag.RowsAffected()
+	return n, nil
+}

@@ -104,6 +104,26 @@ type Store interface {
 	// when that is set. After an error nothing is recorded, so a later call walks again.
 	BackfillAdminGroups(ctx context.Context, now time.Time) (raised int, err error)
 
+	// Tenants lists every tenant with a device or settings, in name order.
+	Tenants(ctx context.Context) ([]string, error)
+	// ExpireHistory removes up to limit each of the tenant's ended sessions (with all their
+	// events), events and commands that c allows, oldest first, and says how many of each
+	// it removed; the caller calls it again until every count is 0. A session goes once it
+	// ended and last changed before c.Before, and only with every one of its events
+	// removable. An event is removable when it was received before c.Before and, with
+	// c.NotBefore, not before it, and no sink is still waiting for it; one in a session goes
+	// only with its session. A command goes once created before c.Before. Whatever c says,
+	// nothing younger than 90 days by the database's clock is removed (the floor of
+	// migration 0008), and Macs themselves stay. On an error the counts say what was
+	// removed before it.
+	//
+	// Nothing remembers what was removed. An event the agent sends again afterwards is
+	// stored and exported as new, and a lone elevation.granted then makes a session that
+	// looks open. That takes an acknowledgement lost for longer than the period, at least
+	// 90 days, while the Mac kept checking in, so it is accepted rather than keeping a
+	// record of every removed event.
+	ExpireHistory(ctx context.Context, tenantID string, c HistoryCutoff, limit int) (ExpiryCounts, error)
+
 	// ClaimExports leases up to limit due items for sink so concurrent workers don't double-send.
 	ClaimExports(ctx context.Context, sink string, limit int, lease time.Duration, now time.Time) ([]ExportItem, error)
 	// CompleteExports removes delivered items and records deliveredAt as their sinks' last
@@ -119,6 +139,31 @@ type Store interface {
 	RetryExportsNow(ctx context.Context, tenantID, sink string, now time.Time, a AuditEntry) (int64, error)
 
 	Close()
+}
+
+// HistoryCutoff says what history expiry may remove: what is older than Before, but, when
+// NotBefore is set, no event received before it. Under the default period with a SIEM,
+// NotBefore is when the SIEM's coverage starts (Coverage.SinkCoverage), so nothing it
+// wasn't sent is removed.
+type HistoryCutoff struct {
+	Before    time.Time
+	NotBefore *time.Time
+}
+
+// ExpiryCounts says how much history was removed.
+type ExpiryCounts struct {
+	Events   int64 `json:"events"`
+	Sessions int64 `json:"sessions"`
+	Commands int64 `json:"commands"`
+	Macs     int64 `json:"macs"`
+}
+
+// Add adds o to c.
+func (c *ExpiryCounts) Add(o ExpiryCounts) {
+	c.Events += o.Events
+	c.Sessions += o.Sessions
+	c.Commands += o.Commands
+	c.Macs += o.Macs
 }
 
 // DeviceRef names a Mac.

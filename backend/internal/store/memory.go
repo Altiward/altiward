@@ -431,3 +431,123 @@ func (m *Memory) RetryExportsNow(_ context.Context, tenantID, sink string, now t
 }
 
 func (m *Memory) Close() {}
+
+func (m *Memory) Tenants(context.Context) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []string{}
+	for k := range m.devices {
+		out = append(out, k.tenant)
+	}
+	for tenant := range m.settings {
+		out = append(out, tenant)
+	}
+	slices.Sort(out)
+	return slices.Compact(out), nil
+}
+
+// ExpireHistory is Postgres.ExpireHistory, with the database's 90-day floor taken from this
+// process's clock. A session's updated_at there is the received time of the last event
+// applied to it, which here is its last event in m.order.
+func (m *Memory) ExpireHistory(_ context.Context, tenantID string, c HistoryCutoff, limit int) (ExpiryCounts, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	limit = max(limit, 1)
+	floor := time.Now().AddDate(0, 0, -MinHistoryDays)
+	waiting := map[key]bool{}
+	for _, x := range m.exports {
+		if !x.done && x.Audit == nil {
+			waiting[key{x.TenantID, x.Event.EventID}] = true
+		}
+	}
+	removable := func(k key, e StoredEvent) bool {
+		return e.ReceivedAt.Before(c.Before) && e.ReceivedAt.Before(floor) &&
+			(c.NotBefore == nil || !e.ReceivedAt.Before(*c.NotBefore)) && !waiting[k]
+	}
+	type sessionEvents struct {
+		events  []key
+		updated time.Time
+		held    bool // an event that can't go holds the whole session
+	}
+	bySession := map[string]*sessionEvents{}
+	for _, k := range m.order {
+		e := m.events[k]
+		if k.tenant != tenantID || e.SessionID == nil {
+			continue
+		}
+		se := bySession[*e.SessionID]
+		if se == nil {
+			se = &sessionEvents{}
+			bySession[*e.SessionID] = se
+		}
+		se.events = append(se.events, k)
+		se.updated = e.ReceivedAt
+		se.held = se.held || !removable(k, e)
+	}
+	type due struct {
+		k  key
+		at time.Time
+	}
+	oldest := func(ds []due) []due {
+		slices.SortStableFunc(ds, func(a, b due) int { return a.at.Compare(b.at) })
+		return ds[:min(limit, len(ds))]
+	}
+
+	var n ExpiryCounts
+	removed := map[key]bool{}
+	sessions := []due{}
+	for sk, s := range m.sessions {
+		se := bySession[sk.id]
+		if sk.tenant != tenantID || s.Open() || se == nil || se.held ||
+			!se.updated.Before(c.Before) || !se.updated.Before(floor) {
+			continue
+		}
+		sessions = append(sessions, due{sk, se.updated})
+	}
+	for _, d := range oldest(sessions) {
+		delete(m.sessions, d.k)
+		n.Sessions++
+		for _, k := range bySession[d.k.id].events {
+			removed[k] = true
+			n.Events++
+		}
+	}
+	events := []due{}
+	for _, k := range m.order {
+		e := m.events[k]
+		if k.tenant != tenantID || removed[k] || !removable(k, e) {
+			continue
+		}
+		if e.SessionID != nil {
+			if _, ok := m.sessions[key{tenantID, *e.SessionID}]; ok {
+				continue // it goes with its session
+			}
+		}
+		events = append(events, due{k, e.ReceivedAt})
+	}
+	for _, d := range oldest(events) {
+		removed[d.k] = true
+		n.Events++
+	}
+	for k := range removed {
+		delete(m.events, k)
+	}
+	m.order = slices.DeleteFunc(m.order, func(k key) bool { return removed[k] })
+	// Postgres deletes an item once it is delivered; here it stays, marked done, until its
+	// event goes.
+	m.exports = slices.DeleteFunc(m.exports, func(x *memExport) bool {
+		return x.done && x.Audit == nil && removed[key{x.TenantID, x.Event.EventID}]
+	})
+
+	commands := []due{}
+	for id, cmd := range m.commands {
+		if cmd.TenantID == tenantID && cmd.CreatedAt.Before(c.Before) && cmd.CreatedAt.Before(floor) {
+			commands = append(commands, due{key{tenantID, id}, cmd.CreatedAt})
+		}
+	}
+	for _, d := range oldest(commands) {
+		delete(m.commands, d.k.id)
+		n.Commands++
+	}
+	return n, nil
+}
