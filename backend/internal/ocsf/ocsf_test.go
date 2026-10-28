@@ -54,6 +54,19 @@ func get(m map[string]any, path string) any {
 	return v
 }
 
+// Known is what stops the export drain from completing an event type a newer server
+// raises and this one cannot map: every example type has to be in it.
+func TestKnownCoversEveryExampleType(t *testing.T) {
+	for _, name := range testfixture.Names {
+		if e := testfixture.Event(t, name); !ocsf.Known(e.Type) {
+			t.Errorf("%s: %q is not Known", name, e.Type)
+		}
+	}
+	if ocsf.Known("agent.future") {
+		t.Error("agent.future is Known")
+	}
+}
+
 func TestGrantMapsToAssignPrivileges(t *testing.T) {
 	r := mapJSON(t, stored(t, "elevation-granted"))
 	want := map[string]any{

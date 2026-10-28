@@ -102,6 +102,20 @@ func Map(e store.StoredEvent, tenantID string) []Record {
 	return nil
 }
 
+// Known reports whether this server recognises t: Map has a case for it, or it is
+// deliberately not exported (agent.health, activity). An event of any other type came from a
+// newer server or agent, so the export drain keeps it queued instead of completing it unsent.
+func Known(t event.Type) bool {
+	switch t {
+	case event.ElevationGranted, event.ElevationRevoked, event.ElevationExpiredEnforced, event.AdminOutOfBandRemoved,
+		event.AdminOutOfBand, event.ElevationOverdue, event.PersistenceDetected, event.AgentTamper,
+		event.AgentSilent, event.AdminPermanentUse, event.AgentEnrollment,
+		event.AgentHealth, event.Activity:
+		return true
+	}
+	return false
+}
+
 // removesOutOfBand reports whether e ends a session of rights nobody granted by removing
 // them: its user no longer holds admin, and it isn't an orphan revoke, which ends no session.
 func removesOutOfBand(e store.StoredEvent) bool {

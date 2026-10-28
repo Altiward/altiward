@@ -10,6 +10,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/Altiward/altiward/backend/internal/event"
 	"github.com/Altiward/altiward/backend/internal/ocsf"
 	"github.com/Altiward/altiward/backend/internal/store"
 )
@@ -108,8 +109,13 @@ func (w *Worker) Drain(ctx context.Context, s Sink) (sent int, err error) {
 		}
 		var records []Record
 		var ids []int64
+		unknown := map[event.Type][]int64{}
 		maxAttempts := 0
 		for _, it := range items {
+			if it.Audit == nil && !ocsf.Known(it.Event.Type) {
+				unknown[it.Event.Type] = append(unknown[it.Event.Type], it.ID)
+				continue
+			}
 			ids = append(ids, it.ID)
 			maxAttempts = max(maxAttempts, it.Attempts)
 			if it.Audit != nil {
@@ -118,6 +124,13 @@ func (w *Worker) Drain(ctx context.Context, s Sink) (sent int, err error) {
 				for _, r := range ocsf.Map(it.Event, it.TenantID) {
 					records = append(records, Record{TenantID: it.TenantID, Event: it.Event, OCSF: r})
 				}
+			}
+		}
+		// A type this server doesn't know came from a newer one, which may map it: keep it
+		// queued, and look again in an hour, rather than complete it unsent.
+		for t, unknownIDs := range unknown {
+			if err := w.Store.RetryExports(ctx, unknownIDs, "unknown event type "+string(t), now.Add(time.Hour)); err != nil {
+				w.Log.Error("could not reschedule exports", "sink", s.Name(), "err", err)
 			}
 		}
 		if len(records) > 0 {
@@ -129,7 +142,7 @@ func (w *Worker) Drain(ctx context.Context, s Sink) (sent int, err error) {
 				return sent, err
 			}
 		}
-		// Items that map to nothing (e.g. agent.health) are complete as well.
+		// Items that map to nothing but are Known (e.g. agent.health) are complete as well.
 		if err := w.Store.CompleteExports(ctx, ids, w.Now()); err != nil {
 			return sent, err
 		}

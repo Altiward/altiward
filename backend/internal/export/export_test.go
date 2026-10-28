@@ -107,6 +107,37 @@ func TestAnEventWithANewAccountSendsARecordForEach(t *testing.T) {
 	}
 }
 
+func TestDrainLeavesUnknownTypesQueued(t *testing.T) {
+	s := store.NewMemory([]string{"fake"})
+	now := testfixture.Time(t, "2026-10-16T12:00:00Z")
+	future := testfixture.Event(t, "agent-health")
+	future.EventID = "7d1c4a52-93e0-4b6f-8a1d-5e2f60b7c9a4"
+	future.Type = "agent.future" // a type a newer server raises; the memory store doesn't validate
+	events := []event.Event{testfixture.Event(t, "elevation-granted"), future}
+	if _, err := s.Ingest(context.Background(), "acme", events, now); err != nil {
+		t.Fatal(err)
+	}
+	sink := &fakeSink{}
+	w := &export.Worker{
+		Store: s, Sinks: []export.Sink{sink}, BatchSize: 10, Lease: time.Minute,
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: func() time.Time { return now },
+	}
+	if sent, err := w.Drain(context.Background(), sink); err != nil || sent != 1 {
+		t.Fatalf("sent = %d, err = %v", sent, err)
+	}
+	backlog, err := s.ExportStatus(context.Background(), "acme")
+	if err != nil || len(backlog) != 1 || backlog[0].Pending != 1 || !strings.Contains(backlog[0].LastError, "unknown event type agent.future") {
+		t.Fatalf("backlog = %+v, err = %v", backlog, err)
+	}
+	// It waits for the hour: nothing is sent before then.
+	if sent, err := w.Drain(context.Background(), sink); err != nil || sent != 0 {
+		t.Fatalf("second drain sent = %d, err = %v", sent, err)
+	}
+	if len(sink.batches) != 1 {
+		t.Fatalf("batches = %d", len(sink.batches))
+	}
+}
+
 func TestFailedSendIsRetriedAfterBackoff(t *testing.T) {
 	_, sink, w, now := setup(t)
 	sink.fail = true
