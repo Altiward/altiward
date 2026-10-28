@@ -31,6 +31,11 @@ console production dependency, and commit the result.
 
 ### Test policy
 
+The required [coding standards and coverage instructions](docs/testing.md) apply to all
+contributions. [Governance](GOVERNANCE.md) explains decisions, roles and continuity; the
+organization's [code of conduct](https://github.com/Altiward/.github/blob/main/CODE_OF_CONDUCT.md)
+applies here too.
+
 New features and fixes come with tests. Add or update automated tests in the same pull
 request to cover the changed behaviour. For a bug fix, include a regression test that
 would fail without the fix. Explain the relevant checks and their results in the pull

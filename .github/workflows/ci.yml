@@ -40,8 +40,21 @@ jobs:
         env:
           ALTIWARD_TEST_DATABASE_URL: postgres://altiward:altiward@localhost:5432/altiward?sslmode=disable
         run: |
-          go test -race -count=1 ./...
-          cd integrations && go test -race -count=1 ./...
+          mkdir -p "$RUNNER_TEMP/coverage"
+          go test -race -count=1 -coverprofile="$RUNNER_TEMP/coverage/backend.out" ./...
+          cd integrations && go test -race -count=1 -coverprofile="$RUNNER_TEMP/coverage/integrations.out" ./...
+      - name: Coverage summary
+        run: |
+          for component in backend integrations; do
+            echo "### $component statement coverage" >> "$GITHUB_STEP_SUMMARY"
+            go tool cover -func="$RUNNER_TEMP/coverage/$component.out" | tail -n 1 >> "$GITHUB_STEP_SUMMARY"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage-go
+          path: ${{ runner.temp }}/coverage/*.out
+          retention-days: 14
       - name: build
         run: go build -o bin/altiward-api ./backend/cmd/altiward-api
       - name: govulncheck
@@ -76,9 +89,18 @@ jobs:
       - name: Toolchain
         run: swift --version
       - name: Build
-        run: swift build --package-path agent
-      - name: Test
-        run: swift test --package-path agent
+        run: make agent-build
+      - name: Test with coverage
+        run: |
+          swift test --package-path agent --scratch-path "$HOME/Library/Caches/altiward/agent-build" --enable-code-coverage
+          report=$(swift test --package-path agent --scratch-path "$HOME/Library/Caches/altiward/agent-build" --enable-code-coverage --show-codecov-path)
+          cp "$report" "$RUNNER_TEMP/agent-coverage.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage-agent
+          path: ${{ runner.temp }}/agent-coverage.json
+          retention-days: 14
       - name: Package (ad hoc) and verify
         run: make package package-verify
 
@@ -96,7 +118,13 @@ jobs:
         run: make brand-check
       - run: npm --prefix console ci
       - run: npm --prefix console run typecheck
-      - run: npm --prefix console test
+      - run: npm --prefix console run test:coverage
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage-console
+          path: console/coverage/
+          retention-days: 14
       - run: npm --prefix console run build
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
