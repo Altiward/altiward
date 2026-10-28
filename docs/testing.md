@@ -45,7 +45,7 @@ swift test --package-path agent --scratch-path "$HOME/Library/Caches/altiward/ag
 Silver's 80% statement requirement remains open until current reports establish the
 required production-code coverage across the project's languages. Do not exclude hard
 to test production code to improve the reported number. Add tests for meaningful
-behaviour, prioritizing security boundaries, failures and upgrade compatibility.
+behaviour, prioritising security boundaries, failures and upgrade compatibility.
 
 ## Coding standards
 
@@ -66,5 +66,5 @@ layout conventions:
 Go formatting is automated. Swift and TypeScript style still need formatter selection
 and CI enforcement; type checking and compilation do not satisfy that style requirement.
 Review any formatter adoption separately so broad formatting changes do not hide logic
-changes. Treat compiler and analyzer warnings as defects to fix, rather than suppressing
+changes. Treat compiler and analyser warnings as defects to fix, rather than suppressing
 them without an explanation.

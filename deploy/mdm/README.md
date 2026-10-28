@@ -16,8 +16,9 @@ as Intune's Custom profile (Jamf Pro takes them too). Each carries the same keys
 values as its plist, and a test keeps them so (`go test ./deploy/mdm`). Their identifiers and UUIDs are fixed, so uploading an edited
 copy again replaces the profile on the Mac rather than adding a second. In
 `com.altiward.agent`, `MDMDeviceID` is `{{deviceid}}`, which Intune replaces with the
-Mac's device ID. Another MDM needs its own variable there. A coming agent release reads
-the key; until then the agent ignores it.
+Mac's device ID. Another MDM needs its own variable there. The agent sends it once, when
+the Mac enrols, and with Intune connected the server checks it against Intune (agents
+before 1.2.0 ignore the key).
 
 The Privileges files here are **source templates**. Their checksum placeholder must be
 replaced with the checksum of the signed hook. Use `corp.sap.privileges.plist` or

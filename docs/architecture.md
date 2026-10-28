@@ -23,8 +23,9 @@ Privileges profile pinned to the hook it signs.
 
 `backend/cmd/altiward-api` assembles the Go server. `backend/internal/` contains the
 HTTP API, authentication, event validation, session/device reducers, storage, reports,
-export workers and monitoring. Tests are colocated with the packages they exercise.
-Postgres migrations stay with their embedded store implementation.
+export workers, monitoring, history expiry and the Intune connection. Tests are colocated
+with the packages they exercise. Postgres migrations stay with their embedded store
+implementation.
 
 The ingestion transaction stores an event, updates derived state and queues its SIEM
 exports. Export workers retry until a destination accepts the records. Reducers in
@@ -37,6 +38,17 @@ Production builds put the console and server in the same Docker image and origin
 The server authorises every console endpoint. Console mutations are audited in the
 transaction that makes the change. Revoke requests become commands that the Mac's
 signed long-poll request receives; the agent performs and reports the action.
+
+## Intune connection
+
+The optional MDM connection is read-only and outbound: the server signs in to Microsoft
+Graph and never writes to Intune. `backend/internal/mdm` keeps a copy of the Macs Intune
+manages, refreshed every 15 minutes, through the Graph client in `internal/intune`. The
+enrolment handler asks it about the `MDMDeviceID` an enrolling Mac sends, and the silence
+monitor uses the copy to raise `agent.silent` early for a Mac Intune still hears from. A
+match never approves a key by itself. The Graph permission setup lives in `deploy/intune/`
+and `deploy/azure/intune-read.bicep`, with the script that uploads the Mac profiles to
+Intune, which runs as the admin and is separate from the server.
 
 ## SIEM boundaries
 

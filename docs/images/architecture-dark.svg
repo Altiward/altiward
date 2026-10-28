@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 460" width="1000" height="460" role="img" aria-labelledby="title desc">
   <title id="title">How Altiward fits together</title>
-  <desc id="desc">On each Mac, SAP Privileges grants admin rights and runs Altiward's hook on each change. The hook runs as the logged-in user, so it is untrusted, and it passes what it claims to the Altiward agent over XPC. The agent runs as root, checks each claim, reads the real admin group, removes rights when told to, and queues events until they are sent. It sends signed events to your server over HTTPS on port 443 and picks up revoke commands from it. On your server, Altiward (the API and web console, altiward-api) checks each Mac's signature, works out sessions from events, stores them in Postgres, and sends events to your SIEM (Splunk, Microsoft Sentinel or syslog) as OCSF or CEF over HTTPS or TLS. IT staff open the console in a browser, and sign in through Entra ID or Okta.</desc>
+  <desc id="desc">On each Mac, SAP Privileges grants admin rights and runs Altiward's hook on each change. The hook runs as the logged-in user, so it is untrusted, and it passes what it claims to the Altiward agent over XPC. The agent runs as root, checks each claim, reads the real admin group, removes rights when told to, and queues events until they are sent. It sends signed events to your server over HTTPS on port 443 and picks up revoke commands from it. On your server, Altiward (the API and web console, altiward-api) checks each Mac's signature, works out sessions from events, stores them in Postgres, and sends events to your SIEM (Splunk, Microsoft Sentinel or syslog) as OCSF or CEF over HTTPS or TLS. IT staff open the console in a browser, and sign in through Entra ID or Okta. If you connect Microsoft Intune, Altiward also reads the Macs it manages, read-only, through Microsoft Graph.</desc>
   <style>
     text { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; fill: #f2f2f2; }
     .title { font-size: 15px; font-weight: 600; }
@@ -84,6 +84,7 @@
   <!-- Out of the server -->
   <path class="flow" d="M680 176 H744 V56 H790"/>
   <path class="flow" d="M680 262 H790"/>
+  <path class="flow" d="M680 290 H744 V404 H790"/>
   <text class="mono" x="744" y="230" text-anchor="middle">OCSF or CEF</text>
   <text class="mono" x="744" y="245" text-anchor="middle">HTTPS or TLS</text>
 
@@ -101,4 +102,9 @@
   <text x="824" y="267">Microsoft Sentinel</text>
   <rect class="box" x="808" y="288" width="152" height="36" rx="8"/>
   <text x="824" y="311">Syslog</text>
+
+  <!-- Intune -->
+  <rect class="outside" x="792" y="372" width="184" height="64" rx="8"/>
+  <text class="name" x="808" y="398">Microsoft Intune</text>
+  <text class="note" x="808" y="418">its Macs, read-only</text>
 </svg>

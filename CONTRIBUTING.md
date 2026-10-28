@@ -21,7 +21,7 @@ and Docker.
 make console-install   # once: console dependencies
 make test              # Swift agent, Go and console unit tests
 make test-db           # also runs the Postgres store suite (starts Postgres in Docker)
-make lint              # gofmt and go vet
+make lint              # gofmt, go vet and the changelog fragments
 make notices           # regenerates THIRD_PARTY_NOTICES.md
 ```
 
@@ -33,7 +33,7 @@ console production dependency, and commit the result.
 
 The required [coding standards and coverage instructions](docs/testing.md) apply to all
 contributions. [Governance](GOVERNANCE.md) explains decisions, roles and continuity; the
-organization's [code of conduct](https://github.com/Altiward/.github/blob/main/CODE_OF_CONDUCT.md)
+organisation's [code of conduct](https://github.com/Altiward/.github/blob/main/CODE_OF_CONDUCT.md)
 applies here too.
 
 New features and fixes come with tests. Add or update automated tests in the same pull
