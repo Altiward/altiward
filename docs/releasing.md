@@ -33,12 +33,13 @@ signed. A tag is the only trigger: `server-vX.Y.Z` (or `server-vX.Y.Z-rc.N`) run
    - `altiward-api-X.Y.Z-linux-amd64.tar.gz` and `…-linux-arm64.tar.gz`, the image
    - `RELEASE_NOTES.md`, from `CHANGELOG.md`
    - `SHA256SUMS` and `SHA256SUMS.sigstore.json`, the signed checksums
+   - `provenance.intoto.jsonl`, signed SLSA build provenance for every file in `SHA256SUMS`
 
    The workflow also keeps them for 90 days as the run's artifact
    `altiward-server-X.Y.Z`.
 5. **The GitHub Release** is created by the workflow's last job, `publish`, which runs
    `gh release create server-vX.Y.Z` with those files and `RELEASE_NOTES.md` as the
-   notes. It is the only job with permission to write to the repository, and it refuses a
+   notes. It is the only job with `contents: write`, and it refuses a
    tag that doesn't exist (`--verify-tag`). Nothing is done by hand.
 6. **Check the result** as a user would, from a clean machine: the release page lists
    the files, `docker pull ghcr.io/altiward/altiward-api:X.Y.Z` works without logging
@@ -109,8 +110,9 @@ releases are Server 1.0.0 and Agent 1.0.0.
 4. **The GitHub Release** is created by the workflow's last job, as for the server, with
    the package, the Privileges keys as `corp.sap.privileges.plist` and
    `corp.sap.privileges.mobileconfig`, `RELEASE_NOTES.md`, `SHA256SUMS`
-   and its signature (also kept for 90 days as the run's artifact
-   `altiward-agent-agent-vX.Y.Z`). Ship a server release first if the agent needs it.
+   and its signature, plus `provenance.intoto.jsonl`. These are also kept for 90 days
+   as the run's artifact `altiward-agent-agent-vX.Y.Z`. Ship a server release first if
+   the agent needs it.
 5. **Verify and update the public release record.** Download the published package and
    check its signature, notarisation and signed checksums using
    [Checking a release](install.md#checking-a-release). Then open a pull request in
@@ -158,3 +160,17 @@ public transparency log; `upgrade.sh` and [Checking a release](install.md#checki
 check that identity, which names the `Altiward/altiward` repository, the workflow file and
 the tag. The agent package is also signed with Apple's Developer ID and notarized. The
 Apple signing material is the only secret a release uses.
+
+Both build jobs also generate SLSA build provenance with GitHub artifact attestations,
+covering every file listed in `SHA256SUMS`. Before publishing, they verify each file
+against the signed bundle, requiring this repository's release workflow, the tag and
+the exact source commit. The complete bundle is published as `provenance.intoto.jsonl`
+alongside the release files, so users can verify a download with `gh attestation verify`
+(see [Checking a release](install.md#checking-a-release)). It includes the signing
+certificate and transparency log proof, and is also stored in GitHub's attestation store.
+
+OpenSSF Scorecard detects this release asset by its `.intoto.jsonl` suffix. Its
+Signed-Releases check looks at the five most recent releases; signatures earn 8/10,
+and provenance earns 10/10 for each release. The overall check reaches 10/10 once all
+five contain provenance. Existing releases keep their original assets; provenance is
+generated during the build, rather than added retrospectively.
