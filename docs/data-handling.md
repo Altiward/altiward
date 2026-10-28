@@ -381,8 +381,11 @@ readable only by root. It holds events waiting to send (removed once your server
 confirms them), the elevations open now with each one's UPN, every Mac account's Platform
 SSO link as last read, and the last link of each account whose link was removed or that is
 gone (none with `PlatformSSOIdentity` off), the last persistence snapshot, the Mac's key (or the handle to it in the Secure
-Enclave) and its public key, the server's clock offset it last learnt, and revoke results
-(removed 30 days after they are reported). While the agent is replacing the Mac's key and
+Enclave) and its public key, the server's clock offset it last learnt, revoke results
+(removed 30 days after they are reported), and the settings MDM's profiles last gave for
+`com.altiward.agent` and `corp.sap.privileges` (the agent's settings, enrolment token
+included, and Privileges' settings), replaced at each reading, so the agent keeps working
+from them while the Mac's `profiles` tool can't be read. While the agent is replacing the Mac's key and
 doesn't yet know the server's answer, it also holds the replacement key (or its handle), a
 copy of the key it replaces, and the last answer that kept it waiting (such as an HTTP
 status and the start of the reply, for `altiward-agent status`), removed as soon as the

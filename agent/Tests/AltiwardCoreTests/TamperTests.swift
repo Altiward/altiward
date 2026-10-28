@@ -175,4 +175,92 @@ struct TamperTests {
         #expect(!AgentVersion.isOlder("1.0", than: "1.0.0"))
         #expect(AgentVersion.isOlder("1.0", than: "1.0.1"))
     }
+    // MARK: Failures that name what fails
+
+    static func settings(_ keys: [String]) -> IntegrityResult {
+        IntegrityResult(ok: false, problem: "differs: \(keys.joined(separator: ", "))", findings: keys)
+    }
+
+    /// A later forgery mustn't hide behind an earlier one: a failing check that names its keys
+    /// is reported again when they change, and not when they don't.
+    @Test func aFailingCheckIsReportedAgainWhenWhatFailsChanges() throws {
+        let t = tracker()
+        results.withLock { $0 = [.settingsManaged: Self.settings(["com.altiward.agent ServerURL"])] }
+        #expect(try tamper(t).map { $0.detail["state"] } == ["failed"])
+        #expect(try tamper(t).isEmpty)
+
+        results.withLock {
+            $0 = [.settingsManaged: Self.settings(["com.altiward.agent ServerURL", "corp.sap.privileges EnableSystemExtension"])]
+        }
+        let again = try tamper(t)
+        #expect(again.map { $0.detail["state"] } == ["failed"])
+        #expect(again[0].detail["problem"] == "differs: com.altiward.agent ServerURL, corp.sap.privileges EnableSystemExtension")
+        // Not after a restart with the same keys.
+        #expect(try tamper(tracker()).isEmpty)
+
+        results.withLock { $0 = [.settingsManaged: .ok] }
+        #expect(try tamper(t).map { $0.detail["state"] } == ["restored"])
+    }
+
+    /// An agent upgraded while the check was failing has no keys stored: the first named set is
+    /// reported, once.
+    @Test func aFailureFromBeforeKeysWereStoredIsReportedOnceWithThem() throws {
+        try store.setValue(#"{"settings_managed": false}"#, forKey: "integrity_state")
+        results.withLock { $0 = [.settingsManaged: Self.settings(["com.altiward.agent ServerURL"])] }
+        #expect(try tamper(tracker()).map { $0.detail["state"] } == ["failed"])
+        #expect(try tamper(tracker()).isEmpty)
+    }
+
+    @Test func aHeldCheckKeepsItsState() throws {
+        let t = tracker()
+        let held = IntegrityResult(ok: true, problem: nil, held: true)
+        results.withLock { $0 = [.settingsManaged: Self.settings(["com.altiward.agent ServerURL"])] }
+        _ = try tamper(t)
+        results.withLock { $0 = [.settingsManaged: held] }
+        // Neither restored nor retired, and agent.health still shows it failing.
+        let events = try t.heartbeat()
+        #expect(events.filter { $0.type == .agentTamper }.isEmpty)
+        let health = try #require(events.first { $0.type == .agentHealth })
+        guard case .object(let integrity) = health.detail["integrity"] else {
+            Issue.record("agent.health has no integrity map")
+            return
+        }
+        #expect(integrity["settings_managed"] == .bool(false))
+
+        // Held before it ever ran: nothing reported, nothing shown.
+        try store.setValue(nil, forKey: "integrity_state")
+        let first = try t.heartbeat()
+        #expect(first.filter { $0.type == .agentTamper }.isEmpty)
+        guard case .object(let shown)? = first.first(where: { $0.type == .agentHealth })?.detail["integrity"] else {
+            Issue.record("agent.health has no integrity map")
+            return
+        }
+        #expect(shown["settings_managed"] == nil)
+    }
+
+    /// Between heartbeats only the settings check runs, and the others keep their state.
+    @Test func theSettingsCheckRunsAloneBetweenHeartbeats() throws {
+        let check = OSAllocatedUnfairLock(initialState: IntegrityResult.ok)
+        var env = makeEnvironment(admins: FakeAdmins([]), clock: clock, integrity: { [results] in results.withLock { $0 } })
+        #expect(try ElevationTracker(store: store, environment: env).checkManagedSettings().isEmpty)
+        env.settingsCheck = { check.withLock { $0 } }
+        let t = ElevationTracker(store: store, environment: env)
+
+        results.withLock { $0 = [.launchDaemon: .failed("missing"), .settingsManaged: .ok] }
+        _ = try tamper(t)
+
+        check.withLock { $0 = Self.settings(["corp.sap.privileges EnableSystemExtension"]) }
+        let found = try t.checkManagedSettings()
+        #expect(found.map { $0.detail["check"] } == ["settings_managed"])
+        #expect(found.map { $0.detail["state"] } == ["failed"])
+        // launch_daemon was neither retired nor repeated.
+        #expect(try t.checkManagedSettings().isEmpty)
+        check.withLock { $0 = .ok }
+        #expect(try t.checkManagedSettings().map { $0.detail["state"] } == ["restored"])
+
+        // The next heartbeat sees the same states: nothing new.
+        results.withLock { $0 = [.launchDaemon: .failed("missing"), .settingsManaged: .ok] }
+        #expect(try tamper(t).isEmpty)
+    }
 }
+

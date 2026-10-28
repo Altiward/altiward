@@ -42,6 +42,19 @@ public struct IntegrityResult: Sendable, Equatable {
     public var ok: Bool
     /// What is wrong, for the event and the log. Nil when ok.
     public var problem: String?
+    /// What is failing, by name, when the check can say: a failing check is reported again when
+    /// these change, so a second problem doesn't hide behind the first. Nil for checks that
+    /// report a failure once.
+    public var findings: [String]?
+    /// Nothing to report yet: the check waits for things to settle and keeps its last state.
+    public var held = false
+
+    public init(ok: Bool, problem: String?, findings: [String]? = nil, held: Bool = false) {
+        self.ok = ok
+        self.problem = problem
+        self.findings = findings
+        self.held = held
+    }
 
     public static let ok = IntegrityResult(ok: true, problem: nil)
     public static func failed(_ problem: String) -> IntegrityResult { IntegrityResult(ok: false, problem: problem) }
@@ -72,6 +85,9 @@ public struct SystemIntegrity: Sendable {
     /// running (``PrivilegesExtensionProcess/problem()``). The setting alone isn't protection:
     /// an extension never approved, or killed, leaves it on.
     public var privilegesExtensionProblem: @Sendable () -> String?
+    /// The comparison of the managed preferences files with MDM's payloads, in the installed
+    /// agent (``ManagedSettingsCheck``). Nil in development, where only the forced rule applies.
+    public var managedSettings: (@Sendable () -> IntegrityResult)?
     /// From the agent's settings, for the checks that depend on them.
     public var expiryEnforcement: ExpiryEnforcement = .alert
     public var permanentAdmins: Set<String> = []
@@ -89,16 +105,25 @@ public struct SystemIntegrity: Sendable {
         self.privilegesExtensionProblem = privilegesExtensionProblem
     }
 
-    public static func live(config: AgentConfiguration) -> SystemIntegrity {
+    /// The real system. With `managed` (the installed agent), the Privileges settings come from
+    /// MDM's payloads and the settings check compares the managed preferences files with them,
+    /// reading the installed profiles each time it runs.
+    public static func live(config: AgentConfiguration, managed: ManagedSettings? = nil) -> SystemIntegrity {
         let domain = AgentConfiguration.domain
         let main = Bundle.main
+        let privilegesSettings: @Sendable () -> PrivilegesSettings =
+            if let managed { { managed.privilegesSettings() } } else { { PrivilegesSettings.current() } }
         var system = SystemIntegrity(
             bundleURL: main.bundleIdentifier == "com.altiward.agent" ? main.bundleURL : nil,
             hasValue: { CFPreferencesCopyAppValue($0 as CFString, domain as CFString) != nil },
             isForced: { CFPreferencesAppValueIsForced($0 as CFString, domain as CFString) },
-            privileges: { PrivilegesSettings.current() },
+            privileges: privilegesSettings,
             privilegesInstalled: { DeviceIdentity.current().privilegesVersion != nil },
             privilegesExtensionProblem: { PrivilegesExtensionProcess.problem() })
+        if let managed {
+            let check = ManagedSettingsCheck(signedIn: { LoginRecords.signedInAtLoginWindow() })
+            system.managedSettings = { check.result(managed.refresh()) }
+        }
         system.expiryEnforcement = config.expiryEnforcement
         system.permanentAdmins = config.permanentAdmins
         return system
@@ -210,9 +235,21 @@ public struct SystemIntegrity: Sendable {
                     + "use the corp.sap.privileges.plist from this agent's release")
     }
 
-    func settingsManaged() -> IntegrityResult {
+    /// Policy keys with a value MDM doesn't force, and in the installed agent the comparison
+    /// with MDM's payloads (``ManagedSettingsCheck``).
+    public func settingsManaged() -> IntegrityResult {
         let local = Self.policyKeys.filter { hasValue($0) && !isForced($0) }
-        return local.isEmpty ? .ok : .failed("set outside MDM: \(local.joined(separator: ", "))")
+        let forced =
+            local.isEmpty
+            ? IntegrityResult.ok
+            : IntegrityResult(
+                ok: false, problem: "set outside MDM: \(local.joined(separator: ", "))",
+                findings: local.map { "\(AgentConfiguration.domain) \($0)" })
+        guard let managed = managedSettings?() else { return forced }
+        if forced.ok { return managed }
+        return IntegrityResult(
+            ok: false, problem: ([forced.problem] + [managed.problem]).compactMap { $0 }.joined(separator: "; "),
+            findings: Set((forced.findings ?? []) + (managed.findings ?? [])).sorted())
     }
 
     func sameFile(installed: URL, shipped: URL) -> IntegrityResult {

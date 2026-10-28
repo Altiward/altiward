@@ -1,0 +1,63 @@
+_computerlevel[1] attribute: installationDate: 2026-10-28 11:31:49 +0000
+_computerlevel[1] attribute: organization: Example
+_computerlevel[1] attribute: profileIdentifier: www.windowsintune.com.custompayload.Altiward: login items
+_computerlevel[1] attribute: profileUUID: 2c62a9ef-2597-490c-b3cb-209c7c5c8d01
+_computerlevel[1] attribute: profileType: Configuration
+_computerlevel[1] attribute: removalDisallowed: TRUE
+_computerlevel[1] attribute: installedByMDM: TRUE
+_computerlevel[1]            payload[1] organization		= (null)
+_computerlevel[1]            payload[1] identifier		= com.altiward.profile.login-items.rules
+_computerlevel[1]            payload[1] uuid			= C35DC88D-C628-4434-8DD8-3C5BAB6C84A5
+_computerlevel[2] attribute: installationDate: 2026-10-28 14:13:29 +0000
+_computerlevel[2] attribute: organization: Example
+_computerlevel[2] attribute: profileIdentifier: com.apple.extensiblesso.05ed4566-e8eb-49b0-babd-93a4c5dc5fec
+_computerlevel[2] attribute: profileUUID: 1e0be878-78a0-4e8b-a3dd-e269c5bd081c
+_computerlevel[2] attribute: profileType: Configuration
+_computerlevel[2] attribute: removalDisallowed: TRUE
+_computerlevel[2] attribute: installedByMDM: TRUE
+_computerlevel[2]            payload[1] organization		= Example
+_computerlevel[2]            payload[1] identifier		= com.apple.extensiblesso.05ed4566-e8eb-49b0-babd-93a4c5dc5fec.payload
+_computerlevel[2]            payload[1] uuid			= b0c65649-2504-411f-a8a0-0b684116dc34
+_computerlevel[3] attribute: installationDate: 2026-10-28 11:31:50 +0000
+_computerlevel[3] attribute: organization: Example
+_computerlevel[3] attribute: profileIdentifier: www.windowsintune.com.custompayload.Altiward: hook and elevation settings
+_computerlevel[3] attribute: profileUUID: 57b1ff79-73d7-49cf-89b0-e5c8031a8e21
+_computerlevel[3] attribute: profileType: Configuration
+_computerlevel[3] attribute: removalDisallowed: TRUE
+_computerlevel[3] attribute: installedByMDM: TRUE
+_computerlevel[3]            payload[1] organization		= (null)
+_computerlevel[3]            payload[1] identifier		= com.altiward.profile.privileges.settings
+_computerlevel[3]            payload[1] uuid			= FD46A57A-0BA7-4987-9AE6-953FB98BDB9D
+_computerlevel[4] attribute: installationDate: 2026-10-28 11:31:50 +0000
+_computerlevel[4] attribute: organization: Example
+_computerlevel[4] attribute: profileIdentifier: www.windowsintune.com.custompayload.Altiward: agent settings
+_computerlevel[4] attribute: profileUUID: 7f93c4d9-d25c-440a-a47d-7ac58873569c
+_computerlevel[4] attribute: profileType: Configuration
+_computerlevel[4] attribute: removalDisallowed: TRUE
+_computerlevel[4] attribute: installedByMDM: TRUE
+_computerlevel[4]            payload[1] organization		= (null)
+_computerlevel[4]            payload[1] identifier		= com.altiward.profile.agent.settings
+_computerlevel[4]            payload[1] uuid			= A34D3A14-3839-4937-AEFD-14C4CB972C36
+_computerlevel[5] attribute: configurationDescription: Install this profile to get access to your company apps
+_computerlevel[5] attribute: installationDate: 2026-10-28 11:31:21 +0000
+_computerlevel[5] attribute: organization: Example
+_computerlevel[5] attribute: profileIdentifier: Microsoft.Profiles.MDM
+_computerlevel[5] attribute: profileUUID: C539BE6C-F080-4B24-A249-E9DD1CF6A4D6
+_computerlevel[5] attribute: profileType: Configuration
+_computerlevel[5] attribute: removalDisallowed: FALSE
+_computerlevel[5] attribute: installedByMDM: FALSE
+_computerlevel[5]            payload[1] description		= Install this profile to get access to your company apps
+_computerlevel[5]            payload[1] type			= com.apple.mdm
+_computerlevel[5]            payload[1] organization		= Example
+_computerlevel[5]            payload[1] identifier		= Microsoft.Payloads.MDM
+_computerlevel[5]            payload[1] uuid			= 67A5265B-12D4-4EB5-A2B3-72C683E33BCF
+_computerlevel[5]            payload[2] organization		= Microsoft
+_computerlevel[5]            payload[2] identifier		= www.windowsintune.com.credentials.issuer
+_computerlevel[5]            payload[2] uuid			= 3c0aae77-e919-4006-8a7e-fc3f94aab0f6
+_computerlevel[5]            payload[3] organization		= (null)
+_computerlevel[5]            payload[3] identifier		= Microsoft.Profiles.ACME
+_computerlevel[5]            payload[3] uuid			= CE876F81-ABF0-46F9-9E68-9B3A7EDE8097
+_computerlevel[5]            payload[4] organization		= Microsoft
+_computerlevel[5]            payload[4] identifier		= www.windowsintune.com.credentials
+_computerlevel[5]            payload[4] uuid			= 2a2eabeb-04b6-490e-be64-e3ba3092a61a
+There are 5 system configuration profiles installed

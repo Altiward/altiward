@@ -119,8 +119,8 @@ struct AgentStoreTests {
     @Test func freshStoreHasCurrentSchemaVersion() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("altiward-fresh-\(UUID().uuidString)")
         _ = try AgentStore.open(directory: dir)
-        #expect(try userVersion(of: dir) == 4)
-        #expect(AgentStore.schemaVersion == 4)
+        #expect(try userVersion(of: dir) == 5)
+        #expect(AgentStore.schemaVersion == 5)
     }
 
     /// 0.1.0 wrote no version. Its stores must open with their data and get the current version.
@@ -181,7 +181,7 @@ struct AgentStoreTests {
                     user: "jdoe", sessionID: "s1", source: .privileges, startedAt: start,
                     expiresAt: start.addingTimeInterval(1200), overdueReported: true))
         #expect(try store.value(forKey: "device_credential") == "secret")
-        #expect(try userVersion(of: dir) == 4)
+        #expect(try userVersion(of: dir) == 5)
     }
 
     /// Agent 0.2's stores are at version 1: they keep their data and gain `permanent_uses`.
@@ -193,8 +193,8 @@ struct AgentStoreTests {
         #expect(try userVersion(of: dir) == 1)
 
         let store = try AgentStore.open(directory: dir)
-        #expect(AgentStore.schemaVersion == 4)
-        #expect(try userVersion(of: dir) == 4)
+        #expect(AgentStore.schemaVersion == 5)
+        #expect(try userVersion(of: dir) == 5)
         #expect(try store.value(forKey: "device_credential") == "secret")
         let tables = try SQLiteConnection(path: dir.appendingPathComponent("agent.sqlite").path)
             .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'permanent_uses'")
@@ -238,8 +238,8 @@ struct AgentStoreTests {
         #expect(try userVersion(of: dir) == 2)
 
         let store = try AgentStore.open(directory: dir)
-        #expect(AgentStore.schemaVersion == 4)
-        #expect(try userVersion(of: dir) == 4)
+        #expect(AgentStore.schemaVersion == 5)
+        #expect(try userVersion(of: dir) == 5)
         #expect(try store.value(forKey: "device_credential") == "secret")
         #expect(try store.pendingClaims().isEmpty)
     }
@@ -259,7 +259,7 @@ struct AgentStoreTests {
             """)
 
         let store = try AgentStore.open(directory: dir)
-        #expect(try userVersion(of: dir) == 4)
+        #expect(try userVersion(of: dir) == 5)
         #expect(
             try store.openSession(user: "jdoe")
                 == OpenSession(user: "jdoe", sessionID: "s1", source: .privileges, startedAt: start, expiresAt: nil))
@@ -270,6 +270,49 @@ struct AgentStoreTests {
                 user: "jdoe", sessionID: "s1", source: .privileges, startedAt: start, expiresAt: nil,
                 upn: .read("jane.doe@example.com")))
         #expect(try store.openSession(user: "jdoe")?.upn == .read("jane.doe@example.com"))
+    }
+
+    /// Agent 1.1 with the UPN columns is at version 4: it keeps its data and gains the table of
+    /// MDM payloads, empty, so the agent has none stored until it reads the profiles.
+    @Test func aVersion4StoreGainsMDMPayloads() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("altiward-v4-\(UUID().uuidString)")
+        try writeVersion4Store(in: dir)
+        try SQLiteConnection(path: dir.appendingPathComponent("agent.sqlite").path)
+            .execute("INSERT INTO kv (key, value) VALUES ('device_credential', 'secret')")
+
+        let store = try AgentStore.open(directory: dir)
+        #expect(try userVersion(of: dir) == 5)
+        #expect(try store.value(forKey: "device_credential") == "secret")
+        #expect(try store.mdmPayloads() == nil)
+    }
+
+    @Test func mdmPayloadsRoundTripAndAreReplacedWhole() throws {
+        let store = try makeStore()
+        let readAt = Date(timeIntervalSince1970: 1_792_000_000.123)
+        let first = MDMPayloadSet(
+            [
+                MDMPayload(
+                    domain: "com.altiward.agent", profileUUID: "p1", payloadUUID: "u1",
+                    settings: [
+                        "ServerURL": .string("https://altiward.example.com"), "HeartbeatInterval": .integer(60),
+                        "PermanentAdmins": .array([.string("breakglass")]),
+                        "UserPrincipalNames": .dictionary(["jdoe": .string("jane.doe@example.com")]),
+                    ]),
+                MDMPayload(
+                    domain: "corp.sap.privileges", profileUUID: "p2", payloadUUID: "u2",
+                    settings: ["EnableSystemExtension": .bool(true), "ExpirationIntervalMax": .real(60.5)]),
+            ], readAt: readAt)
+        try store.saveMDMPayloads(first)
+        let back = try #require(try store.mdmPayloads())
+        #expect(back.sameSettings(as: first))
+        #expect(abs(back.readAt.timeIntervalSince(readAt)) < 0.001)
+        // A boolean stays a boolean, not the number 1.
+        #expect(back.payloads[1].settings["EnableSystemExtension"] == .bool(true))
+        #expect(back.payloads[1].settings["EnableSystemExtension"] != .integer(1))
+
+        // A clean read with no payloads is stored too: it isn't "never read".
+        try store.saveMDMPayloads(MDMPayloadSet([], readAt: readAt))
+        #expect(try store.mdmPayloads()?.payloads == [])
     }
 
     @Test func pendingClaimsRoundTrip() throws {
@@ -303,12 +346,12 @@ struct AgentStoreTests {
             try store.setValue("secret", forKey: "device_credential")
         }
         let path = dir.appendingPathComponent("agent.sqlite").path
-        try SQLiteConnection(path: path).execute("PRAGMA user_version = 5")
+        try SQLiteConnection(path: path).execute("PRAGMA user_version = 6")
 
-        #expect(throws: AgentStoreError.newerSchema(found: 5, supported: 4)) {
+        #expect(throws: AgentStoreError.newerSchema(found: 6, supported: 5)) {
             try AgentStore.open(directory: dir)
         }
-        #expect(try userVersion(of: dir) == 5)
+        #expect(try userVersion(of: dir) == 6)
         #expect(try SQLiteConnection(path: path).query("SELECT value FROM kv").first?.text(0) == "secret")
     }
 

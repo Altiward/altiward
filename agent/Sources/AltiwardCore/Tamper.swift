@@ -4,10 +4,13 @@ import Foundation
 /// when one changes: `failed` when it starts failing (or fails the first time it runs),
 /// `restored` when it passes again, `retired` when a failing check stops applying (so its
 /// alert doesn't stay open), and `detected` for a one-off finding: a downgrade, or an
-/// attempt Privileges blocked (``blockedEvents(_:now:device:)``).
+/// attempt Privileges blocked (``blockedEvents(_:now:device:)``). A failing check that names
+/// what fails (``IntegrityResult/findings``) is reported `failed` again when that changes.
 /// The last result of each check is kept in the store, so a restart doesn't repeat alerts.
 extension ElevationTracker {
     static let integrityKey = "integrity_state"
+    /// What each failing check named, by check: `{"settings_managed": ["…", …]}`.
+    static let integrityFindingsKey = "integrity_findings"
     static let versionKey = "agent_version_seen"
 
     public enum TamperState: String, Sendable {
@@ -17,32 +20,53 @@ extension ElevationTracker {
         case detected
     }
 
-    /// Runs inside the heartbeat's transaction.
-    func tamperEvents(_ results: [IntegrityCheck: IntegrityResult], now: Date, device: DeviceInfo) throws
-        -> [AltiwardEvent]
-    {
+    /// Runs inside the heartbeat's transaction. With `partial`, `results` holds only some
+    /// checks (``checkManagedSettings()``): the others keep their state, and none is retired.
+    func tamperEvents(
+        _ results: [IntegrityCheck: IntegrityResult], now: Date, device: DeviceInfo, partial: Bool = false
+    ) throws -> [AltiwardEvent] {
         let previous = try store.value(forKey: Self.integrityKey)
             .flatMap { try? JSONDecoder().decode([String: Bool].self, from: Data($0.utf8)) } ?? [:]
+        let previousFindings = try store.value(forKey: Self.integrityFindingsKey)
+            .flatMap { try? JSONDecoder().decode([String: [String]].self, from: Data($0.utf8)) } ?? [:]
         var events: [AltiwardEvent] = []
+        var state = partial ? previous : [:]
+        var findings = partial ? previousFindings : [:]
         for (check, result) in results.sorted(by: { $0.key < $1.key }) {
             let before = previous[check.rawValue]
+            if result.held {
+                // Keeps whatever it had, including not having run yet.
+                state[check.rawValue] = before
+                findings[check.rawValue] = previousFindings[check.rawValue]
+                continue
+            }
+            state[check.rawValue] = result.ok
+            findings[check.rawValue] = result.ok ? nil : result.findings
+            // Still failing, but on something else: a later problem mustn't hide behind the first.
+            let changed =
+                before == false && !result.ok && result.findings != nil
+                && previousFindings[check.rawValue] != result.findings
             // Unchanged, or passing the first time it runs: nothing to say.
-            guard before != result.ok, !(before == nil && result.ok) else { continue }
+            guard changed || (before != result.ok && !(before == nil && result.ok)) else { continue }
             events.append(
                 tamper(
                     check.rawValue, result.ok ? .restored : .failed, problem: result.problem, now: now, device: device))
         }
-        // A check that no longer applies is forgotten, closing its alert if it was failing. That
-        // includes a stored name this agent no longer knows, from an earlier version's check.
-        for (name, passing) in previous.sorted(by: { $0.key < $1.key }) where !passing {
-            let check = IntegrityCheck(rawValue: name)
-            if let check, results[check] != nil { continue }
-            let reason = check.map { retiredReason($0, device: device) } ?? "Altiward no longer runs this check"
-            events.append(tamper(name, .retired, problem: reason, now: now, device: device))
+        if !partial {
+            // A check that no longer applies is forgotten, closing its alert if it was failing. That
+            // includes a stored name this agent no longer knows, from an earlier version's check.
+            for (name, passing) in previous.sorted(by: { $0.key < $1.key }) where !passing {
+                let check = IntegrityCheck(rawValue: name)
+                if let check, results[check] != nil { continue }
+                let reason = check.map { retiredReason($0, device: device) } ?? "Altiward no longer runs this check"
+                events.append(tamper(name, .retired, problem: reason, now: now, device: device))
+            }
         }
-        let state = Dictionary(uniqueKeysWithValues: results.map { ($0.key.rawValue, $0.value.ok) })
         try store.setValue(
             String(decoding: try JSONEncoder().encode(state), as: UTF8.self), forKey: Self.integrityKey)
+        try store.setValue(
+            String(decoding: try JSONEncoder().encode(findings), as: UTF8.self), forKey: Self.integrityFindingsKey)
+        guard !partial else { return events }
 
         if let seen = try store.value(forKey: Self.versionKey), AgentVersion.isOlder(device.agentVersion, than: seen) {
             events.append(

@@ -16,12 +16,26 @@ final class Daemon: Sendable {
     let delivery: DeliveryLoop
     let authenticator: DeviceAuthenticator?
     let commands: CommandLoop?
+    /// MDM's payloads, in the installed agent; nil in development.
+    let managed: ManagedSettings?
+
+    /// Whether this is the installed agent: root, running from Altiward.app. Its settings come
+    /// from MDM's payloads, never from `ALTIWARD_*` overrides; anything else is development.
+    static var installed: Bool {
+        getuid() == 0 && Bundle.main.bundleIdentifier == "com.altiward.agent"
+    }
 
     /// `role` says whether this process may use a Secure Enclave key (``DeviceAuthenticator/Role``).
-    init(configuration: AgentConfiguration, role: DeviceAuthenticator.Role) throws {
+    /// `store` is the one `managed` was built on, when the installed agent opened it already.
+    init(
+        configuration: AgentConfiguration, role: DeviceAuthenticator.Role, store: AgentStore? = nil,
+        managed: ManagedSettings? = nil
+    ) throws {
         self.configuration = configuration
-        store = try AgentStore.open(directory: configuration.dataDirectory)
-        tracker = ElevationTracker(store: store, environment: .live(config: configuration))
+        self.managed = managed
+        self.store = try store ?? AgentStore.open(directory: configuration.dataDirectory)
+        let store = self.store
+        tracker = ElevationTracker(store: store, environment: .live(config: configuration, managed: managed))
         if let url = configuration.serverURL, let token = configuration.enrollmentToken {
             authenticator = DeviceAuthenticator(
                 store: store, serverURL: url, enrollmentToken: token, mdmDeviceID: configuration.mdmDeviceID,
@@ -41,9 +55,19 @@ final class Daemon: Sendable {
     /// so a profile that arrives after the package, as MDMs often send them, or that changes
     /// later would otherwise wait for a reboot, with events queueing meanwhile. Every event
     /// is already in the store, so exiting loses nothing.
-    static func restartIfSettingsChanged(from running: AgentConfiguration) {
+    ///
+    /// In the installed agent the settings are MDM's payloads as last read (by the heartbeat or
+    /// the watcher; this never runs `profiles`), once two reads in a row agree.
+    static func restartIfSettingsChanged(from running: AgentConfiguration, managed: ManagedSettings?) {
         CFPreferencesAppSynchronize(AgentConfiguration.domain as CFString)
-        let changed = running.changedSettings(.load())
+        let next: AgentConfiguration
+        if let managed {
+            guard let settled = managed.settledConfiguration() else { return }
+            next = settled
+        } else {
+            next = .load()
+        }
+        let changed = running.changedSettings(next)
         guard !changed.isEmpty else { return }
         log.notice("settings changed (\(changed.joined(separator: ", "), privacy: .public)); restarting to apply them")
         exit(0)
@@ -137,7 +161,7 @@ final class Daemon: Sendable {
 
         // Raises admins nobody granted and records sign-ins by permanent admins without waiting
         // for the heartbeat, and restarts the agent when its settings change.
-        Task { [tracker, delivery, configuration] in
+        Task { [tracker, delivery, configuration, managed] in
             while true {
                 do {
                     let raised = try tracker.checkUntrackedAdmins()
@@ -160,7 +184,7 @@ final class Daemon: Sendable {
                 } catch {
                     log.error("permanent admin check failed: \(String(describing: error), privacy: .public)")
                 }
-                Self.restartIfSettingsChanged(from: configuration)
+                Self.restartIfSettingsChanged(from: configuration, managed: managed)
                 try? await Task.sleep(for: Self.checkInterval)
             }
         }
@@ -199,6 +223,23 @@ final class Daemon: Sendable {
             }
         }
 
+        // A managed preferences file changed: compare them with MDM's payloads now, not at the
+        // next heartbeat, by when a setting forged for one elevation could be back.
+        let watcher = managed.map { managed in
+            ManagedPreferencesWatcher.forSettings(
+                tracker: tracker, managed: managed, onEvents: { [tracker, delivery] events in
+                    Self.logTampers(events)
+                    guard !events.isEmpty else { return }
+                    Task {
+                        Self.checkPersistence(tracker)
+                        await delivery.flush()
+                    }
+                })
+        }
+        if let watcher, !watcher.start() {
+            log.error("can't watch /Library/Managed Preferences; the heartbeat still checks it")
+        }
+
         let flushInterval = configuration.flushInterval
         Task { [delivery] in
             while true {
@@ -208,7 +249,7 @@ final class Daemon: Sendable {
         }
 
         log.info("altiward-agent \(AgentVersion.current, privacy: .public) started")
-        withExtendedLifetime((listener, delegate, monitor)) {
+        withExtendedLifetime((listener, delegate, monitor, watcher)) {
             dispatchMain()
         }
     }
@@ -276,6 +317,7 @@ final class Daemon: Sendable {
 
     func printStatus() async throws {
         print("data directory: \(configuration.dataDirectory.path)")
+        print("settings: \(Self.settingsSource(managed?.latest))")
         print("server: \(configuration.serverURL?.absoluteString ?? "(not configured)")")
         let deviceID = await authenticator?.deviceID
         print("device id: \(deviceID ?? "(not enrolled)")")
@@ -304,6 +346,18 @@ final class Daemon: Sendable {
         } else {
             print("persistence snapshot: (none yet)")
         }
+    }
+
+    /// Where the agent's settings come from, for `status`.
+    static func settingsSource(_ state: ManagedSettingsState?) -> String {
+        guard let state else { return "com.altiward.agent preferences (development)" }
+        if state.unmanaged { return "com.altiward.agent preferences: this Mac isn't enrolled in MDM" }
+        guard let payloads = state.payloads else { return "none: the installed profiles can't be read" }
+        let read = AltiwardJSON.format(payloads.readAt)
+        if let error = state.readError { return "MDM's profiles as read \(read); they can't be read now (\(error))" }
+        if state.notEnrolled { return "MDM's profiles as read \(read); no MDM enrolment shows now" }
+        if state.agentPayloadMissing { return "MDM's profiles as read \(read); no MDM profile sets them now" }
+        return "MDM's profiles, read \(read)"
     }
 
     static func printFlush(_ r: FlushResult) {
@@ -390,5 +444,35 @@ final class HookHandler: NSObject, AltiwardAgentXPC, Sendable {
             log.error("rejected hook payload: \(String(describing: error), privacy: .public)")
             reply(false, String(describing: error))
         }
+    }
+}
+
+extension ManagedPreferencesWatcher {
+    /// How long to wait before reading the profiles again while MDM's payloads are settling.
+    static let recheck: TimeInterval = 30
+
+    /// A watcher that runs the settings check and passes on its events. While the payloads have
+    /// just changed it checks again every ``recheck`` seconds: a new configuration applies after
+    /// two equal reads, and differences held after a profile change are looked at again.
+    static func forSettings(
+        tracker: ElevationTracker, managed: ManagedSettings, onEvents: @escaping @Sendable ([AltiwardEvent]) -> Void
+    ) -> ManagedPreferencesWatcher {
+        let me = OSAllocatedUnfairLock<ManagedPreferencesWatcher?>(initialState: nil)
+        let watcher = ManagedPreferencesWatcher {
+            do {
+                onEvents(try tracker.checkManagedSettings())
+            } catch {
+                log.error("settings check failed: \(String(describing: error), privacy: .public)")
+            }
+            let state = managed.latest
+            let settling =
+                state.readError == nil && state.payloads != nil
+                && (!state.stable
+                    || state.changedAt.map { Date().timeIntervalSince($0) < ManagedSettingsCheck.profileChangeGrace }
+                        ?? false)
+            if settling { me.withLock { $0 }?.trigger(after: recheck) }
+        }
+        me.withLock { $0 = watcher }
+        return watcher
     }
 }

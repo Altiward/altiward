@@ -236,6 +236,17 @@ func writeVersion3Store(in dir: URL) throws {
         """)
 }
 
+func writeVersion4Store(in dir: URL) throws {
+    try writeVersion3Store(in: dir)
+    let db = try SQLiteConnection(path: dir.appendingPathComponent("agent.sqlite").path)
+    try db.execute(
+        """
+        ALTER TABLE open_sessions ADD COLUMN upn TEXT;
+        ALTER TABLE pending_claims ADD COLUMN upn TEXT;
+        PRAGMA user_version = 4;
+        """)
+}
+
 // Whole milliseconds: the wire format keeps no more precision than that.
 func sampleEvent(id: String = newID(), at date: Date = Date(timeIntervalSince1970: 1_792_000_000.123)) -> AltiwardEvent {
     AltiwardEvent(

@@ -209,6 +209,17 @@ public final class AgentStore: @unchecked Sendable {
         ALTER TABLE open_sessions ADD COLUMN upn TEXT;
         ALTER TABLE pending_claims ADD COLUMN upn TEXT;
         """,
+        // 4 -> 5: the settings payloads MDM installed, from the last clean read of the
+        // installed profiles (1.2.0).
+        """
+        CREATE TABLE mdm_payloads (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            domain TEXT NOT NULL,
+            profile_uuid TEXT NOT NULL,
+            payload_uuid TEXT NOT NULL,
+            settings BLOB NOT NULL
+        );
+        """,
     ]
 
     /// The layout this build writes.
@@ -531,6 +542,40 @@ public final class AgentStore: @unchecked Sendable {
     public func pruneCommandResults(reportedBefore date: Date) throws {
         try locked {
             try db.run("DELETE FROM command_results WHERE reported_at < ?", [.double(date.timeIntervalSince1970)])
+        }
+    }
+
+    // MARK: MDM payloads
+
+    static let mdmPayloadsReadAtKey = "mdm_payloads_read_at"
+
+    /// Replaces the stored MDM payloads with `set`, which may be empty.
+    public func saveMDMPayloads(_ set: MDMPayloadSet) throws {
+        let rows = try set.payloads.map { ($0, try PlistValue.encode($0.settings)) }
+        try transaction {
+            try db.execute("DELETE FROM mdm_payloads")
+            for (p, settings) in rows {
+                try db.run(
+                    "INSERT INTO mdm_payloads (domain, profile_uuid, payload_uuid, settings) VALUES (?, ?, ?, ?)",
+                    [.text(p.domain), .text(p.profileUUID), .text(p.payloadUUID), .blob(settings)])
+            }
+            try setValue(AltiwardJSON.format(set.readAt), forKey: Self.mdmPayloadsReadAtKey)
+        }
+    }
+
+    /// The stored MDM payloads; nil when none were ever stored.
+    public func mdmPayloads() throws -> MDMPayloadSet? {
+        try locked {
+            guard let readAt = try value(forKey: Self.mdmPayloadsReadAtKey).flatMap(AltiwardJSON.parse) else {
+                return nil
+            }
+            let payloads = try db.query("SELECT domain, profile_uuid, payload_uuid, settings FROM mdm_payloads ORDER BY seq")
+                .map { row in
+                    MDMPayload(
+                        domain: row.text(0)!, profileUUID: row.text(1)!, payloadUUID: row.text(2)!,
+                        settings: try PlistValue.decode(row.blob(3)!))
+                }
+            return MDMPayloadSet(payloads, readAt: readAt)
         }
     }
 
