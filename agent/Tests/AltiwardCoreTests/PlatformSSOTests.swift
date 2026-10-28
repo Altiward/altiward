@@ -77,6 +77,15 @@ struct PlatformSSOTests {
         #expect(PlatformSSO.upn(fromAltSecurityIdentities: values) == nil)
     }
 
+    /// A value crafted to make a backtracking pattern run for days is turned down at once.
+    @Test func aCraftedValueIsRejectedQuickly() {
+        let crafted = "PlatformSSO:a@" + String(repeating: "ab.", count: 80) + "!"
+        let start = Date()
+        #expect(PlatformSSO.upn(fromAltSecurityIdentities: [crafted]) == nil)
+        #expect(Date().timeIntervalSince(start) < 0.05)
+        #expect(PlatformSSO.isUPN("a@" + String(repeating: "ab.", count: 60) + "com"))
+    }
+
     /// The live read, against this Mac's directory: it answers, and root isn't linked.
     @Test func theLiveReadAnswers() throws {
         let links = try #require(PlatformSSO.allLinks())
@@ -256,6 +265,33 @@ struct PlatformSSOTests {
         let event = try #require(try tracker(true).checkPlatformSSOLinks().first)
         #expect(event.detail["user"] == "jdoe")
         #expect(event.detail["upn"] == "ceo@example.com")
+    }
+
+    /// Entra ID changing only a UPN's case: the new spelling is recorded, and nothing is sent.
+    @Test func aChangeOfCaseIsRecordedQuietly() throws {
+        let (tracker, _) = try recorded()
+        links.withLock { $0 = ["jdoe": "Jane.Doe@example.com"] }
+        #expect(try tracker.checkPlatformSSOLinks().isEmpty)
+        #expect(tracker.upn(for: "jdoe") == "Jane.Doe@example.com")
+        // Nor after unlinking, when it is compared with the last link.
+        links.withLock { $0 = [:] }
+        try tracker.checkPlatformSSOLinks()
+        links.withLock { $0 = ["jdoe": "jane.doe@EXAMPLE.com"] }
+        #expect(try tracker.checkPlatformSSOLinks().first?.detail["check"] == "platform_sso_link")
+    }
+
+    /// Before the links were first read, a session's UPN is unknown, not none: it takes the
+    /// UPN once the links are on record.
+    @Test func beforeTheFirstReadASessionsUPNIsUnknown() throws {
+        let (tracker, store) = try tracker()
+        admins.set(["jdoe"])
+        #expect(try tracker.record(claim()).user?.upn == nil)
+        #expect(try store.openSession(user: "jdoe")?.upn == .unknown)
+        try tracker.checkPlatformSSOLinks()
+        admins.set([])
+        clock.advance(60)
+        let revoked = try #require(try tracker.heartbeat().first { $0.type == .elevationRevoked })
+        #expect(revoked.user?.upn == "jane.doe@example.com")
     }
 
     @Test func anUnreadableDirectoryKeepsTheRecord() throws {

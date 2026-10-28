@@ -215,17 +215,18 @@ Create these in your MDM and scope them to a pilot group first.
    **Where a UPN comes from.** The agent keeps its own record of each Mac account's
    Platform SSO link, and events take the UPN from that record, never straight from the
    Mac. It reads the links when it starts, on every heartbeat and after each grant and
-   give-back, and reports every change to them, whenever it happens, as tampering:
+   give-back, and reports each change it finds since its last read, with or without anyone
+   elevated, as tampering (its very first read, at install or upgrade, only records):
    **Platform SSO link changed** (High) when an account moves from one person's account to
-   another's, and **Platform SSO link added or removed** (Medium) otherwise. A link added is
+   another's, and **Platform SSO link added or removed** (Medium) otherwise. A change of
+   case alone is recorded without a report. A link added is
    also High when the account was last linked to someone else (unlinked and linked again,
    or deleted and made again), when another Mac account has the same link, or when someone
    held admin rights at the time. A person registering for Platform SSO adds a link, once.
    A person's UPN changing in Entra ID is the usual innocent cause of a changed link: their
    Entra ID audit log shows it. Turning `PlatformSSOIdentity` off and on again reports every
-   link as added. An
-   elevation keeps the UPN on record when its grant arrived, or none if there was none,
-   so a link changed during the elevation can't move it onto someone else.
+   link as added. An elevation keeps the UPN on record when its grant arrived, or none if
+   there was none, so a link changed during the elevation can't move it onto someone else.
 2. **Login items profile** (`altiward-login-items.mobileconfig`), so people can't turn
    the agent off and don't see a background-item notice.
 3. **SAP Privileges:** download `corp.sap.privileges.plist` from the **same agent release

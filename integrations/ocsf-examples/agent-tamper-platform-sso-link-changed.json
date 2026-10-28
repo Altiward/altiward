@@ -25,16 +25,16 @@
         "type_id": 1
       },
       "created_time": 1793202012000,
-      "desc": "A Mac account was linked to another person's account in Platform SSO on C02XK0AAJGH5: jdoe's Mac account moved from jane.doe@example.com to ceo@example.com in Platform SSO",
+      "desc": "A Mac account's Platform SSO link may now name someone else on C02XK0AAJGH5: jdoe's Mac account moved from jane.doe@example.com to ceo@example.com in Platform SSO",
       "first_seen_time": 1793202012000,
-      "title": "A Mac account was linked to another person's account in Platform SSO",
+      "title": "A Mac account's Platform SSO link may now name someone else",
       "types": [
         "Defense Evasion"
       ],
       "uid": "5d2e8f14-7a3b-4c6e-9f01-2b4d6a8c0e13"
     },
     "is_alert": true,
-    "message": "A Mac account was linked to another person's account in Platform SSO on C02XK0AAJGH5: jdoe's Mac account moved from jane.doe@example.com to ceo@example.com in Platform SSO",
+    "message": "A Mac account's Platform SSO link may now name someone else on C02XK0AAJGH5: jdoe's Mac account moved from jane.doe@example.com to ceo@example.com in Platform SSO",
     "metadata": {
       "logged_time": 1793202012000,
       "product": {

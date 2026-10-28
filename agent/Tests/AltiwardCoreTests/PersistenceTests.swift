@@ -296,6 +296,13 @@ struct PersistenceTests {
         #expect(try #require(try t.checkPersistence().first).user?.upn == "jane.doe@example.com")
     }
 
+    @Test(arguments: [PinnedUPN.unknown, .read(nil), .read("jane.doe@example.com")])
+    func sessionPinsRoundTripInTheBaseline(pin: PinnedUPN) throws {
+        let ref = PersistenceBaseline.SessionRef(user: "jdoe", sessionID: "s1", source: .privileges, upn: pin)
+        let data = try AltiwardJSON.encoder().encode(ref)
+        #expect(try AltiwardJSON.decoder().decode(PersistenceBaseline.SessionRef.self, from: data).upn == pin)
+    }
+
     /// A baseline an older agent stored, with no UPN on its sessions, still reads.
     @Test func anOlderBaselineStillDecodes() throws {
         let json = #"{"takenAt":"2026-10-28T10:00:00.000Z","items":[],"sessions":[{"user":"jdoe","sessionID":"s1","source":"privileges"}],"unreadable":[]}"#

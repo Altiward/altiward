@@ -276,7 +276,7 @@ public final class ElevationTracker: Sendable {
     ) throws -> AltiwardEvent {
         let device = env.device()
         // Now, as the claim arrives: a grant's session keeps it.
-        let upn = upn(for: invocation.user)
+        let pin = pinNow(for: invocation.user)
         // Read before the transaction: it can wait a moment for Privileges to write it. A
         // fixed ExpirationInterval decides the expiry without it.
         let timer =
@@ -289,7 +289,7 @@ public final class ElevationTracker: Sendable {
             case .admin:
                 let granted = try applyGrant(
                     invocation, callerUID: callerUID, grantedAt: invocation.invokedAt, timer: timer,
-                    extraDetail: grantDetail, skipLateCheck: false, upn: upn, device: device)
+                    extraDetail: grantDetail, skipLateCheck: false, upn: pin, device: device)
                 if let replaced = granted.replaced { try store.enqueue(replaced) }
                 event = granted.event
             case .user:
@@ -310,7 +310,7 @@ public final class ElevationTracker: Sendable {
                 event = AltiwardEvent(
                     type: .elevationRevoked, sessionID: existing?.sessionID ?? newID(),
                     timestamp: invocation.invokedAt, device: device,
-                    user: existing.map(sessionUser) ?? UserInfo(localName: invocation.user, upn: upn),
+                    user: existing.map(sessionUser) ?? UserInfo(localName: invocation.user, upn: upn(pin, of: invocation.user)),
                     elevation: ElevationInfo(reason: invocation.reason, source: existing?.source ?? .privileges),
                     detail: detail)
             }
@@ -349,7 +349,7 @@ public final class ElevationTracker: Sendable {
     /// the claim arrived; a new session keeps it, and a renewal keeps the session's.
     func applyGrant(
         _ invocation: HookInvocation, callerUID: UInt32?, grantedAt: Date, timer: Date?,
-        extraDetail: [String: JSONValue], skipLateCheck: Bool, upn: String?, device: DeviceInfo
+        extraDetail: [String: JSONValue], skipLateCheck: Bool, upn claimPin: PinnedUPN, device: DeviceInfo
     ) throws -> (event: AltiwardEvent, replaced: AltiwardEvent?) {
         // Read inside the transaction, so a grant can't commit between the read and the decision.
         let observedAdmin = env.admins.isAdmin(user: invocation.user)
@@ -360,7 +360,8 @@ public final class ElevationTracker: Sendable {
         // A grant while a Privileges session is open renews that session.
         let renewing = existing?.source == .privileges ? existing : nil
         let sessionID = renewing?.sessionID ?? newID()
-        let user = UserInfo(localName: invocation.user, upn: renewing.map { self.upn($0.upn, of: $0.user) } ?? upn)
+        let pin = renewing?.upn ?? claimPin
+        let user = UserInfo(localName: invocation.user, upn: upn(pin, of: invocation.user))
         let limit = env.privileges().expiry(grantedAt: grantedAt, timer: timer)
         let expiresAt = limit?.date
         detail["renewed"] = .bool(renewing != nil)
@@ -386,7 +387,7 @@ public final class ElevationTracker: Sendable {
             OpenSession(
                 user: invocation.user, sessionID: sessionID, source: .privileges,
                 startedAt: renewing?.startedAt ?? invocation.invokedAt, expiresAt: expiresAt,
-                overdueReported: unchanged && renewing?.overdueReported == true, upn: .read(user.upn)))
+                overdueReported: unchanged && renewing?.overdueReported == true, upn: pin))
         let event = AltiwardEvent(
             type: .elevationGranted, sessionID: sessionID, timestamp: invocation.invokedAt,
             device: device, user: user,
@@ -785,11 +786,12 @@ public final class ElevationTracker: Sendable {
     ) throws -> AltiwardEvent {
         let sessionID = newID()
         let firstObserved = startedAt ?? now
+        let pin = pin == .unknown ? pinNow(for: user) : pin
         let upn = upn(pin, of: user)
         try store.upsertOpenSession(
             OpenSession(
                 user: user, sessionID: sessionID, source: .outOfBand, startedAt: firstObserved, expiresAt: nil,
-                upn: .read(upn)))
+                upn: pin))
         var detail: [String: JSONValue] = ["first_observed": .date(firstObserved)]
         if let instigator = try instigator(of: user, in: audit) { detail["instigator"] = instigator }
         return AltiwardEvent(

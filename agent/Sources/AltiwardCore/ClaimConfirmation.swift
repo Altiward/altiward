@@ -132,7 +132,7 @@ extension ElevationTracker {
         try store.addPendingClaim(
             PendingClaim(
                 claimID: claimID, invocation: invocation, callerUID: callerUID,
-                upn: .read(upn(for: invocation.user))))
+                upn: pinNow(for: invocation.user)))
         return .pending(claimID: claimID)
     }
 
@@ -341,7 +341,7 @@ extension ElevationTracker {
                             invocation, callerUID: claim.callerUID, grantedAt: invocation.invokedAt,
                             timer: timers[claim.claimID],
                             extraDetail: permanent ? [:] : ["privileges_log": "unavailable"],
-                            skipLateCheck: false, upn: upn(claim.upn, of: invocation.user), device: device)
+                            skipLateCheck: false, upn: claim.upn, device: device)
                         if let replaced = granted.replaced { try queue(replaced) }
                         try queue(granted.event)
                     } catch let refusal as ClaimRefused {
@@ -366,7 +366,7 @@ extension ElevationTracker {
                                 "privileges_log": "confirmed", "confirmed_at": .date(now),
                                 "evidence": .strings(found.sources.map(\.rawValue).sorted()),
                             ],
-                            skipLateCheck: true, upn: upn(claim.upn, of: invocation.user), device: device)
+                            skipLateCheck: true, upn: claim.upn, device: device)
                         if let replaced = granted.replaced { try queue(replaced) }
                         try queue(granted.event)
                     } catch let refusal as ClaimRefused {
@@ -401,7 +401,7 @@ extension ElevationTracker {
                         let granted = try applyGrant(
                             invocation, callerUID: claim.callerUID, grantedAt: invocation.invokedAt,
                             timer: timers[claim.claimID], extraDetail: ["privileges_log": "unavailable"],
-                            skipLateCheck: false, upn: upn(claim.upn, of: invocation.user), device: device)
+                            skipLateCheck: false, upn: claim.upn, device: device)
                         if let replaced = granted.replaced { try queue(replaced) }
                         try queue(granted.event)
                         try queue(
@@ -433,7 +433,7 @@ extension ElevationTracker {
                     let granted = try applyGrant(
                         invocation, callerUID: claim.callerUID, grantedAt: invocation.invokedAt,
                         timer: timers[claim.claimID], extraDetail: ["privileges_log": "not_confirmed"],
-                        skipLateCheck: false, upn: upn(claim.upn, of: invocation.user), device: device)
+                        skipLateCheck: false, upn: claim.upn, device: device)
                     if let replaced = granted.replaced { try queue(replaced) }
                     try queue(granted.event)
                     try queue(

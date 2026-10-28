@@ -57,6 +57,9 @@ final class Daemon: Sendable {
             log.warning("HookCodeRequirement not configured; accepting XPC from any local process")
         }
 
+        // Before anything that makes events, so the first ones have the links on record.
+        Self.checkPlatformSSOLinks(tracker)
+
         // Sign-ins by permanent admins that began and ended while the daemon wasn't running.
         // Once, before the checks below, which would otherwise end their rows as "noticed".
         do {
@@ -64,9 +67,6 @@ final class Daemon: Sendable {
         } catch {
             log.error("permanent admin catch-up failed: \(String(describing: error), privacy: .public)")
         }
-
-        // Before any claim, so the first sessions have the links on record.
-        Self.checkPlatformSSOLinks(tracker)
 
         let listener = NSXPCListener(machServiceName: altiwardMachServiceName)
         let delegate = ListenerDelegate(

@@ -13,11 +13,9 @@ private let log = Logger(subsystem: "com.altiward.agent", category: "platform-ss
 public enum PlatformSSO {
     static let attribute = "dsAttrTypeStandard:AltSecurityIdentities"
     static let prefix = "PlatformSSO:"
-    /// ASCII only, so homoglyphs, invisible characters and Unicode case folding can't make
-    /// one UPN pass for another; a domain of dotted labels, none starting or ending with `-`.
-    nonisolated(unsafe) static let shape =
-        /^[A-Za-z0-9._%+'!#^~-]{1,64}@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/
     static let maxLength = 254
+    static let alphanumerics = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".unicodeScalars)
+    static let localExtras = Set("._%+'!#^~-".unicodeScalars)
 
     /// The UPN in an account's `AltSecurityIdentities`: the text after the one value that
     /// starts `PlatformSSO:`. Nil when no value does, when more than one value starts with it
@@ -26,7 +24,27 @@ public enum PlatformSSO {
         let candidates = values.filter { $0.lowercased().hasPrefix(prefix.lowercased()) }
         guard candidates.count == 1, let value = candidates.first, value.hasPrefix(prefix) else { return nil }
         let upn = String(value.dropFirst(prefix.count))
-        return upn.count <= maxLength && upn.wholeMatch(of: shape) != nil ? upn : nil
+        return isUPN(upn) ? upn : nil
+    }
+
+    /// A plain ASCII UPN: 1 to 64 of letters, digits and `._%+'!#^~-`, an `@`, and a domain of
+    /// two or more dotted labels of 1 to 63 letters, digits and hyphens, none starting or
+    /// ending with a hyphen. ASCII only, so homoglyphs, invisible characters and Unicode case
+    /// folding can't make one UPN pass for another. Checked in one pass, not with a pattern
+    /// that could backtrack on a crafted value.
+    static func isUPN(_ text: String) -> Bool {
+        let scalars = Array(text.unicodeScalars)
+        guard scalars.count <= maxLength, let at = scalars.firstIndex(of: "@") else { return false }
+        let local = scalars[..<at]
+        let domain = scalars[(at + 1)...]
+        guard (1...64).contains(local.count), local.allSatisfy({ alphanumerics.contains($0) || localExtras.contains($0) })
+        else { return false }
+        let labels = domain.split(separator: ".", omittingEmptySubsequences: false)
+        return labels.count >= 2
+            && labels.allSatisfy { label in
+                (1...63).contains(label.count) && label.first != "-" && label.last != "-"
+                    && label.allSatisfy { alphanumerics.contains($0) || $0 == "-" }
+            }
     }
 
     /// Every local account's link, by short name; nil when the directory can't be read, as
@@ -107,7 +125,8 @@ extension ElevationTracker {
             var events: [AltiwardEvent] = []
             for user in Set(record.links.keys).union(links.keys).sorted() {
                 let (before, after) = (record.links[user], links[user])
-                guard before != after else { continue }
+                // Spelling alone, as when Entra ID changes a UPN's case: recorded, not reported.
+                guard before?.lowercased() != after?.lowercased() else { continue }
                 guard let after else {
                     next.last[user] = before
                     // A gone account can't sign in or elevate; recreated, it is compared with
@@ -127,7 +146,7 @@ extension ElevationTracker {
                 let (check, problem): (String, String) =
                     if let before {
                         (Self.platformSSOLinkChangedCheck, "\(user)'s Mac account moved from \(before) to \(after) in Platform SSO")
-                    } else if let last, last != after {
+                    } else if let last, last.lowercased() != after.lowercased() {
                         (
                             Self.platformSSOLinkChangedCheck,
                             "\(user)'s Mac account, last linked to \(last), is now linked to \(after) in Platform SSO"
@@ -187,6 +206,17 @@ extension ElevationTracker {
                 return nil
             }
         }
+    }
+
+    /// The pin for a session or claim starting now: the UPN on record. Before the links were
+    /// first read (the directory was unreadable when the daemon started), it is unknown rather
+    /// than none, so the session's events take the UPN once the links are on record.
+    func pinNow(for user: String) -> PinnedUPN {
+        let mapped = env.config.userPrincipalNamesForced && env.config.userPrincipalNames[user] != nil
+        if !mapped, env.config.platformSSOIdentity, (try? store.value(forKey: Self.platformSSOLinksKey)) ?? nil == nil {
+            return .unknown
+        }
+        return .read(upn(for: user))
     }
 
     /// The UPN a pin holds, or for a session or claim an older agent stored, the one now.
