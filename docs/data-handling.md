@@ -156,10 +156,11 @@ the Mac, with the full lists and their counts even when the group is empty. CEF 
 person's name in `duser`, as does Sentinel's `UserName` column, and the Mac's record names
 no one. The volume is about one record for each admin on each Mac every day, one for each
 Mac every day, and four for each elevation: two for the person (added, then removed) and
-two for the Mac. The first time a server starts after upgrading to the version that
+two for the Mac. An hour after a server first starts after upgrading to the version that
 raises these events, a one-off job raises them from the readings already stored, and
-history expiry waits for it. `replay-exports` sends them to a SIEM connected later like
-any other event, while they are kept.
+history expiry waits for it. They wait another hour before they are sent, so that a server
+of the older version still running during the update can't take them. `replay-exports`
+sends them to a SIEM connected later like any other event, while they are kept.
 
 In the example deployment, Caddy also asks Let's Encrypt for TLS certificates unless you
 provide your own. If you pull the image from the registry instead of loading the file,
@@ -216,7 +217,7 @@ Everything is in your Postgres database.
 | Console sign-in sessions: the person's email, name, identity-provider ID and role | 12 hours at most, 1 hour idle; removed on sign-out, or when an admin ends it |
 | Events waiting for each SIEM | Until the SIEM accepts them |
 | When each SIEM last accepted something | Replaced at each delivery |
-| Each SIEM's coverage date (the first time a server running this version started with it configured), or the date its history was replayed from if earlier | Forever |
+| Each SIEM's coverage date (an hour after a server running this version first started with it configured, or after a start that configured it again), or the date its history was replayed from if earlier, and whether the last start was without it | Until `drop-exports` drops that SIEM's queue |
 | When the server was set up, whether the admin group has been sent from stored readings, and the secret that makes the IDs of the server's own events unguessable | Forever |
 | With Intune connected, each Mac Intune manages: its Intune device ID, serial number, Entra device ID, primary user's UPN, device name and last check-in. Also when the copy was last refreshed, and its last error | Replaced at every sync, every 15 minutes; a failed sync keeps the last copy. Deleted when Intune is turned off, at the server's next start |
 
@@ -252,14 +253,20 @@ It never removes:
 
 - an event a SIEM is still waiting for;
 - under the default period, an event received before the latest SIEM's coverage date. That
-  date is the first time a server running this version started with the SIEM configured, so
-  on a server that already sent to a SIEM it is the upgrade, not when you really connected
-  it. Nothing received before it is removed until you send that history to the SIEM with
+  date is an hour after the first time a server running this version started with the SIEM
+  configured, by the database's clock: the hour covers a rolling update, while a replica
+  without the SIEM may still store events it doesn't queue for it. On a server that already
+  sent to a SIEM it is the upgrade, not when you really connected it. If a server starts
+  without a SIEM's settings and you restore them later, the date moves to an hour after the
+  start that restores them, since nothing was queued for the SIEM in between. Nothing
+  received before the date is removed until you send that history to the SIEM with
   `replay-exports` ([Connect your SIEM](install.md#4-connect-your-siem)), which moves the
   date back to the date it replays from. A period you set yourself isn't held back by
   this, but still never takes an event a SIEM is waiting for;
 - anything from the last 90 days, whatever the setting. Postgres refuses to delete such
-  rows, whatever the server asks;
+  rows, or to change when an event was received or a command created, whatever the server
+  asks. That guards against the server's own mistakes, not against someone who owns the
+  database;
 - Activity (which has its own period), console sign-in sessions, SIEM delivery state or enrolment keys.
 
 Expiry doesn't start until the admin group has been sent from stored readings (above), which

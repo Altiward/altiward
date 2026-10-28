@@ -16,7 +16,7 @@ refuses them.
 | `internal/ocsf` | Mapping to OCSF 1.9.0 for export |
 | `internal/export` | Outbox worker plus Splunk, Sentinel and syslog (CEF) sinks |
 | `internal/admingroup` | Decides the `agent.admin_group` events (`changed` and `snapshot`) from a health reading and the group last sent for the Mac |
-| `internal/monitor` | Raises `agent.silent` for a Mac that stops checking in, and the daily `agent.admin_group` snapshots. A retired Mac gets no new silence alert and no snapshot |
+| `internal/monitor` | Raises `agent.silent` for a Mac that stops checking in, and the daily `agent.admin_group` snapshots, the first an hour after the server starts, after the one-off backfill of the admin group from readings stored before the upgrade. A retired Mac gets no new silence alert and no snapshot |
 | `internal/retention` | Removes audit entries past `ALTIWARD_AUDIT_RETENTION_DAYS`, daily. `History` removes events, ended sessions, commands and quiet Macs past each organisation's `history_days`, daily, and never what a SIEM still waits for ([data handling](../docs/data-handling.md#how-long-history-is-kept)) |
 | `internal/diagnose` | The `altiward-api diagnose` support report |
 | `internal/release` | `OldestSupportedAgent` and the agent version check |
@@ -86,7 +86,7 @@ token in `X-CSRF-Token`; requests with a token don't.
 | `GET /v1/overview?days=7\|30\|90` | The console's overview, worked out by `internal/report` from session and device state and each SIEM's queue: admins now by source, alerts, the period's elevations per day (per week over 90 days), median time held against allowed, the top five people and Macs, agent versions and SIEM state. 30 days by default. Retired Macs are left out of the counts of Macs (failing checks, silent, health, agent versions) but not of open sessions or what happened in the period. |
 | `GET /v1/enrollments` | Device credentials, newest first. Query: `status` (`active`, `pending`, `revoked`), `serial`. A key made by rotation has `rotated_from`, the key it replaced; a key that rotation replaced is `revoked` and has `rotated_to`, the key that replaced it. Both are left out when empty. |
 | `POST /v1/enrollments/{device_id}/approve` | Activate a pending re-enrollment; revokes the Mac's previous credential. |
-| `POST /v1/enrollments/{device_id}/revoke` | Revoke a credential. Revoking a Mac's only active key, with none pending, retires the Mac (`retired_at`), and the entry in Activity says `retired`, and `open_sessions` and `failing_checks` when either applies. Rejecting a pending key, or a revoke that changes nothing, never retires a Mac; any new key for the Mac clears `retired_at`. A key that rotation replaced, whose lineage still has an active key, is refused with 409 `credential_rotated` and `current_device_id`, the key in use, and nothing changes: revoke that key instead. |
+| `POST /v1/enrollments/{device_id}/revoke` | Revoke a credential. Revoking a Mac's only active key, with none pending, retires the Mac (`retired_at`), and the entry in Activity says `retired`, and `open_sessions` and `failing_checks` when either applies. Rejecting a pending key, or a revoke that changes nothing, never retires a Mac; any new key for the Mac clears `retired_at`, as does a stale-key contest that raises a `rotated_key_used` alert. A key that rotation replaced, whose lineage still has an active key, is refused with 409 `credential_rotated` and `current_device_id`, the key in use, and nothing changes: revoke that key instead. |
 | `GET /v1/settings`, `PUT /v1/settings` | Tenant settings: `{"reenrollment_requires_approval": true, "new_mac_requires_approval": false, "silent_after_hours": 0, "silent_alerts_off": false}`. Approval defaults to on; an omitted or null flag also means on. Only explicit `false` permits automatic identity replacement. `new_mac_requires_approval` holds every serial's first key for approval too; it is off by default and when omitted. `silent_after_hours` is 1 to 720, or 0 for the default of 72. `silent_alerts_off` stops new `agent.silent` alerts; a Mac already reported still resumes. `history_days` is how long history is kept: 0 for the default (a year with a SIEM connected, for good without one), -1 to keep it for good, or 90 to 3650 days. A `PUT` that leaves `history_days` out keeps the stored value. `PUT` replaces the rest. |
 | `GET /v1/retention` | Viewer. The history period in force: `{"history": {"days", "kept_for_good", "reason", "held_before", "waiting_for_backfill"}}`. `reason` is `default_siem`, `default_no_siem`, `set` or `kept_for_good`. `held_before` is the SIEM coverage date while the default period keeps back history received before it, otherwise null. `waiting_for_backfill` is true until the admin group has been sent from stored readings: expiry doesn't start before that. |
 | `GET /v1/exports` | Each configured SIEM: `{"sink", "pending", "failing", "oldest_queued_at", "max_attempts", "last_error", "last_delivered_at"}`. `last_delivered_at` is when it last accepted something for this tenant, or null. |
@@ -157,8 +157,9 @@ the group, and one for the Mac. Health readings and command results are never ex
 Export sinks are global per deployment for now. The outbox already records the tenant, so
 per-tenant sink configuration can come later without a data migration. Every replica must have
 the same sinks: a replica without one stores events without queuing them for it. The server
-notes when it first started with each sink, and under the default history period removes
-nothing received before the latest of those dates.
+notes, by the database's clock, an hour after it first started with each sink, or after a
+start that configured it again following one without it, and under the default history period
+removes nothing received before the latest of those dates.
 
 ## Run and test
 
@@ -176,9 +177,10 @@ Admins deploy it with [deploy/compose](../deploy/compose/); see the
 [install guide](../docs/install.md). The binary has subcommands besides running the
 server: `health` (exit 0 if the local server answers `/healthz`, for container health
 checks), `diagnose` (a support report as JSON, secrets hidden, database read without
-migrating), `drop-exports SINK` (drop the export queue of a sink no longer configured;
-it refuses a configured one), `replay-exports SINK SINCE` (queue what was received since a
-date for a configured sink, and move that sink's coverage date back to it) and `version`.
+migrating), `drop-exports SINK` (drop the export queue and coverage date of a sink no
+longer configured; it refuses a configured one), `replay-exports SINK SINCE` (queue what was
+received since a date for a configured sink, and move that sink's coverage date back to it)
+and `version`.
 
 ```sh
 make backend-test    # unit tests; the Postgres store suite is skipped

@@ -123,7 +123,7 @@ ownership checks over concurrent ingestion writes within one tenant.
 | `agent.admin_group` | `state` | `changed` (the group differs from the one last reported) or `snapshot` (the whole group: a Mac's first, and then once a day for each Mac that isn't retired, checked in during the last 24 hours and has a group reported) |
 | | `members` | Everyone in the Mac's admin group at the reading (its `admin_members`), including anyone elevated at that moment |
 | | `permanent_admins` | The reading's configured standing admins. It is not membership: a name on it may not be in the group, or not exist on the Mac |
-| | `added` | The people who joined the group since the last report (`changed` only). Each has `name`, and `session_id` and `source` (`privileges` or `out_of_band`) of the matching entry in the reading's `open_sessions` when there is one |
+| | `added` | The people who joined the group since the last report (`changed` only). Each has `name`, and `session_id` and `source` (`privileges` or `out_of_band`) of the matching entry in the reading's `open_sessions` when there is one. As a reading arrives, the link is kept only when the server holds that session, open, for the same Mac and person; the one-off backfill from readings stored before the upgrade doesn't check it |
 | | `removed` | The names of the people who left it (`changed` only) |
 | | `health_event_id` | The event ID of the `agent.health` reading this reports (a lower-case UUID) |
 | | `as_of` | The reading's time by the Mac's clock. The event's `timestamp` is when the backend raised it |
@@ -162,8 +162,8 @@ agent minor release, and the server must keep accepting all of them.
 `agent.silent` is raised by the backend's monitor, not the agent. Its `timestamp` is when
 the backend raised it and `device` is the Mac's last known identity and versions. It
 doesn't count as a check-in. Each silence is raised once: the event ID is a name-based
-UUID of the tenant, serial and what it reports. Macs whose credentials were all revoked
-don't alert.
+UUID of the tenant, serial and what it reports. Retired Macs (an admin revoked the last
+key) don't alert. A Mac whose key a stale-key contest revoked isn't retired, so it does.
 
 `agent.enrollment` is raised by the backend when a Mac enrols a key, not by the agent.
 Its `timestamp` is when the backend raised it, and `device` is what the Mac said when it

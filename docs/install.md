@@ -421,14 +421,17 @@ docker compose exec altiward /usr/local/bin/altiward-api replay-exports sentinel
 ```
 
 Replaying also matters for history. The first time the server starts with a SIEM
-configured, Altiward notes that date: for a server that already sent to a SIEM before an
-upgrade, the first start of the upgraded server, not when you really connected it. With the
-default **Keep history for** period ([Settings worth reviewing](#6-settings-worth-reviewing)),
-nothing received before the latest SIEM's date is removed, so connecting a SIEM to an old
-server never deletes history the SIEM wasn't sent. Replaying from an earlier date moves that
-date back to it. A period you set
-yourself isn't held back by this. Events from before a replay's date, and any the server has
-already removed, can't be sent.
+configured, Altiward notes the time an hour later, by the database's clock, which gives
+every replica time to restart with the SIEM: for a server that already sent to a SIEM before
+an upgrade, an hour after the first start of the upgraded server, not when you really
+connected it. With the default **Keep history for** period
+([Settings worth reviewing](#6-settings-worth-reviewing)), nothing received before the
+latest SIEM's date is removed, so connecting a SIEM to an old server never deletes history
+the SIEM wasn't sent. Replaying from an earlier date moves that date back to it. If the
+server starts without a SIEM's settings and you restore them later, nothing was queued for
+it in between, so its date starts again an hour after the start that restores them: replay
+from when you removed them. A period you set yourself isn't held back by this. Events from
+before a replay's date, and any the server has already removed, can't be sent.
 
 Connecting a SIEM, or upgrading a server that has one, starts the default period of one year.
 It removes nothing younger than 90 days, and nothing a SIEM is still waiting for.
@@ -453,7 +456,8 @@ last error, and **Retry now** sends at once after a fix.
 
 If you stop sending to a SIEM, whatever was still queued for it stays in Postgres, and
 diagnostics lists it as a problem. Once you're sure, drop that queue. The events stay in
-the database. Use the sink name diagnostics shows (`splunk`, `sentinel` or `syslog`):
+the database, and Altiward forgets the SIEM's date, so connecting it again later counts as
+new. Use the sink name diagnostics shows (`splunk`, `sentinel` or `syslog`):
 
 ```sh
 docker compose exec altiward /usr/local/bin/altiward-api drop-exports splunk
@@ -595,8 +599,8 @@ In the console, under **Settings › General**:
   server that already had a SIEM, the upgrade) until you replay it to the SIEM
   ([Connect your SIEM](#4-connect-your-siem)).
   Removal doesn't start until the server has sent each Mac's admin group to your SIEM from
-  the readings it already holds, which happens once, when the server first starts after an
-  upgrade. What is removed and what stays is in [Data handling](data-handling.md#how-long-history-is-kept).
+  the readings it already holds, which happens once, an hour after the server first starts
+  after an upgrade. What is removed and what stays is in [Data handling](data-handling.md#how-long-history-is-kept).
 
   An omitted `history_days` in a settings API update keeps the stored value.
 
@@ -636,7 +640,8 @@ says so, and warns if someone still has admin rights on the Mac or it is failing
 check. Anyone with an open session on a retired Mac stays in **Admins now**, tagged
 **Mac retired**, because nothing reaches the Mac to end it. Rejecting a key waiting for
 approval doesn't retire a Mac, nor does the revoke Altiward makes itself when a replaced key is
-used again. A new key for a retired Mac, such as when it enrols again, brings it back to Fleet.
+used again. A new key for a retired Mac, such as when it enrols again, brings it back to Fleet,
+and so does an alert that one of its replaced keys was used again: someone still holds it.
 Revoking is also how you re-key a Mac that is still in use. A key that rotation replaced shows as
 **Rotated**, not **Revoked**, and offers no actions: revoke the Mac's key in use, which
 its inspector links to. A key in a file shows a note that the agent moves it into the
