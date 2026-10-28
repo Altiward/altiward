@@ -308,6 +308,20 @@ describe("Fleet", () => {
       expect(screen.getByText("1 retired Mac")).toBeInTheDocument();
     });
 
+    it("still shows a retired Mac's failing check and admin rights", async () => {
+      const worrying: Device = { ...retired, silence: null, integrity: { code_signature: false }, admin_members: ["asmith", "itadmin"] };
+      renderFleet(fakeApi({ devices: vi.fn(async () => [worrying]) }));
+      await userEvent.click(await screen.findByRole("button", { name: "Retired" }));
+      const row = (await screen.findByText("C02RETIRED01")).closest("tr")!;
+      expect(within(row).getByText("Retired")).toBeInTheDocument();
+      expect(within(row).getByText("Needs attention")).toBeInTheDocument();
+      expect(within(row).queryByText("Late")).toBeNull();
+      await userEvent.click(row);
+      const inspector = screen.getByRole("complementary", { name: "Mac details" });
+      expect(within(inspector).getByText("Elevated")).toBeInTheDocument();
+      expect(within(inspector).queryByRole("button", { name: /Revoke/ })).toBeNull();
+    });
+
     it("says when no Mac is retired", async () => {
       renderFleet(fakeApi({ devices: vi.fn(async () => [mac]) }));
       await screen.findByText("C02ZM1BBMD6T");

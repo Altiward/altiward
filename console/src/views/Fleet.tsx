@@ -112,12 +112,12 @@ export function FleetView() {
                         <NotGrantedGlyph /> Not checking in
                       </span>
                     )}
-                    {!retired(d) && needsAttention(d) && (
+                    {needsAttention(d) && (
                       <span className="tag denied" style={{ marginLeft: 8 }} title="An integrity check is failing">
                         <NotGrantedGlyph /> Needs attention
                       </span>
                     )}
-                    {!retired(d) && !needsAttention(d) && blindSpots(d).length > 0 && (
+                    {!needsAttention(d) && blindSpots(d).length > 0 && (
                       <span className="tag attention" style={{ marginLeft: 8 }} title="The agent can't read some places it checks for persistence">
                         <NotGrantedGlyph /> Partly checked
                       </span>
@@ -241,7 +241,7 @@ function DeviceInspector({ device: d, severities, onClose }: {
               Alert raised {relativeTime(d.silence!.at).toLowerCase()}. The agent may have been removed, the Mac is off, or it can’t reach the agent hostname from where it is.
             </p>
           )}
-          {!isRetired && d.admin_members.some((u) => !permanent.has(u)) && (
+          {d.admin_members.some((u) => !permanent.has(u)) && (
             <div className="badges"><StateBadge state="elevated" explain /></div>
           )}
         </div>
