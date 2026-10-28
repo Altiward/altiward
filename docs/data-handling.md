@@ -103,7 +103,14 @@ details. That includes every permanent admin use event the agent sends: sign-in
 times, terminals and SSH addresses, who approved prompts, and screen sharing viewers' addresses, as listed above. Console
 actions go there too, sign-ins and sign-outs included, naming the person who made them
 or, for a console token, its fingerprint (`token:` or `break-glass:` and 8 hex digits,
-never the token).
+never the token). So does what the server does by itself
+([How long history is kept](#how-long-history-is-kept)): removing old history or a Mac that
+stopped checking in, and revoking that Mac's keys. Those entries name the server
+(`altiward:server`) as the actor, never a person.
+
+Health readings, which are most of what the server stores, are never sent to a SIEM, and
+neither are the results of commands. The SIEM gets the admin group instead, as described
+next.
 
 The server also raises an `agent.enrollment` event of its own each time a key enrols, a
 Mac replaces its key by rotation, or a key that rotation replaced is used again. Its state
@@ -128,6 +135,34 @@ the event names (the new key's, or the replaced key's for `rotated_key_used`) in
 with label `target`. Sentinel also puts the token fingerprint in its `UserName` column.
 For the two rotation states, which carry no token, both hold the Mac's serial instead.
 The full OCSF record carries the same fields as described above.
+
+**The admin group.** The server also raises an `agent.admin_group` event of its own, so
+that your SIEM keeps who was in each Mac's admin group after the health readings that
+recorded it have expired. It is a record, not a detection. Its state is `changed` when a
+health reading's `admin` group members differ from the group last sent for that Mac, and
+`snapshot` for a Mac's first reading, and once a day for each Mac that isn't retired,
+checked in during the last 24 hours and has had a group sent. It carries everyone in the
+group at that reading (macOS short names, including anyone elevated at that moment), the
+configured standing admins (`PermanentAdmins`, which is not membership), the ID and time of
+the health reading it comes from, and, for `changed`, who was added and who was removed.
+For each person added it also carries the session ID and source of the matching open
+session in the reading, when there is one. A list holds at most 200 names, fewer if very long
+names would make the event too large, and the event says how many were left out. A change
+to the standing admins alone sends nothing. Altiward keeps the group last sent for each
+Mac in its latest state, and, to make these events' IDs unguessable, a secret the database
+makes once and never shows or sends.
+
+Each event reaches the SIEM as OCSF Group Management (3006) records: one for each person
+who joined (Add User) or left (Remove User), or for each member of a snapshot, and one for
+the Mac, with the full lists and their counts even when the group is empty. CEF puts the
+person's name in `duser`, as does Sentinel's `UserName` column, and the Mac's record names
+no one. The volume is about one record for each admin on each Mac every day, one for each
+Mac every day, and four for each elevation: two for the person (added, then removed) and
+two for the Mac. An hour after a server first starts after upgrading to the version that
+raises these events, a one-off job raises them from the readings already stored, and
+history expiry waits for it. They wait another hour before they are sent, so that a server
+of the older version still running during the update can't take them. `replay-exports`
+sends them to a SIEM connected later like any other event, while they are kept.
 
 In the example deployment, Caddy also asks Let's Encrypt for TLS certificates unless you
 provide your own. If you pull the image from the registry instead of loading the file,
@@ -175,17 +210,81 @@ Everything is in your Postgres database.
 
 | Data | Kept |
 | --- | --- |
-| Every event from every Mac, in full, and each `agent.enrollment` event the server raises | Forever, for now |
-| Elevation sessions, including the person's UPN and reason | Forever, for now |
-| Each Mac's latest state: versions, admins, health, its open permanent admin sign-ins (up to 20) and its newest 20 other permanent admin uses (the console shows up to 10, open sign-ins first) | Forever, replaced as it changes |
-| Each Mac's enrolment: serial, hardware UUID, **public** key, whether the Mac says its key is in its Secure Enclave, and the fingerprint of the enrolment token it used (never the token). For each key, also the key it replaced by rotation, when the Mac signed that rotation, and when a use of the key after it was replaced was last reported | Forever; revoking stops the Mac reporting |
-| Commands sent from the console, who sent them, and their results | Forever |
-| Activity: every change made in the console, every sign-in and sign-out through single sign-on, and a sign-in for each hour a console token is used, with the route of its first request in that hour (such as `GET /v1/sessions/{id}`: the kind of request, never the address it asked for) | Forever by default; or from 365 days, with `ALTIWARD_AUDIT_RETENTION_DAYS` |
+| Every event from every Mac, in full, health readings included, and each event the server raises itself (`agent.enrollment`, `agent.silent` and `agent.admin_group`) | For the history period, never while a SIEM still waits for it |
+| Elevation sessions, including the person's UPN and reason | For the history period once ended, with their events. A session still open stays, with all its events, however old |
+| Each Mac's latest state: versions, admins, health, the admin group last sent to your SIEM, whether an admin has retired the Mac, its newest 20 alerts, its open permanent admin sign-ins (up to 20) and its newest 20 other permanent admin uses (the console shows up to 10, open sign-ins first) | Replaced as it changes, until the Mac is removed. The newest alerts and uses can be older than the history period while the Mac is kept |
+| Each Mac's enrolment: serial, hardware UUID, **public** key, whether the Mac says its key is in its Secure Enclave, and the fingerprint of the enrolment token it used (never the token). For each key, also the key it replaced by rotation, when the Mac signed that rotation, and when a use of the key after it was replaced was last reported | Forever, even after the Mac is removed; revoking stops the Mac reporting |
+| Commands sent from the console, who sent them, and their results | For the history period |
+| Activity: every change made in the console, every sign-in and sign-out through single sign-on, a sign-in for each hour a console token is used, with the route of its first request in that hour (such as `GET /v1/sessions/{id}`: the kind of request, never the address it asked for), and what the server does by itself | Forever by default; or from 365 days, with `ALTIWARD_AUDIT_RETENTION_DAYS` |
 | Console sign-in sessions: the person's email, name, identity-provider ID and role | 12 hours at most, 1 hour idle; removed on sign-out, or when an admin ends it |
 | Events waiting for each SIEM | Until the SIEM accepts them |
 | When each SIEM last accepted something | Replaced at each delivery |
-| When the server was set up | Forever |
+| Each SIEM's coverage date (an hour after a server running this version first started with it configured, or after a start that configured it again), or the date its history was replayed from if earlier, and whether the last start was without it | Until `drop-exports` drops that SIEM's queue |
+| When the server was set up, whether the admin group has been sent from stored readings, and the secret that makes the IDs of the server's own events unguessable | Forever |
 | With Intune connected, each Mac Intune manages: its Intune device ID, serial number, Entra device ID, primary user's UPN, device name and last check-in. Also when the copy was last refreshed, and its last error | Replaced at every sync, every 15 minutes; a failed sync keeps the last copy. Deleted when Intune is turned off, at the server's next start |
+
+### How long history is kept
+
+The history period covers events, sessions, commands and Macs. An admin sets it in
+**Settings › General** under **Keep history for** (`history_days` in the settings API):
+
+- **Default.** One year, if the server has a SIEM connected (at least one SIEM configured in
+  `.env`), and for good if it has none.
+- **A number of days,** from 90 to 3650. It applies whether or not a SIEM is connected.
+- **Keep for good.** Nothing is removed.
+
+`GET /v1/retention` reports the period in force and why. Once a day, the server removes,
+by its own clock, what is older than the period:
+
+- events it received before the cutoff, apart from those in an elevation session that stays;
+- elevation sessions that ended and last changed before it, with all their events;
+- commands created before it, results included;
+- each Mac whose last check-in is before it, with its sessions, events and commands, and its
+  latest state. Its active and pending keys are revoked first, so a Mac that comes back
+  enrols again, and waits for approval while **Approve Macs that enrol again** is on (the
+  default). Its enrolment keys stay, and that is what makes it a re-enrolment.
+
+A Mac is kept, and looked at again at the next run, when only its own clock says when it
+last checked in, when the server received any event for it within the period (its own alerts
+included), when it has an open session, when a key for it was created or approved within the
+period, or when any of its events is still waiting for a SIEM or, under the default period,
+was received before the SIEM's coverage date (the first two rules below). A Mac that an
+admin retired goes the same way, once its last check-in is older than the period.
+
+It never removes:
+
+- an event a SIEM is still waiting for;
+- under the default period, an event received before the latest SIEM's coverage date. That
+  date is an hour after the first time a server running this version started with the SIEM
+  configured, by the database's clock: the hour covers a rolling update, while a replica
+  without the SIEM may still store events it doesn't queue for it. On a server that already
+  sent to a SIEM it is the upgrade, not when you really connected it. If a server starts
+  without a SIEM's settings and you restore them later, the date moves to an hour after the
+  start that restores them, since nothing was queued for the SIEM in between. Nothing
+  received before the date is removed until you send that history to the SIEM with
+  `replay-exports` ([Connect your SIEM](install.md#4-connect-your-siem)), which moves the
+  date back to the date it replays from. A period you set yourself isn't held back by
+  this, but still never takes an event a SIEM is waiting for;
+- anything from the last 90 days, whatever the setting. Postgres refuses to delete such
+  rows, or to change when an event was received or a command created, whatever the server
+  asks. That guards against the server's own mistakes, not against someone who owns the
+  database;
+- Activity (which has its own period), console sign-in sessions, SIEM delivery state or enrolment keys.
+
+Expiry doesn't start until the admin group has been sent from stored readings (above), which
+reads the health readings that expiry removes.
+
+Each run that removes anything writes one `expire_history` entry to Activity for the
+organisation: the cutoff, the period and why, and counts. Each Mac it removes gets a
+`remove_device` entry, with its serial, its last check-in, counts, and the event ID of its open
+silence alert if it had one, and each key it revokes gets a `revoke_enrollment` entry. All have
+the actor `altiward:server`, and they reach your SIEM like any other. A SIEM added later can be
+sent past events only while the server still keeps them.
+
+Once expiry runs, events are no longer the full history, so nothing is ever rebuilt from
+them. An event an agent sends again after its session was removed is stored as new. That needs
+an acknowledgement lost for longer than the period, at least 90 days, while the Mac kept
+checking in.
 
 Activity entries can't be edited, and a database rule allows deleting only entries more
 than 365 days old. Entries your SIEM hasn't received yet are never removed. Your

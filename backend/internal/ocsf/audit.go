@@ -3,6 +3,7 @@ package ocsf
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/Altiward/altiward/backend/internal/store"
@@ -16,12 +17,19 @@ import (
 //	test_export                            → Create (1): a test event for the SIEM
 //	retry_exports                          → Update (3): a sink's waiting exports retried now
 //	end_console_session                    → Delete (4), Low: an admin ended someone's sign-in
+//	expire_history                         → Delete (4): the server removed history past the
+//	                                         period it keeps
+//	remove_device                          → Delete (4): the server removed a Mac that stopped
+//	                                         checking in before that period; the keys it
+//	                                         revoked with it are revoke_enrollment entries
 //	sign_in, sign_out                      → Authentication (3002), Logon (1) or Logoff (2),
 //	                                         for single sign-on
 //	sign_in by a console token             → Authentication (3002), Logon (1); Low for break-glass
 //
 // The actor is a console token's fingerprint (token:3f2a9c1b) until single sign-on names
-// a person. The event type in unmapped.altiward is "console." and the action.
+// a person. What the server does by itself has store.ServerActor as its actor, which maps
+// to a System user of the Altiward server, the source of the entry. The event type in
+// unmapped.altiward is "console." and the action.
 
 // AuditEventType is the event type a console action is exported as.
 func AuditEventType(a store.AuditEntry) string { return "console." + a.Action }
@@ -54,6 +62,13 @@ func MapAudit(a store.AuditEntry) Record {
 	case store.AuditEndConsoleSession:
 		activityID, activity, severity = 4, "Delete", SeverityLow
 		resource["type"] = "Console session"
+	case store.AuditExpireHistory:
+		activityID, activity = 4, "Delete"
+		resource["type"] = "History"
+	case store.AuditRemoveDevice:
+		activityID, activity = 4, "Delete"
+		resource["type"] = "Mac"
+		serial = a.Target
 	}
 	if serial != "" {
 		resource["name"] = serial
@@ -86,6 +101,12 @@ func MapAudit(a store.AuditEntry) Record {
 		"unmapped": map[string]any{"altiward": map[string]any{
 			"event_type": AuditEventType(a), "action": a.Action, "target": a.Target, "detail": a.Detail,
 		}},
+	}
+	if a.Actor == store.ServerActor {
+		r["actor"] = map[string]any{"app_name": "Altiward server",
+			"user": map[string]any{"name": a.Actor, "type": "System", "type_id": 3}}
+		r["src_endpoint"] = map[string]any{"name": "Altiward server"}
+		r["api"] = map[string]any{"operation": a.Action, "service": map[string]any{"name": "Altiward server"}}
 	}
 	setSeverity(r, severity)
 	return r
@@ -179,8 +200,62 @@ func auditMessage(a store.AuditEntry) string {
 		return fmt.Sprintf("%s retried the exports waiting for %s from the Altiward console", a.Actor, a.Target)
 	case store.AuditEndConsoleSession:
 		return fmt.Sprintf("%s ended %s's console sign-in from the Altiward console", a.Actor, a.Target)
+	case store.AuditExpireHistory:
+		return historyExpiry(a.Detail)
+	case store.AuditRemoveDevice:
+		return macRemoval(a.Target, a.Detail)
 	}
 	return fmt.Sprintf("%s did %s on %s in the Altiward console", a.Actor, a.Action, a.Target)
+}
+
+// historyExpiry says what an expire_history entry removed, and why.
+func historyExpiry(detail map[string]any) string {
+	why := map[string]string{
+		store.HistoryReasonDefaultSIEM: "the default with a SIEM connected",
+		store.HistoryReasonSet:         "the period an admin set",
+	}[detailString(detail, "reason")]
+	if why == "" {
+		why = detailString(detail, "reason")
+	}
+	counts, _ := detail["counts"].(map[string]any)
+	removed := []string{
+		plural(counts["events"], "event", "events"),
+		plural(counts["sessions"], "session", "sessions"),
+		plural(counts["commands"], "command", "commands"),
+	}
+	if macs := fmt.Sprint(counts["macs"]); macs != "0" && macs != "<nil>" {
+		removed = append(removed, plural(counts["macs"], "Mac", "Macs"))
+	}
+	return fmt.Sprintf("Altiward removed history received before %s, past the %v days it keeps (%s): %s",
+		detailString(detail, "before"), detail["days"], why, strings.Join(removed, ", "))
+}
+
+// macRemoval says which Mac a remove_device entry removed, why, and what went with it.
+func macRemoval(serial string, detail map[string]any) string {
+	counts, _ := detail["counts"].(map[string]any)
+	removed := []string{
+		plural(counts["events"], "event", "events"),
+		plural(counts["sessions"], "session", "sessions"),
+		plural(counts["commands"], "command", "commands"),
+	}
+	return fmt.Sprintf("Altiward removed the Mac %s, which last checked in at %s, past the %v days of history it keeps, with %s",
+		serial, detailString(detail, "last_check_in"), detail["days"], strings.Join(removed, ", "))
+}
+
+// plural is n with the noun for its number. n is a JSON number, or nil for none. A float64
+// is written out in full: fmt would put a count in the millions in exponent form.
+func plural(n any, one, many string) string {
+	s := fmt.Sprint(n)
+	switch v := n.(type) {
+	case nil:
+		s = "0"
+	case float64:
+		s = strconv.FormatFloat(v, 'f', -1, 64)
+	}
+	if s == "1" {
+		return "1 " + one
+	}
+	return s + " " + many
 }
 
 // settingsChange lists the settings whose value changed, as "name: before → after".

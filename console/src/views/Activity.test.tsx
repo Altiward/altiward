@@ -42,6 +42,22 @@ describe("Activity", () => {
     expect(auditSummary(on)).toBe("Approve every new Mac: off → on");
   });
 
+  it("names the history period the way Settings shows it", () => {
+    const change = (from: number | undefined, to: number) => auditSummary(entry({ action: "change_settings", target: "settings",
+      detail: { previous: from === undefined ? {} : { history_days: from }, settings: { history_days: to } } }));
+    expect(change(0, 120)).toBe("Keep history for: default → 120 days");
+    expect(change(120, -1)).toBe("Keep history for: 120 days → for good");
+    expect(change(-1, 0)).toBe("Keep history for: for good → default");
+    expect(change(undefined, 400)).toBe("Keep history for: default → 400 days");
+  });
+
+  it("says how much old history was removed", () => {
+    const expired = (counts: Record<string, number>) => auditSummary(entry({ action: "expire_history", target: "history",
+      actor: "altiward:server", detail: { before: "2025-06-01T00:00:00Z", days: 365, counts } }));
+    expect(expired({ events: 2104, sessions: 12, commands: 3, macs: 1 })).toBe("2,104 events, 12 sessions, 3 commands, 1 Mac");
+    expect(expired({ events: 1, sessions: 0, commands: 0, macs: 0 })).toBe("1 event, 0 sessions, 0 commands");
+  });
+
   it("names an ended console sign-in", () => {
     const ended = entry({ action: "end_console_session", target: "jane@example.com", detail: { name: "Jane Doe" } });
     expect(auditSummary(ended)).toBe("Jane Doe (jane@example.com)");
@@ -80,5 +96,18 @@ describe("Activity", () => {
   it("shows an empty state", async () => {
     render(<ApiContext.Provider value={fakeApi()}><MemoryRouter><ActivityView /></MemoryRouter></ApiContext.Provider>);
     expect(await screen.findByText("No activity yet")).toBeInTheDocument();
+  });
+
+  it("names what the server did itself", async () => {
+    const api = fakeApi({ audit: vi.fn(async () => [
+      entry({ id: "a3", actor: "altiward:server", action: "remove_device", target: "C02XK0AAJGH5" }),
+      entry({ id: "a4", actor: "altiward:server", action: "expire_history", target: "history", at: "2026-10-17T10:00:00Z" }),
+    ]) });
+    render(<ApiContext.Provider value={api}><MemoryRouter><ActivityView /></MemoryRouter></ApiContext.Provider>);
+    expect(await screen.findByText("Removed a Mac")).toBeInTheDocument();
+    expect(screen.getByText("Removed old history")).toBeInTheDocument();
+    expect(screen.getAllByText("Altiward")).toHaveLength(2);
+    expect(screen.queryByText("altiward:server")).toBeNull();
+    expect(actorLabel("altiward:server")).toBe("Altiward");
   });
 });

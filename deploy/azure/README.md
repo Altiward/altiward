@@ -25,7 +25,7 @@ release's image. `main.bicep` is its source.
 | Managed identity `<prefix>-identity` | The app's identity, which Sentinel's export and the Intune connection can sign in as too |
 | Log Analytics workspace `<prefix>-logs` | The containers' logs, kept 30 days |
 
-**Cost:** roughly US$75–100 a month in UK South. Most of it is the container app, which
+**Cost:** roughly US$75 to US$100 a month in UK South. Most of it is the container app, which
 Macs keep busy with their long-held requests, and about $18 is the database. Check the
 [Azure pricing calculator](https://azure.microsoft.com/pricing/calculator/) for your
 region. A small VM running the Compose bundle costs less, if you'd rather look after a VM.
@@ -247,15 +247,16 @@ the console token, [The console token](#the-console-token) covers changing it wi
 gap, revoking one and turning it off.
 
 **Replicas.** One is enough for most fleets, and more are safe: migrations, SIEM exports,
-the silent-Mac alerts and command wake-ups all coordinate through the database. Each
-replica adds to the cost:
+the silent-Mac alerts and command wake-ups all coordinate through the database. Every
+replica needs the same SIEM settings. Each replica adds to the cost:
 
 ```sh
 az containerapp update --name <appName> --resource-group <group> --min-replicas 2 --max-replicas 2
 ```
 
-**A bigger database.** Altiward keeps every event for now. Change the server's size or
-storage under its **Compute + storage** settings as your fleet grows.
+**A bigger database.** Altiward keeps history for a year once a SIEM is connected, and for
+good until then, unless you set **Keep history for** in the console's Settings. Change the
+server's size or storage under its **Compute + storage** settings as your fleet grows.
 
 ## The console token
 

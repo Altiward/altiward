@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Altiward/altiward/backend/internal/admingroup"
 	"github.com/Altiward/altiward/backend/internal/command"
 	"github.com/Altiward/altiward/backend/internal/event"
 	"github.com/Altiward/altiward/backend/internal/session"
@@ -22,6 +23,13 @@ type Memory struct {
 	order    []key // insertion order, for timelines
 	sessions map[key]session.Session
 	devices  map[key]session.Device
+	// retired is when an admin retired each device in devices (see Device.RetiredAt).
+	retired map[key]time.Time
+	// adminGroups is the admin group last reported for each device in devices that has
+	// one (devices.admin_group in Postgres). It records what the server sent, not what the
+	// Mac reported, so like retired it sits beside the reduced state.
+	adminGroups map[key]admingroup.Report
+
 	exports  []*memExport
 	nextID   int64
 	creds    map[string]DeviceCredential // by device ID
@@ -36,6 +44,8 @@ type Memory struct {
 	staleUseReported map[string]time.Time
 
 	consoleSessions map[string]ConsoleSession // by token hash
+	// coverage is each SIEM sink's covered-from time (export_sinks in Postgres).
+	coverage map[string]memCoverage
 	// installation starts when the store does: a memory store is a new server each run.
 	installation Installation
 
@@ -60,6 +70,7 @@ func NewMemory(exportSinks []string) *Memory {
 		events:    map[key]StoredEvent{},
 		sessions:  map[key]session.Session{},
 		devices:   map[key]session.Device{},
+		retired:   map[key]time.Time{},
 		creds:     map[string]DeviceCredential{},
 		settings:  map[string]TenantSettings{},
 		delivered: map[[2]string]time.Time{},
@@ -67,8 +78,10 @@ func NewMemory(exportSinks []string) *Memory {
 
 		staleUseReported: map[string]time.Time{},
 
+		adminGroups:     map[key]admingroup.Report{},
 		consoleSessions: map[string]ConsoleSession{},
-		installation:    Installation{CreatedAt: time.Now().UTC()},
+		coverage:        map[string]memCoverage{},
+		installation:    newMemoryInstallation(),
 
 		mdm: map[key]*memMDM{},
 	}
@@ -114,9 +127,7 @@ func (m *Memory) ingest(tenantID string, events []event.Event, receivedAt time.T
 			res.Duplicate = append(res.Duplicate, e.EventID)
 			continue
 		}
-		stored := StoredEvent{Event: e, ReceivedAt: receivedAt}
-		m.events[k] = stored
-		m.order = append(m.order, k)
+		m.store(tenantID, e, receivedAt)
 
 		if e.SessionID != nil {
 			sk := key{tenantID, *e.SessionID}
@@ -139,18 +150,68 @@ func (m *Memory) ingest(tenantID string, events []event.Event, receivedAt time.T
 			d.Received(e, receivedAt)
 			m.devices[dk] = d
 		}
-
-		for _, sink := range m.sinks {
-			m.nextID++
-			m.exports = append(m.exports, &memExport{
-				ExportItem:  ExportItem{ID: m.nextID, TenantID: tenantID, Sink: sink, Event: stored},
-				queuedAt:    receivedAt,
-				nextAttempt: receivedAt,
-			})
-		}
 		res.Accepted = append(res.Accepted, e.EventID)
+		if e.Type == event.AgentHealth {
+			m.raiseAdminGroup(tenantID, e, receivedAt, &res)
+		}
 	}
 	return res, nil
+}
+
+// store keeps e and queues it for every sink. It expects m.mu held.
+func (m *Memory) store(tenantID string, e event.Event, receivedAt time.Time) {
+	m.storeDue(tenantID, e, receivedAt, receivedAt)
+}
+
+// storeDue is store with the exports not due before due.
+func (m *Memory) storeDue(tenantID string, e event.Event, receivedAt, due time.Time) {
+	k := key{tenantID, e.EventID}
+	stored := StoredEvent{Event: e, ReceivedAt: receivedAt}
+	m.events[k] = stored
+	m.order = append(m.order, k)
+	for _, sink := range m.sinks {
+		m.nextID++
+		m.exports = append(m.exports, &memExport{
+			ExportItem:  ExportItem{ID: m.nextID, TenantID: tenantID, Sink: sink, Event: stored},
+			queuedAt:    receivedAt,
+			nextAttempt: due,
+		})
+	}
+}
+
+// raiseAdminGroup is Postgres.raiseAdminGroup: it stores what a newly stored health
+// reading raises, compared with the group last reported, and records it. It expects m.mu
+// held, so readings are compared in the order they arrive.
+func (m *Memory) raiseAdminGroup(tenantID string, health event.Event, receivedAt time.Time, res *IngestResult) {
+	if len(m.installation.RaisedIDSecret) == 0 {
+		return
+	}
+	dk := key{tenantID, health.Device.Serial}
+	var prev *admingroup.Report
+	if r, ok := m.adminGroups[dk]; ok {
+		prev = &r
+	}
+	raised, next, ok := admingroup.OnHealth(prev, health, tenantID, m.installation.RaisedIDSecret, receivedAt)
+	if ok {
+		_ = admingroup.KeepHeldSessions(raised, func(user, sessionID string) (bool, error) {
+			s, held := m.sessions[key{tenantID, sessionID}]
+			return held && s.Open() && s.DeviceSerial == health.Device.Serial && s.LocalUser == user, nil
+		})
+	}
+	if !ok {
+		// Nothing to raise, but the report still takes the reading's details, so a daily
+		// snapshot says which reading it comes from.
+		next = admingroup.Refreshed(*prev, health)
+	} else if raised.Validate(receivedAt) != nil {
+		res.RaisedInvalid = append(res.RaisedInvalid, raised.EventID)
+		return
+	} else if had, taken := m.events[key{tenantID, raised.EventID}]; !taken {
+		m.store(tenantID, raised, receivedAt)
+	} else if had.Type != raised.Type || had.Device.Serial != raised.Device.Serial {
+		res.RaisedIDTaken = append(res.RaisedIDTaken, raised.EventID)
+		return
+	}
+	m.adminGroups[dk] = next
 }
 
 func (m *Memory) ListSessions(_ context.Context, tenantID string, f SessionFilter) ([]session.Session, error) {
@@ -240,16 +301,25 @@ func sortEvents(evs []StoredEvent) {
 	sort.SliceStable(evs, func(i, j int) bool { return evs[i].Timestamp.Before(evs[j].Timestamp) })
 }
 
-func (m *Memory) ListDevices(_ context.Context, tenantID string) ([]session.Device, error) {
+// device is the store's view of a device row. It expects m.mu held.
+func (m *Memory) device(k key, d session.Device) Device {
+	out := Device{Device: d}
+	if at, ok := m.retired[k]; ok {
+		out.RetiredAt = ptr(at)
+	}
+	return out
+}
+
+func (m *Memory) ListDevices(_ context.Context, tenantID string) ([]Device, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := []session.Device{}
+	out := []Device{}
 	for k, d := range m.devices {
 		if k.tenant == tenantID {
-			out = append(out, d)
+			out = append(out, m.device(k, d))
 		}
 	}
-	slices.SortFunc(out, func(a, b session.Device) int {
+	slices.SortFunc(out, func(a, b Device) int {
 		if a.Serial < b.Serial {
 			return -1
 		}
@@ -261,16 +331,16 @@ func (m *Memory) ListDevices(_ context.Context, tenantID string) ([]session.Devi
 	return out, nil
 }
 
-func (m *Memory) SilenceCandidates(_ context.Context, seenBefore time.Time) ([]session.Device, error) {
+func (m *Memory) SilenceCandidates(_ context.Context, seenBefore time.Time) ([]Device, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := []session.Device{}
-	for _, d := range m.devices {
+	out := []Device{}
+	for k, d := range m.devices {
 		if !d.CheckedInAt().After(seenBefore) || d.Silent() {
-			out = append(out, d)
+			out = append(out, m.device(k, d))
 		}
 	}
-	slices.SortFunc(out, func(a, b session.Device) int {
+	slices.SortFunc(out, func(a, b Device) int {
 		return strings.Compare(a.TenantID+"/"+a.Serial, b.TenantID+"/"+b.Serial)
 	})
 	return out, nil
@@ -373,3 +443,256 @@ func (m *Memory) RetryExportsNow(_ context.Context, tenantID, sink string, now t
 }
 
 func (m *Memory) Close() {}
+
+func (m *Memory) Tenants(context.Context) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []string{}
+	for k := range m.devices {
+		out = append(out, k.tenant)
+	}
+	for tenant := range m.settings {
+		out = append(out, tenant)
+	}
+	slices.Sort(out)
+	return slices.Compact(out), nil
+}
+
+// ExpireHistory is Postgres.ExpireHistory, with the database's 90-day floor taken from this
+// process's clock. A session's updated_at there is the received time of the last event
+// applied to it, which here is its last event in m.order.
+func (m *Memory) ExpireHistory(_ context.Context, tenantID string, c HistoryCutoff, limit int) (ExpiryCounts, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	limit = max(limit, 1)
+	floor := time.Now().AddDate(0, 0, -MinHistoryDays)
+	waiting := m.waiting()
+	removable := func(k key, e StoredEvent) bool {
+		return e.ReceivedAt.Before(c.Before) && e.ReceivedAt.Before(floor) &&
+			(c.NotBefore == nil || !e.ReceivedAt.Before(*c.NotBefore)) && !waiting[k]
+	}
+	type sessionEvents struct {
+		events  []key
+		updated time.Time
+		held    bool // an event that can't go holds the whole session
+	}
+	bySession := map[string]*sessionEvents{}
+	for _, k := range m.order {
+		e := m.events[k]
+		if k.tenant != tenantID || e.SessionID == nil {
+			continue
+		}
+		se := bySession[*e.SessionID]
+		if se == nil {
+			se = &sessionEvents{}
+			bySession[*e.SessionID] = se
+		}
+		se.events = append(se.events, k)
+		se.updated = e.ReceivedAt
+		se.held = se.held || !removable(k, e)
+	}
+	type due struct {
+		k  key
+		at time.Time
+	}
+	oldest := func(ds []due) []due {
+		slices.SortStableFunc(ds, func(a, b due) int { return a.at.Compare(b.at) })
+		return ds[:min(limit, len(ds))]
+	}
+
+	var n ExpiryCounts
+	removed := map[key]bool{}
+	sessions := []due{}
+	for sk, s := range m.sessions {
+		se := bySession[sk.id]
+		if sk.tenant != tenantID || s.Open() || se == nil || se.held ||
+			!se.updated.Before(c.Before) || !se.updated.Before(floor) {
+			continue
+		}
+		sessions = append(sessions, due{sk, se.updated})
+	}
+	for _, d := range oldest(sessions) {
+		delete(m.sessions, d.k)
+		n.Sessions++
+		for _, k := range bySession[d.k.id].events {
+			removed[k] = true
+			n.Events++
+		}
+	}
+	events := []due{}
+	for _, k := range m.order {
+		e := m.events[k]
+		if k.tenant != tenantID || removed[k] || !removable(k, e) {
+			continue
+		}
+		if e.SessionID != nil {
+			if _, ok := m.sessions[key{tenantID, *e.SessionID}]; ok {
+				continue // it goes with its session
+			}
+		}
+		events = append(events, due{k, e.ReceivedAt})
+	}
+	for _, d := range oldest(events) {
+		removed[d.k] = true
+		n.Events++
+	}
+	for k := range removed {
+		delete(m.events, k)
+	}
+	m.order = slices.DeleteFunc(m.order, func(k key) bool { return removed[k] })
+	// Postgres deletes an item once it is delivered; here it stays, marked done, until its
+	// event goes.
+	m.exports = slices.DeleteFunc(m.exports, func(x *memExport) bool {
+		return x.done && x.Audit == nil && removed[key{x.TenantID, x.Event.EventID}]
+	})
+
+	commands := []due{}
+	for id, cmd := range m.commands {
+		if cmd.TenantID == tenantID && cmd.CreatedAt.Before(c.Before) && cmd.CreatedAt.Before(floor) {
+			commands = append(commands, due{key{tenantID, id}, cmd.CreatedAt})
+		}
+	}
+	for _, d := range oldest(commands) {
+		delete(m.commands, d.k.id)
+		n.Commands++
+	}
+	return n, nil
+}
+
+// waiting is the events some sink is still waiting for. It expects m.mu held.
+func (m *Memory) waiting() map[key]bool {
+	out := map[key]bool{}
+	for _, x := range m.exports {
+		if !x.done && x.Audit == nil {
+			out[key{x.TenantID, x.Event.EventID}] = true
+		}
+	}
+	return out
+}
+
+func (m *Memory) RemovalCandidates(_ context.Context, tenantID string, before time.Time) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []string{}
+	for k, d := range m.devices {
+		if k.tenant == tenantID && d.CheckedInAt().Before(before) {
+			out = append(out, k.id)
+		}
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+// RemoveDevice is Postgres.RemoveDevice, with the database's 90-day floor taken from this
+// process's clock. It works out everything it will remove first, so that nothing changes
+// when it fails.
+func (m *Memory) RemoveDevice(_ context.Context, tenantID, serial string, c HistoryCutoff, now time.Time) (RemovedDevice, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	dk := key{tenantID, serial}
+	d, ok := m.devices[dk]
+	if !ok {
+		return RemovedDevice{}, nil // removed already
+	}
+	before := time.Now().AddDate(0, 0, -MinHistoryDays) // the cutoff, never later than the floor
+	if c.Before.Before(before) {
+		before = c.Before
+	}
+	if why := m.keepsDevice(dk, d, c.NotBefore, before); why != "" {
+		return RemovedDevice{Skipped: why}, nil
+	}
+
+	res := RemovedDevice{Removed: true, RevokedKeys: []string{}}
+	for _, k := range m.creds {
+		if k.TenantID == tenantID && k.Serial == serial && k.Status != CredentialRevoked {
+			res.RevokedKeys = append(res.RevokedKeys, k.DeviceID)
+		}
+	}
+	slices.Sort(res.RevokedKeys)
+	commands := []string{}
+	for id, cmd := range m.commands {
+		// A command from within the period stays until expiry reaches it.
+		if cmd.TenantID == tenantID && cmd.Serial == serial && cmd.CreatedAt.Before(before) {
+			commands = append(commands, id)
+		}
+	}
+	sessions := []key{}
+	for k, s := range m.sessions {
+		if k.tenant == tenantID && s.DeviceSerial == serial {
+			sessions = append(sessions, k)
+		}
+	}
+	events := map[key]bool{}
+	for k, e := range m.events {
+		if k.tenant == tenantID && e.Device.Serial == serial {
+			events[k] = true
+		}
+	}
+	res.Counts = ExpiryCounts{Events: int64(len(events)), Sessions: int64(len(sessions)), Commands: int64(len(commands)), Macs: 1}
+	entries, err := removalEntries(tenantID, d, res.RevokedKeys, c, now, res.Counts)
+	if err != nil {
+		return RemovedDevice{}, err
+	}
+
+	for _, id := range res.RevokedKeys {
+		m.revoke(m.creds[id], now)
+	}
+	for _, id := range commands {
+		delete(m.commands, id)
+	}
+	for _, k := range sessions {
+		delete(m.sessions, k)
+	}
+	for k := range events {
+		delete(m.events, k)
+	}
+	m.order = slices.DeleteFunc(m.order, func(k key) bool { return events[k] })
+	m.exports = slices.DeleteFunc(m.exports, func(x *memExport) bool {
+		return x.done && x.Audit == nil && events[key{x.TenantID, x.Event.EventID}]
+	})
+	// What sits beside the reduced state goes with it, as the columns go with the row.
+	delete(m.devices, dk)
+	delete(m.retired, dk)
+	delete(m.adminGroups, dk)
+	for _, a := range entries {
+		m.record(a)
+	}
+	return res, nil
+}
+
+// keepsDevice is why RemoveDevice keeps the Mac d, at k, with before as the cutoff, or ""
+// when nothing does. A session's last change is its newest event's arrival, so the events
+// cover sessions too. It expects m.mu held.
+func (m *Memory) keepsDevice(k key, d session.Device, notBefore *time.Time, before time.Time) string {
+	if d.LastReceivedAt.IsZero() {
+		return SkippedOwnClock
+	}
+	waiting := m.waiting()
+	recent, notSent := !d.CheckedInAt().Before(before), false
+	for ek, e := range m.events {
+		if ek.tenant == k.tenant && e.Device.Serial == k.id {
+			recent = recent || !e.ReceivedAt.Before(before)
+			notSent = notSent || waiting[ek] || notBefore != nil && e.ReceivedAt.Before(*notBefore)
+		}
+	}
+	open := false
+	for sk, s := range m.sessions {
+		open = open || sk.tenant == k.tenant && s.DeviceSerial == k.id && s.Open()
+	}
+	newKey := false
+	for _, c := range m.creds {
+		newKey = newKey || c.TenantID == k.tenant && c.Serial == k.id &&
+			(!c.CreatedAt.Before(before) || c.ActivatedAt != nil && !c.ActivatedAt.Before(before))
+	}
+	switch {
+	case recent:
+		return SkippedRecentEvent
+	case notSent:
+		return SkippedNotSent
+	case open:
+		return SkippedOpenSession
+	case newKey:
+		return SkippedRecentKey
+	}
+	return ""
+}

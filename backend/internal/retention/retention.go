@@ -1,5 +1,6 @@
-// Package retention removes audit entries past the retention period a deployment sets with
-// ALTIWARD_AUDIT_RETENTION_DAYS. With no period set it isn't started, and entries stay.
+// Package retention removes what is past its retention period: audit entries, past the
+// period a deployment sets with ALTIWARD_AUDIT_RETENTION_DAYS (with none set, Audit isn't
+// started and entries stay), and each organisation's history (History).
 package retention
 
 import (

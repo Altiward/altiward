@@ -1,0 +1,192 @@
+[
+  {
+    "activity_id": 99,
+    "activity_name": "Admin group member",
+    "category_name": "Identity \u0026 Access Management",
+    "category_uid": 3,
+    "class_name": "Group Management",
+    "class_uid": 3006,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "group": {
+      "name": "admin"
+    },
+    "message": "root is in the admin group on C02XK0AAJGH5",
+    "metadata": {
+      "logged_time": 1792152000000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "1.1.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "e2a5c8f1-3b7d-5d94-b6c0-8f4a1e9d2b75",
+      "version": "1.9.0"
+    },
+    "observables": [
+      {
+        "name": "user.name",
+        "type": "User Name",
+        "type_id": 4,
+        "value": "root"
+      }
+    ],
+    "severity": "Informational",
+    "severity_id": 1,
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792152000000,
+    "type_name": "Group Management: Admin group member",
+    "type_uid": 300699,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "as_of": "2026-10-16T11:55:00Z",
+          "health_event_id": "4b8d2f6a-9e13-4c75-a0b2-6d1e3f5a7c92",
+          "state": "snapshot"
+        },
+        "event_type": "agent.admin_group",
+        "permanent": false
+      }
+    },
+    "user": {
+      "name": "root"
+    }
+  },
+  {
+    "activity_id": 99,
+    "activity_name": "Admin group member",
+    "category_name": "Identity \u0026 Access Management",
+    "category_uid": 3,
+    "class_name": "Group Management",
+    "class_uid": 3006,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "group": {
+      "name": "admin"
+    },
+    "message": "itadmin is in the admin group on C02XK0AAJGH5, as a permanent admin",
+    "metadata": {
+      "logged_time": 1792152000000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "1.1.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "e2a5c8f1-3b7d-5d94-b6c0-8f4a1e9d2b75/member/itadmin",
+      "version": "1.9.0"
+    },
+    "observables": [
+      {
+        "name": "user.name",
+        "type": "User Name",
+        "type_id": 4,
+        "value": "itadmin"
+      }
+    ],
+    "severity": "Informational",
+    "severity_id": 1,
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792152000000,
+    "type_name": "Group Management: Admin group member",
+    "type_uid": 300699,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "as_of": "2026-10-16T11:55:00Z",
+          "health_event_id": "4b8d2f6a-9e13-4c75-a0b2-6d1e3f5a7c92",
+          "state": "snapshot"
+        },
+        "event_type": "agent.admin_group",
+        "permanent": true
+      }
+    },
+    "user": {
+      "name": "itadmin"
+    }
+  },
+  {
+    "activity_id": 99,
+    "activity_name": "Admin group",
+    "category_name": "Identity \u0026 Access Management",
+    "category_uid": 3,
+    "class_name": "Group Management",
+    "class_uid": 3006,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "group": {
+      "name": "admin"
+    },
+    "message": "The admin group on C02XK0AAJGH5 has 2 members, 1 of them permanent admins",
+    "metadata": {
+      "logged_time": 1792152000000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "1.1.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "e2a5c8f1-3b7d-5d94-b6c0-8f4a1e9d2b75/group",
+      "version": "1.9.0"
+    },
+    "severity": "Informational",
+    "severity_id": 1,
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792152000000,
+    "type_name": "Group Management: Admin group",
+    "type_uid": 300699,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "as_of": "2026-10-16T11:55:00Z",
+          "health_event_id": "4b8d2f6a-9e13-4c75-a0b2-6d1e3f5a7c92",
+          "members": [
+            "root",
+            "itadmin"
+          ],
+          "permanent_admins": [
+            "itadmin"
+          ],
+          "state": "snapshot",
+          "truncated": 0
+        },
+        "event_type": "agent.admin_group",
+        "member_count": 2,
+        "permanent_admin_count": 1
+      }
+    }
+  }
+]

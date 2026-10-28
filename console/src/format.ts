@@ -32,6 +32,15 @@ export function dateTime(iso: string | null | undefined, empty = "Unknown"): str
   return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
+/** A date without a time of day, for something that happens on a day rather than at a moment. */
+export function dateOnly(iso: string | null | undefined, empty = "Unknown"): string {
+  if (!iso) return empty;
+  return new Date(iso).toLocaleDateString(undefined, { dateStyle: "medium" });
+}
+
+/** A tamper check failing in the newest health reading. */
+export const hasFailingCheck = (d: Pick<Device, "integrity">) => Object.values(d.integrity ?? {}).some((passing) => !passing);
+
 export interface Gauge {
   fill: number | null; // 0…1 of the track; null when no allowance is known
   ceiling: number | null; // where the allowance ends on the track

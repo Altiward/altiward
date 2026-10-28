@@ -297,14 +297,14 @@ Then carry on from [step 2](#2-give-altiward-the-values).
 | Column | Type | |
 | --- | --- | --- |
 | `TimeGenerated` | datetime | When it happened |
-| `EventUid` | string | Event ID, unique per event |
+| `EventUid` | string | Event ID, unique per record. An `agent.admin_group` event gives several records, so the second and later add `/added/<name>`, `/removed/<name>`, `/member/<name>` or `/group` |
 | `TenantUid` | string | Tenant |
 | `SessionUid` | string | Elevation session |
 | `ClassUid` | int | OCSF class |
 | `ActivityId` | int | OCSF activity |
 | `SeverityId` | int | OCSF severity |
 | `DeviceSerial` | string | The Mac's serial number |
-| `UserName` | string | The user, the actor for a console action, or the enrolment token fingerprint |
+| `UserName` | string | The user, the actor for a console action (`altiward:server` when the server acted by itself), the person an `agent.admin_group` record is about, or the enrolment token fingerprint |
 | `Message` | string | A sentence describing the event |
 | `Ocsf` | dynamic | The full OCSF record |
 
@@ -345,8 +345,8 @@ Analytics Reader* on the workspace.
 What it can't show: *Now* looks back 90 days, or your retention if that's shorter, so
 rights granted before then and still held aren't counted. Agent versions list only the Macs
 that sent an event in the period, because health check-ins aren't exported; the events the
-server raises about a Mac (`agent.enrollment` and `agent.silent`) don't count. Whether
-each SIEM is keeping up is on the console's Overview.
+server raises about a Mac (`agent.enrollment`, `agent.silent` and `agent.admin_group`)
+don't count. Whether each SIEM is keeping up is on the console's Overview.
 
 ## Analytics rules and hunting queries
 

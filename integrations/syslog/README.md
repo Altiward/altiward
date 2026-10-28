@@ -48,11 +48,11 @@ Header: `CEF:0|Altiward|Altiward|<agent version>|<signature>|<name>|<severity>|`
 | Key | Value |
 | --- | --- |
 | `rt` | When it happened, epoch milliseconds |
-| `externalId` | Unique per record: the event ID. A second record from one event adds `/finding`: the finding of an `elevation.expired_enforced`, and the Close of the out-of-band finding when the rights were removed. Each new account a persistence event found adds `/account/<name>` |
+| `externalId` | Unique per record: the event ID. A second record from one event adds `/finding`: the finding of an `elevation.expired_enforced`, and the Close of the out-of-band finding when the rights were removed. Each new account a persistence event found adds `/account/<name>`. An `agent.admin_group` event gives one record for each person and one for the Mac: the first has the event ID alone (the Mac's, when nobody is added, removed or in the group), and the rest add `/added/<name>` (someone who joined the admin group), `/removed/<name>` (someone who left it), `/member/<name>` (a member in a daily snapshot) or `/group` (the Mac's record) |
 | `cat`, `act`, `outcome` | OCSF class, activity and status |
 | `dvchost` | The Mac's serial number |
 | `deviceExternalId` | The Mac's hardware UUID |
-| `duser` | The user's UPN, or their short name |
+| `duser` | The user's UPN, or their short name. For an `agent.admin_group` record about a person, that person's short name (the Mac's record has none) |
 | `msg` | A sentence describing the event |
 | `cs1` `tenant` | Tenant |
 | `cs2` `sessionId` | Elevation session, so the grant, revoke and alerts of one session group together |
@@ -74,6 +74,15 @@ fingerprint), `act` (the action), `cs5` `target` (the session, serial, enrollmen
 ended) and, where they apply, `dvchost`, `duser` and `cs2`. Console sign-ins (single
 sign-on, and each hour a console token is used) and sign-outs are OCSF Authentication
 records, with the event types `console.sign_in` and `console.sign_out`.
+
+What the server does by itself is recorded the same way, with `suser=altiward:server`
+(OCSF: a System user, "Altiward server"): `console.expire_history` (`API Activity: Delete`,
+`cs5` `target` `history`, `msg` says what was removed and why), `console.remove_device` (a
+Mac removed after it stopped checking in for longer than the history period: `cs5` `target`
+is its serial) and `console.revoke_enrollment` for each key revoked with it. A silent Mac's
+`remove_device` carries the ID of its `agent.silent` alert as `silent_event_id` in the entry's
+detail, which only the OCSF record has (`unmapped.altiward.detail`, as in the `json` format),
+so a rule can close that finding.
 
 ## Starter rules
 

@@ -1,0 +1,205 @@
+[
+  {
+    "activity_id": 3,
+    "activity_name": "Add User",
+    "category_name": "Identity \u0026 Access Management",
+    "category_uid": 3,
+    "class_name": "Group Management",
+    "class_uid": 3006,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "group": {
+      "name": "admin"
+    },
+    "message": "jdoe was added to the admin group on C02XK0AAJGH5",
+    "metadata": {
+      "correlation_uid": "7f3a9c2e-1d4b-4e8a-9b60-5c2d8e1f4a37",
+      "logged_time": 1792145400000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "1.1.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "9c4e7a12-5b3d-5f60-a8e1-2d7c4b9e0f31",
+      "version": "1.9.0"
+    },
+    "observables": [
+      {
+        "name": "user.name",
+        "type": "User Name",
+        "type_id": 4,
+        "value": "jdoe"
+      }
+    ],
+    "severity": "Informational",
+    "severity_id": 1,
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792145400000,
+    "type_name": "Group Management: Add User",
+    "type_uid": 300603,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "as_of": "2026-10-16T10:05:00Z",
+          "health_event_id": "4b8d2f6a-9e13-4c75-a0b2-6d1e3f5a7c92",
+          "state": "changed"
+        },
+        "event_type": "agent.admin_group",
+        "source": "privileges"
+      }
+    },
+    "user": {
+      "name": "jdoe"
+    }
+  },
+  {
+    "activity_id": 4,
+    "activity_name": "Remove User",
+    "category_name": "Identity \u0026 Access Management",
+    "category_uid": 3,
+    "class_name": "Group Management",
+    "class_uid": 3006,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "group": {
+      "name": "admin"
+    },
+    "message": "asmith was removed from the admin group on C02XK0AAJGH5",
+    "metadata": {
+      "logged_time": 1792145400000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "1.1.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "9c4e7a12-5b3d-5f60-a8e1-2d7c4b9e0f31/removed/asmith",
+      "version": "1.9.0"
+    },
+    "observables": [
+      {
+        "name": "user.name",
+        "type": "User Name",
+        "type_id": 4,
+        "value": "asmith"
+      }
+    ],
+    "severity": "Informational",
+    "severity_id": 1,
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792145400000,
+    "type_name": "Group Management: Remove User",
+    "type_uid": 300604,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "as_of": "2026-10-16T10:05:00Z",
+          "health_event_id": "4b8d2f6a-9e13-4c75-a0b2-6d1e3f5a7c92",
+          "state": "changed"
+        },
+        "event_type": "agent.admin_group"
+      }
+    },
+    "user": {
+      "name": "asmith"
+    }
+  },
+  {
+    "activity_id": 99,
+    "activity_name": "Admin group",
+    "category_name": "Identity \u0026 Access Management",
+    "category_uid": 3,
+    "class_name": "Group Management",
+    "class_uid": 3006,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "26.1.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "group": {
+      "name": "admin"
+    },
+    "message": "The admin group on C02XK0AAJGH5 changed: 1 added, 1 removed, 3 in it now",
+    "metadata": {
+      "logged_time": 1792145400000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "1.1.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "9c4e7a12-5b3d-5f60-a8e1-2d7c4b9e0f31/group",
+      "version": "1.9.0"
+    },
+    "severity": "Informational",
+    "severity_id": 1,
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792145400000,
+    "type_name": "Group Management: Admin group",
+    "type_uid": 300699,
+    "unmapped": {
+      "altiward": {
+        "added_count": 1,
+        "detail": {
+          "added": [
+            {
+              "name": "jdoe",
+              "session_id": "7f3a9c2e-1d4b-4e8a-9b60-5c2d8e1f4a37",
+              "source": "privileges"
+            }
+          ],
+          "as_of": "2026-10-16T10:05:00Z",
+          "health_event_id": "4b8d2f6a-9e13-4c75-a0b2-6d1e3f5a7c92",
+          "members": [
+            "root",
+            "itadmin",
+            "jdoe"
+          ],
+          "permanent_admins": [
+            "itadmin"
+          ],
+          "removed": [
+            "asmith"
+          ],
+          "state": "changed",
+          "truncated": 0
+        },
+        "event_type": "agent.admin_group",
+        "member_count": 3,
+        "permanent_admin_count": 1,
+        "removed_count": 1
+      }
+    }
+  }
+]

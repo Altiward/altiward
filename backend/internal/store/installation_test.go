@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"io/fs"
 	"os"
@@ -16,6 +17,25 @@ func installationSuite(t *testing.T, newStore func(t *testing.T) Store) {
 	t.Run("a new installation has a start", func(t *testing.T) {
 		in, err := newStore(t).Installation(ctx)
 		if err != nil || in.CreatedAt.IsZero() {
+			t.Fatalf("installation = %+v, %v", in, err)
+		}
+	})
+
+	t.Run("the secret for raised event IDs is 32 bytes and stays the same", func(t *testing.T) {
+		s := newStore(t)
+		first, err := s.Installation(ctx)
+		if err != nil || len(first.RaisedIDSecret) != 32 {
+			t.Fatalf("installation = %+v, %v", first, err)
+		}
+		second, err := s.Installation(ctx)
+		if err != nil || !bytes.Equal(first.RaisedIDSecret, second.RaisedIDSecret) {
+			t.Fatalf("secret changed: %x then %x, %v", first.RaisedIDSecret, second.RaisedIDSecret, err)
+		}
+	})
+
+	t.Run("the admin group has a start and no backfill yet", func(t *testing.T) {
+		in, err := newStore(t).Installation(ctx)
+		if err != nil || in.AdminGroupStartedAt.IsZero() || in.AdminGroupBackfilledAt != nil {
 			t.Fatalf("installation = %+v, %v", in, err)
 		}
 	})

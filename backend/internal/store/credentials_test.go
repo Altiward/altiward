@@ -737,6 +737,224 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		return c
 	}
 
+	// Retirement. A Mac is retired when an admin revokes its last key, and only then. Each case
+	// starts from a device row (one ingested reading) whose serial the keys share.
+	t.Run("retirement", func(t *testing.T) {
+		// retiredMac makes a store with one device, and returns its tenant and serial.
+		retiredMac := func(t *testing.T) (Store, string, string) {
+			t.Helper()
+			s, tenant := newStore(t), "tenant-"+randomHex(t)
+			health := testfixture.Event(t, "agent-health")
+			if _, err := s.Ingest(ctx, tenant, []event.Event{health}, t0); err != nil {
+				t.Fatal(err)
+			}
+			return s, tenant, health.Device.Serial
+		}
+		retiredAt := func(t *testing.T, s Store, tenant, serial string) *time.Time {
+			t.Helper()
+			devices, err := s.ListDevices(ctx, tenant)
+			if err != nil || len(devices) != 1 || devices[0].Serial != serial {
+				t.Fatalf("devices = %+v, %v", devices, err)
+			}
+			return devices[0].RetiredAt
+		}
+		wantRetired := func(t *testing.T, s Store, tenant, serial string, at time.Time) {
+			t.Helper()
+			if got := retiredAt(t, s, tenant, serial); got == nil || !got.Equal(at) {
+				t.Fatalf("retired at %v, want %v", got, at)
+			}
+		}
+		wantNotRetired := func(t *testing.T, s Store, tenant, serial string) {
+			t.Helper()
+			if got := retiredAt(t, s, tenant, serial); got != nil {
+				t.Fatalf("retired at %v, want not retired", got)
+			}
+		}
+		revokeAudited := func(t *testing.T, s Store, tenant, id string, at time.Time) AuditEntry {
+			t.Helper()
+			a := auditFor(t, tenant, AuditRevokeEnrollment)
+			a.Target, a.Detail = id, map[string]any{"serial": "x"}
+			if _, err := s.RevokeCredential(ctx, tenant, id, at, a); err != nil {
+				t.Fatal(err)
+			}
+			entries, err := s.ListAudit(ctx, tenant, AuditFilter{Limit: 1})
+			if err != nil || len(entries) != 1 || entries[0].ID != a.ID {
+				t.Fatalf("audit = %+v, %v", entries, err)
+			}
+			return entries[0]
+		}
+		wantAuditRetired := func(t *testing.T, e AuditEntry, want bool) {
+			t.Helper()
+			got, has := e.Detail["retired"]
+			if want && got != true || !want && has {
+				t.Fatalf("audit detail = %v, want retired: %v", e.Detail, want)
+			}
+			if e.Detail["serial"] != "x" {
+				t.Fatalf("audit detail = %v, lost the caller's keys", e.Detail)
+			}
+		}
+		// contested enrols a key, rotates it and has the old key used again, so a contest
+		// revokes the new one: the Mac then has no active key and nobody retired it.
+		contested := func(t *testing.T, s Store, tenant, serial string) {
+			t.Helper()
+			old := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+			rotate(t, s, tenant, old.DeviceID, rotation)
+			if c := staleKeyUsed(t, s, old.DeviceID, rotation.Add(time.Minute), rotation.Add(2*time.Minute)); c == nil || c.Revoked == nil {
+				t.Fatalf("contest = %+v", c)
+			}
+		}
+
+		t.Run("revoking the active key retires the Mac", func(t *testing.T) {
+			s, tenant, serial := retiredMac(t)
+			wantNotRetired(t, s, tenant, serial)
+			key := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+			wantNotRetired(t, s, tenant, serial)
+			e := revokeAudited(t, s, tenant, key.DeviceID, t0.Add(time.Minute))
+			wantRetired(t, s, tenant, serial, t0.Add(time.Minute))
+			wantAuditRetired(t, e, true)
+		})
+
+		t.Run("revoking another Mac's key retires only that Mac", func(t *testing.T) {
+			s, tenant, serial := retiredMac(t)
+			enroll(t, s, tenant, serial, newKey(t), t0)
+			other := enroll(t, s, tenant, "C02"+randomHex(t), newKey(t), t0).Credential
+			revokeAudited(t, s, tenant, other.DeviceID, t0.Add(time.Minute))
+			wantNotRetired(t, s, tenant, serial)
+		})
+
+		t.Run("re-keying brings a Mac back", func(t *testing.T) {
+			s, tenant, serial := retiredMac(t)
+			key := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+			revokeAudited(t, s, tenant, key.DeviceID, t0.Add(time.Minute))
+			wantRetired(t, s, tenant, serial, t0.Add(time.Minute))
+			// Approval is on by default, so the new key waits; the Mac is back in Fleet at once.
+			pending := enroll(t, s, tenant, serial, newKey(t), t0.Add(time.Hour)).Credential
+			if pending.Status != CredentialPending {
+				t.Fatalf("new key = %+v, want pending", pending)
+			}
+			wantNotRetired(t, s, tenant, serial)
+		})
+
+		t.Run("a new active key brings a Mac back", func(t *testing.T) {
+			s, tenant, serial := retiredMac(t)
+			if err := s.PutTenantSettings(ctx, tenant, TenantSettings{ReenrollmentRequiresApproval: false}, auditFor(t, tenant, AuditChangeSettings)); err != nil {
+				t.Fatal(err)
+			}
+			key := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+			revokeAudited(t, s, tenant, key.DeviceID, t0.Add(time.Minute))
+			wantRetired(t, s, tenant, serial, t0.Add(time.Minute))
+			if again := enroll(t, s, tenant, serial, newKey(t), t0.Add(time.Hour)).Credential; again.Status != CredentialActive {
+				t.Fatalf("new key = %+v, want active", again)
+			}
+			wantNotRetired(t, s, tenant, serial)
+		})
+
+		t.Run("revoking the active key with a key pending doesn't retire", func(t *testing.T) {
+			s, tenant, serial := retiredMac(t)
+			key := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+			pending := enroll(t, s, tenant, serial, newKey(t), t0.Add(time.Minute)).Credential
+			if pending.Status != CredentialPending {
+				t.Fatalf("second key = %+v, want pending", pending)
+			}
+			wantAuditRetired(t, revokeAudited(t, s, tenant, key.DeviceID, t0.Add(2*time.Minute)), false)
+			wantNotRetired(t, s, tenant, serial)
+			// Rejecting the pending key leaves the Mac with no key, but that is a rejection.
+			wantAuditRetired(t, revokeAudited(t, s, tenant, pending.DeviceID, t0.Add(3*time.Minute)), false)
+			wantNotRetired(t, s, tenant, serial)
+		})
+
+		t.Run("a re-keyed Mac can be retired again", func(t *testing.T) {
+			s, tenant, serial := retiredMac(t)
+			key := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+			revokeAudited(t, s, tenant, key.DeviceID, t0.Add(time.Minute))
+			wantRetired(t, s, tenant, serial, t0.Add(time.Minute))
+			pending := enroll(t, s, tenant, serial, newKey(t), t0.Add(time.Hour)).Credential
+			wantNotRetired(t, s, tenant, serial)
+			if _, err := s.ApproveCredential(ctx, tenant, pending.DeviceID, t0.Add(2*time.Hour), auditFor(t, tenant, AuditApproveEnrollment)); err != nil {
+				t.Fatal(err)
+			}
+			wantNotRetired(t, s, tenant, serial)
+			e := revokeAudited(t, s, tenant, pending.DeviceID, t0.Add(3*time.Hour))
+			wantRetired(t, s, tenant, serial, t0.Add(3*time.Hour))
+			wantAuditRetired(t, e, true)
+		})
+
+		t.Run("rejecting pending keys never retires", func(t *testing.T) {
+			s, tenant, serial := retiredMac(t)
+			contested(t, s, tenant, serial)
+			wantNotRetired(t, s, tenant, serial)
+			first := enroll(t, s, tenant, serial, newKey(t), rotation.Add(time.Hour)).Credential
+			second := enroll(t, s, tenant, serial, newKey(t), rotation.Add(2*time.Hour)).Credential
+			if first.Status != CredentialPending || second.Status != CredentialPending {
+				t.Fatalf("keys after a contest = %s, %s, want both pending", first.Status, second.Status)
+			}
+			wantAuditRetired(t, revokeAudited(t, s, tenant, first.DeviceID, rotation.Add(3*time.Hour)), false)
+			wantAuditRetired(t, revokeAudited(t, s, tenant, second.DeviceID, rotation.Add(4*time.Hour)), false)
+			wantNotRetired(t, s, tenant, serial)
+		})
+
+		t.Run("revoking an already revoked key never retires", func(t *testing.T) {
+			s, tenant, serial := retiredMac(t)
+			contested(t, s, tenant, serial)
+			creds, err := s.ListCredentials(ctx, tenant, CredentialFilter{Serial: serial, Status: CredentialRevoked})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, c := range creds {
+				if c.RotatedTo != "" {
+					continue // a rotated key answers with ErrRotated, which changes nothing
+				}
+				wantAuditRetired(t, revokeAudited(t, s, tenant, c.DeviceID, rotation.Add(time.Hour)), false)
+			}
+			wantNotRetired(t, s, tenant, serial)
+		})
+
+		t.Run("revoking a retired Mac's key again keeps the time", func(t *testing.T) {
+			s, tenant, serial := retiredMac(t)
+			key := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+			revokeAudited(t, s, tenant, key.DeviceID, t0.Add(time.Minute))
+			e := revokeAudited(t, s, tenant, key.DeviceID, t0.Add(time.Hour))
+			wantRetired(t, s, tenant, serial, t0.Add(time.Minute))
+			wantAuditRetired(t, e, false)
+		})
+
+		t.Run("a stale key's use brings a retired Mac back", func(t *testing.T) {
+			s, tenant, serial := retiredMac(t)
+			old := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+			next := rotate(t, s, tenant, old.DeviceID, rotation)
+			revokeAudited(t, s, tenant, next.DeviceID, rotation.Add(time.Minute))
+			wantRetired(t, s, tenant, serial, rotation.Add(time.Minute))
+			// Someone still holds a key the Mac had: its alert must not stay hidden.
+			if c := staleKeyUsed(t, s, old.DeviceID, rotation.Add(2*time.Minute), rotation.Add(2*time.Minute)); c == nil || !c.Report {
+				t.Fatalf("contest = %+v", c)
+			}
+			wantNotRetired(t, s, tenant, serial)
+		})
+
+		t.Run("a stale key's rotation brings a retired Mac back", func(t *testing.T) {
+			s, tenant, serial := retiredMac(t)
+			old := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+			next := rotate(t, s, tenant, old.DeviceID, rotation)
+			revokeAudited(t, s, tenant, next.DeviceID, rotation.Add(time.Minute))
+			wantRetired(t, s, tenant, serial, rotation.Add(time.Minute))
+			if _, err := rotateAt(s, tenant, old.DeviceID, newKey(t), rotation.Add(2*time.Minute)); !errors.Is(err, ErrRotatedElsewhere) {
+				t.Fatalf("err = %v", err)
+			}
+			wantNotRetired(t, s, tenant, serial)
+		})
+
+		t.Run("a contest never retires", func(t *testing.T) {
+			s, tenant, serial := retiredMac(t)
+			old := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+			rotate(t, s, tenant, old.DeviceID, rotation)
+			// A rotation from the stale key is a contest too.
+			if _, err := rotateAt(s, tenant, old.DeviceID, newKey(t), rotation.Add(time.Minute)); !errors.Is(err, ErrRotatedElsewhere) {
+				t.Fatalf("err = %v", err)
+			}
+			wantNotRetired(t, s, tenant, serial)
+		})
+	})
+
 	t.Run("rotate activates the new key and revokes the old", func(t *testing.T) {
 		s, tenant, serial := setup(t)
 		enrolled, err := s.Enroll(ctx, DeviceCredential{

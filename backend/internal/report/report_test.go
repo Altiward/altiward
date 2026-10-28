@@ -65,10 +65,40 @@ func TestNowCountsOpenSessionsBySourceAndAlerts(t *testing.T) {
 	resumed.Silence = &session.Silence{State: event.SilentStateResumed, At: now}
 	resumed.Integrity = map[string]bool{"code_signature": true}
 
-	o := build(t, report.Input{Sessions: sessions, Devices: []session.Device{failing, silent, resumed}})
+	o := build(t, report.Input{Sessions: sessions, Devices: []store.Device{{Device: failing}, {Device: silent}, {Device: resumed}}})
 	want := report.Now{Admins: 4, Privileges: 3, WithoutGrant: 1, PastExpiry: 2, MacsFailingChecks: 1, MacsSilent: 1}
 	if o.Now != want {
 		t.Fatalf("now = %+v, want %+v", o.Now, want)
+	}
+}
+
+// A retired Mac is out of service, so it isn't a Mac to chase. Its sessions are history
+// and stay in the counts.
+func TestRetiredMacsLeaveTheOverviewCounts(t *testing.T) {
+	retiredAt := now.Add(-day)
+	retired := session.NewDevice("acme", "OLD")
+	retired.AgentVersion = "0.0.4"
+	retired.Integrity = map[string]bool{"code_signature": false}
+	retired.Silence = &session.Silence{State: event.SilentStateSilent, At: now}
+	live := session.NewDevice("acme", "LIVE")
+	live.AgentVersion = "1.9.2"
+	sessions := []session.Session{
+		elevation("a", "jdoe", "", "OLD", event.SourcePrivileges, 10*time.Minute, 20*time.Minute, 0),
+	}
+
+	o := build(t, report.Input{
+		Sessions: sessions,
+		Devices:  []store.Device{{Device: retired, RetiredAt: &retiredAt}, {Device: live}},
+	})
+	want := report.Now{Admins: 1, Privileges: 1}
+	if o.Now != want {
+		t.Fatalf("now = %+v, want %+v", o.Now, want)
+	}
+	if o.Health.Macs != 1 || o.Health.AgentsOutdated != 0 {
+		t.Fatalf("macs %d, outdated %d", o.Health.Macs, o.Health.AgentsOutdated)
+	}
+	if len(o.Health.AgentVersions) != 1 || o.Health.AgentVersions[0].Version != "1.9.2" {
+		t.Fatalf("versions = %+v", o.Health.AgentVersions)
 	}
 }
 
@@ -168,12 +198,12 @@ func TestTopUsersAndMacs(t *testing.T) {
 }
 
 func TestHealthCountsVersionsAndSinks(t *testing.T) {
-	mac := func(serial, version string) session.Device {
+	mac := func(serial, version string) store.Device {
 		d := session.NewDevice("acme", serial)
 		d.AgentVersion = version
-		return d
+		return store.Device{Device: d}
 	}
-	devices := []session.Device{mac("A", "1.9.2"), mac("B", "1.9.2"), mac("C", "1.10.0"), mac("D", "0.0.4"), mac("E", "")}
+	devices := []store.Device{mac("A", "1.9.2"), mac("B", "1.9.2"), mac("C", "1.10.0"), mac("D", "0.0.4"), mac("E", "")}
 	delivered := now.Add(-time.Minute)
 	sinks := []store.ExportBacklog{
 		{Sink: "sentinel", LastDeliveredAt: &delivered},

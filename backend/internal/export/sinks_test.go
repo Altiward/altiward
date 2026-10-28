@@ -103,3 +103,47 @@ func TestSentinelRowsForRotation(t *testing.T) {
 		}
 	}
 }
+
+// An admin group event has no user of its own, so each person's record names them.
+func TestSentinelNamesAdminGroupPeople(t *testing.T) {
+	var got []sentinel.Row
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		zr, err := gzip.NewReader(r.Body)
+		if err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		defer zr.Close()
+		if err := json.NewDecoder(zr).Decode(&got); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	sink := export.SentinelSink{Client: &sentinel.Client{
+		Endpoint: srv.URL, RuleID: "dcr-test", Stream: "Custom-AltiwardOCSF", Tokens: staticToken("test"),
+	}}
+	e := testfixture.Event(t, "agent-admin-group-changed")
+	se := store.StoredEvent{Event: e, ReceivedAt: e.Timestamp}
+	var records []export.Record
+	for _, r := range ocsf.Map(se, "acme") {
+		records = append(records, export.Record{TenantID: "acme", Event: se, OCSF: r})
+	}
+	if err := sink.Send(context.Background(), records); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("rows = %d, want 3", len(got))
+	}
+	for i, want := range []string{"jdoe", "asmith", ""} {
+		if got[i].UserName != want {
+			t.Errorf("row %d UserName = %q, want %q", i, got[i].UserName, want)
+		}
+		if got[i].ClassUid != 3006 || got[i].DeviceSerial != "C02XK0AAJGH5" {
+			t.Errorf("row %d = %+v", i, got[i])
+		}
+	}
+}

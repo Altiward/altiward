@@ -58,6 +58,9 @@ func (s *SentinelSink) Send(ctx context.Context, records []Record) error {
 			row.UserName = r.Event.User.LocalName
 		}
 		if row.UserName == "" {
+			row.UserName = recordUserName(r)
+		}
+		if row.UserName == "" {
 			row.UserName = actorName(r)
 		}
 		if r.Audit != nil {
@@ -67,6 +70,13 @@ func (s *SentinelSink) Send(ctx context.Context, records []Record) error {
 		rows = append(rows, row)
 	}
 	return s.Client.Upload(ctx, rows)
+}
+
+// recordUserName is the OCSF user, for an event with no user of its own: each person of an
+// agent.admin_group event has a record that names them.
+func recordUserName(r Record) string {
+	user, _ := r.OCSF["user"].(map[string]any)
+	return str(user["name"])
 }
 
 // actorName is the OCSF actor, such as an enrolment token's fingerprint.

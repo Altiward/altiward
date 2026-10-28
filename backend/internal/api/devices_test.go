@@ -25,6 +25,7 @@ import (
 	"github.com/Altiward/altiward/backend/internal/api"
 	"github.com/Altiward/altiward/backend/internal/auth"
 	"github.com/Altiward/altiward/backend/internal/event"
+	"github.com/Altiward/altiward/backend/internal/session"
 	"github.com/Altiward/altiward/backend/internal/store"
 	"github.com/Altiward/altiward/backend/internal/testfixture"
 )
@@ -380,6 +381,103 @@ func TestRevokeCredential(t *testing.T) {
 	wantCode(t, rec, out, http.StatusUnauthorized, "credential_invalid")
 	if rec, _ := do(t, h, "POST", "/v1/enrollments/not-a-uuid/revoke", consoleToken, nil); rec.Code != 404 {
 		t.Fatalf("bad id: %d", rec.Code)
+	}
+}
+
+// revokeEntry is the audit entry of the tenant's newest revoke_enrollment.
+func revokeEntry(t *testing.T, h http.Handler) map[string]any {
+	t.Helper()
+	_, out := do(t, h, "GET", "/v1/audit", consoleToken, nil)
+	for _, e := range out["entries"].([]any) {
+		if m := e.(map[string]any); m["action"] == "revoke_enrollment" {
+			return m
+		}
+	}
+	t.Fatalf("no revoke_enrollment entry in %v", out)
+	return nil
+}
+
+func TestRevokeEnrollmentAuditRecordsWhatItEnds(t *testing.T) {
+	h := newServer(t)
+	a := enrollAgent(t, h, fixtureSerial)
+	if rec, _ := a.post(t, batch(t, "elevation-granted", "agent-health")); rec.Code != 200 {
+		t.Fatalf("ingest: %d %s", rec.Code, rec.Body)
+	}
+	if rec, _ := do(t, h, "POST", "/v1/enrollments/"+a.deviceID+"/revoke", consoleToken, nil); rec.Code != 200 {
+		t.Fatalf("revoke: %d %s", rec.Code, rec.Body)
+	}
+	detail := revokeEntry(t, h)["detail"].(map[string]any)
+	if detail["serial"] != fixtureSerial || detail["open_sessions"] != 1.0 || detail["failing_checks"] != true || detail["retired"] != true {
+		t.Fatalf("detail = %v, want 1 open session, a failing check and retired", detail)
+	}
+	_, out := do(t, h, "GET", "/v1/devices", consoleToken, nil)
+	devices := out["devices"].([]any)
+	if len(devices) != 1 || devices[0].(map[string]any)["retired_at"] == nil || devices[0].(map[string]any)["serial"] != fixtureSerial {
+		t.Fatalf("devices = %v, want the Mac flat with retired_at", devices)
+	}
+}
+
+func TestRevokeEnrollmentAuditOmitsWhatIsNotThere(t *testing.T) {
+	h := newServer(t)
+	a := enrollAgent(t, h, fixtureSerial)
+	if rec, _ := a.post(t, batch(t, "elevation-granted", "elevation-revoked")); rec.Code != 200 {
+		t.Fatalf("ingest: %d %s", rec.Code, rec.Body)
+	}
+	if rec, _ := do(t, h, "POST", "/v1/enrollments/"+a.deviceID+"/revoke", consoleToken, nil); rec.Code != 200 {
+		t.Fatalf("revoke: %d %s", rec.Code, rec.Body)
+	}
+	detail := revokeEntry(t, h)["detail"].(map[string]any)
+	if _, has := detail["open_sessions"]; has {
+		t.Fatalf("detail = %v, want no open_sessions", detail)
+	}
+	if _, has := detail["failing_checks"]; has {
+		t.Fatalf("detail = %v, want no failing_checks", detail)
+	}
+}
+
+// lookupsFail is a store whose session and device lists fail, as a database in trouble.
+type lookupsFail struct{ store.Store }
+
+func (lookupsFail) ListSessions(context.Context, string, store.SessionFilter) ([]session.Session, error) {
+	return nil, errors.New("sessions unavailable")
+}
+
+func (lookupsFail) ListDevices(context.Context, string) ([]store.Device, error) {
+	return nil, errors.New("devices unavailable")
+}
+
+// The revoke's warnings are extra detail: when they can't be read, the server logs that and
+// revokes all the same, with the detail it has.
+func TestRevokeEnrollmentWhenItsWarningsCannotBeRead(t *testing.T) {
+	tokens, err := auth.Parse("acme="+agentToken, "acme="+consoleToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := serverNow(t)
+	var logs bytes.Buffer
+	st := store.NewMemory(nil)
+	h := api.New(lookupsFail{st}, tokens, slog.New(slog.NewTextHandler(&logs, nil)), func() time.Time { return now })
+	a := enrollAgent(t, h, fixtureSerial)
+	if rec, _ := a.post(t, batch(t, "elevation-granted", "agent-health")); rec.Code != 200 {
+		t.Fatalf("ingest: %d %s", rec.Code, rec.Body)
+	}
+	if rec, _ := do(t, h, "POST", "/v1/enrollments/"+a.deviceID+"/revoke", consoleToken, nil); rec.Code != 200 {
+		t.Fatalf("revoke: %d %s", rec.Code, rec.Body)
+	}
+	if c, err := st.Credential(context.Background(), a.deviceID); err != nil || c.Status != store.CredentialRevoked {
+		t.Fatalf("credential = %+v, %v", c, err)
+	}
+	detail := revokeEntry(t, h)["detail"].(map[string]any)
+	if _, has := detail["open_sessions"]; has || detail["serial"] != fixtureSerial || detail["retired"] != true {
+		t.Fatalf("detail = %v", detail)
+	}
+	if _, has := detail["failing_checks"]; has {
+		t.Fatalf("detail = %v", detail)
+	}
+	for _, want := range []string{"sessions unavailable", "devices unavailable"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("log = %s, want %q", logs.String(), want)
+		}
 	}
 }
 

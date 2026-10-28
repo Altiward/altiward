@@ -51,6 +51,9 @@ export function fakeApi(over: Partial<Api> = {}): Api {
     })), putSettings: none(),
     revokeSession: none(), revokeDevice: none(), command: none(), commands: vi.fn(async () => []), audit: vi.fn(async () => []),
     about: vi.fn(async () => ({ version: "0.1.0", oldest_supported_agent: "0.1", update_check: false })),
+    retention: vi.fn(async () => ({
+      history: { days: 365, kept_for_good: false, reason: "default_no_siem" as const, held_before: null, waiting_for_backfill: false },
+    })),
     me: vi.fn(async () => signedIn("admin")), signOut: vi.fn(async () => undefined),
     exports: vi.fn(async () => []), testExport: none(), retryExports: none(),
     consoleSessions: vi.fn(async () => []), endConsoleSession: none(),

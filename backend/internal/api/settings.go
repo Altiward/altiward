@@ -3,8 +3,10 @@ package api
 // Tenant settings, independent of any one device.
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/Altiward/altiward/backend/internal/auth"
@@ -21,11 +23,33 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request, p auth.Prin
 }
 
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, p auth.Principal) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid settings: "+err.Error())
+		return
+	}
 	settings := store.DefaultTenantSettings()
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&settings); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid settings: "+err.Error())
+		return
+	}
+	// Whether the body names history_days at all: one that leaves it out (a console tab
+	// loaded before this setting existed, a script that only toggles approval) keeps the
+	// stored value instead of resetting it, which could otherwise start removing history.
+	var named struct {
+		HistoryDays *int `json:"history_days"`
+	}
+	if err := json.Unmarshal(body, &named); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid settings: "+err.Error())
+		return
+	}
+	if d := settings.HistoryDays; named.HistoryDays != nil && d != 0 && d != store.HistoryKeptForGood &&
+		(d < store.MinHistoryDays || d > store.MaxHistoryDays) {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+			"history_days must be 0 for the default, %d to keep history for good, or between %d and %d",
+			store.HistoryKeptForGood, store.MinHistoryDays, store.MaxHistoryDays))
 		return
 	}
 	if h := settings.SilentAfterHours; h != 0 && (h < store.MinSilentAfterHours || h > store.MaxSilentAfterHours) {
@@ -38,6 +62,9 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, p auth.Prin
 		s.serverError(w, "get settings", err)
 		return
 	}
+	if named.HistoryDays == nil {
+		settings.HistoryDays = previous.HistoryDays
+	}
 	a, err := s.auditEntry(p, store.AuditChangeSettings, "settings", map[string]any{"previous": previous, "settings": settings})
 	if err != nil {
 		s.serverError(w, "audit entry", err)
@@ -48,6 +75,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, p auth.Prin
 		return
 	}
 	s.log.Info("tenant settings changed", "tenant", p.TenantID, "reenrollment_requires_approval", settings.ReenrollmentRequiresApproval,
-		"new_mac_requires_approval", settings.NewMacRequiresApproval, "silent_after_hours", settings.SilentAfterHours)
+		"new_mac_requires_approval", settings.NewMacRequiresApproval, "silent_after_hours", settings.SilentAfterHours,
+		"history_days", settings.HistoryDays)
 	writeJSON(w, http.StatusOK, settings)
 }

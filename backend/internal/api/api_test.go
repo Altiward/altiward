@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,8 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Altiward/altiward/backend/internal/admingroup"
 	"github.com/Altiward/altiward/backend/internal/api"
 	"github.com/Altiward/altiward/backend/internal/auth"
+	"github.com/Altiward/altiward/backend/internal/event"
 	"github.com/Altiward/altiward/backend/internal/store"
 	"github.com/Altiward/altiward/backend/internal/testfixture"
 )
@@ -121,6 +124,91 @@ func TestIngestVerdictsPerEvent(t *testing.T) {
 	}
 }
 
+// A raised event's ID already stored as something else means someone forged it: the server
+// says so in its log, and the Mac's reading is stored and acknowledged all the same.
+func TestIngestLogsARaisedIDAlreadyTaken(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory(nil)
+	tokens, err := auth.Parse("acme="+agentToken, "acme="+consoleToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	now := serverNow(t)
+	h := api.New(st, tokens, slog.New(slog.NewTextHandler(&logs, nil)), func() time.Time { return now })
+
+	in, err := st.Installation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	health := testfixture.Event(t, "agent-health")
+	taken := testfixture.Event(t, "elevation-granted")
+	taken.EventID = admingroup.ID(in.RaisedIDSecret, "acme", fixtureSerial, "first/"+health.EventID)
+	if _, err := st.Ingest(ctx, "acme", []event.Event{taken}, now); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, out := enrollAgent(t, h, fixtureSerial).post(t, batch(t, "agent-health"))
+	if accepted, _ := out["accepted"].([]any); rec.Code != 200 || len(accepted) != 1 || accepted[0] != health.EventID ||
+		len(out["duplicate"].([]any)) != 0 {
+		t.Fatalf("ingest: %d %s", rec.Code, rec.Body)
+	}
+	line := ""
+	for l := range strings.Lines(logs.String()) {
+		if strings.Contains(l, "raised event ID already taken") {
+			line = l
+		}
+	}
+	if !strings.Contains(line, "level=ERROR") || !strings.Contains(line, "event_id="+taken.EventID) ||
+		!strings.Contains(line, "device="+fixtureSerial) {
+		t.Fatalf("log = %s", logs.String())
+	}
+}
+
+// raisesInvalid is a store whose ingest reports a raised event that failed validation.
+type raisesInvalid struct {
+	store.Store
+	id string
+}
+
+func (s raisesInvalid) Ingest(ctx context.Context, tenantID string, events []event.Event, receivedAt time.Time) (store.IngestResult, error) {
+	res, err := s.Store.Ingest(ctx, tenantID, events, receivedAt)
+	res.RaisedInvalid = append(res.RaisedInvalid, s.id)
+	return res, err
+}
+
+// A raised event the server couldn't make valid is a bug in the server: it says so in its
+// log, and the Mac's reading is stored and acknowledged all the same.
+func TestIngestLogsAnInvalidRaisedEvent(t *testing.T) {
+	tokens, err := auth.Parse("acme="+agentToken, "acme="+consoleToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	now := serverNow(t)
+	const id = "0b9f5f2e-4c1d-5e6f-8a7b-9c0d1e2f3a4b"
+	h := api.New(raisesInvalid{store.NewMemory(nil), id}, tokens, slog.New(slog.NewTextHandler(&logs, nil)),
+		func() time.Time { return now })
+	health := testfixture.Event(t, "agent-health")
+	rec, out := enrollAgent(t, h, fixtureSerial).post(t, batch(t, "agent-health"))
+	if accepted, _ := out["accepted"].([]any); rec.Code != 200 || len(accepted) != 1 || accepted[0] != health.EventID {
+		t.Fatalf("ingest: %d %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), id) {
+		t.Fatalf("the agent was told of the server's event: %s", rec.Body)
+	}
+	line := ""
+	for l := range strings.Lines(logs.String()) {
+		if strings.Contains(l, "raised event invalid") {
+			line = l
+		}
+	}
+	if !strings.Contains(line, "level=ERROR") || !strings.Contains(line, "event_id="+id) ||
+		!strings.Contains(line, "device="+fixtureSerial) {
+		t.Fatalf("log = %s", logs.String())
+	}
+}
+
 func TestAuth(t *testing.T) {
 	h := newServer(t)
 	cases := []struct {
@@ -208,6 +296,7 @@ func TestAgentsCannotSendServerRaisedEvents(t *testing.T) {
 	for _, c := range []struct{ fixture, want string }{
 		{"agent-silent", "agent.silent is raised only by the server"},
 		{"agent-enrollment-pending", "agent.enrollment is raised only by the server"},
+		{"agent-admin-group-changed", "agent.admin_group is raised only by the server"},
 	} {
 		t.Run(c.fixture, func(t *testing.T) {
 			h := newServer(t)
@@ -231,6 +320,141 @@ func TestSilentAfterHoursIsBounded(t *testing.T) {
 	rec, out := do(t, h, "GET", "/v1/settings", consoleToken, nil)
 	if rec.Code != 200 || out["silent_after_hours"] != 720.0 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestHistoryDaysIsBounded(t *testing.T) {
+	h := newServer(t)
+	for _, c := range []struct{ days, want int }{{0, 200}, {-1, 200}, {90, 200}, {3650, 200}, {89, 400}, {3651, 400}, {-2, 400}} {
+		rec, out := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"history_days": c.days})
+		if rec.Code != c.want {
+			t.Errorf("history_days %d: %d %s", c.days, rec.Code, rec.Body)
+		}
+		if c.want == 400 && out["error"] != "history_days must be 0 for the default, -1 to keep history for good, or between 90 and 3650" {
+			t.Errorf("history_days %d: error = %v", c.days, out["error"])
+		}
+	}
+	// The last accepted value stays after the refused ones.
+	if rec, out := do(t, h, "GET", "/v1/settings", consoleToken, nil); rec.Code != 200 || out["history_days"] != 3650.0 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+// A console tab or script that doesn't know the setting must not reset it.
+func TestPutSettingsWithoutHistoryKeepsIt(t *testing.T) {
+	h := newServer(t)
+	if rec, _ := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"history_days": -1}); rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	for _, body := range []map[string]any{{"silent_after_hours": 48}, {"history_days": nil}} {
+		if rec, _ := do(t, h, "PUT", "/v1/settings", consoleToken, body); rec.Code != 200 {
+			t.Fatalf("%v: %d %s", body, rec.Code, rec.Body)
+		}
+		if _, out := do(t, h, "GET", "/v1/settings", consoleToken, nil); out["history_days"] != -1.0 {
+			t.Fatalf("%v: history_days = %v, want -1", body, out["history_days"])
+		}
+	}
+}
+
+// coveredFrom is a store whose SIEMs count as covered from at: a store records coverage by
+// its own clock, which this test doesn't set.
+type coveredFrom struct {
+	store.Store
+	at time.Time
+}
+
+func (c coveredFrom) SinkCoverage(_ context.Context, sinks []string) (*time.Time, error) {
+	if len(sinks) == 0 {
+		return nil, nil
+	}
+	at := c.at
+	return &at, nil
+}
+
+func TestRetentionReportsThePolicy(t *testing.T) {
+	history := func(t *testing.T, h http.Handler) map[string]any {
+		t.Helper()
+		rec, out := do(t, h, "GET", "/v1/retention", consoleToken, nil)
+		if rec.Code != 200 {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+		got, _ := out["history"].(map[string]any)
+		return got
+	}
+	tokens, _ := auth.Parse("acme="+agentToken, "acme="+consoleToken)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	now := serverNow(t)
+
+	t.Run("no SIEM", func(t *testing.T) {
+		h := api.New(store.NewMemory(nil), tokens, log, func() time.Time { return now })
+		got := history(t, h)
+		if got["reason"] != "default_no_siem" || got["kept_for_good"] != true || got["days"] != 0.0 ||
+			got["held_before"] != nil || got["waiting_for_backfill"] != true {
+			t.Fatalf("history = %v", got)
+		}
+	})
+
+	t.Run("with a SIEM", func(t *testing.T) {
+		st := coveredFrom{store.NewMemory([]string{"splunk"}), now.Add(-time.Hour)}
+		h := api.New(st, tokens, log, func() time.Time { return now }, api.WithSinks([]string{"splunk"}))
+		got := history(t, h)
+		if got["reason"] != "default_siem" || got["kept_for_good"] != false || got["days"] != 365.0 ||
+			got["held_before"] != now.Add(-time.Hour).Format(time.RFC3339) {
+			t.Fatalf("history = %v", got)
+		}
+		if rec, _ := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"history_days": 120}); rec.Code != 200 {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+		got = history(t, h)
+		if got["reason"] != "set" || got["days"] != 120.0 || got["kept_for_good"] != false || got["held_before"] != nil {
+			t.Fatalf("history = %v", got)
+		}
+		if rec, _ := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"history_days": -1}); rec.Code != 200 {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+		got = history(t, h)
+		if got["reason"] != "kept_for_good" || got["kept_for_good"] != true || got["days"] != 0.0 {
+			t.Fatalf("history = %v", got)
+		}
+	})
+
+	t.Run("backfill done", func(t *testing.T) {
+		st := store.NewMemory(nil)
+		if _, err := st.BackfillAdminGroups(context.Background(), now); err != nil {
+			t.Fatal(err)
+		}
+		h := api.New(st, tokens, log, func() time.Time { return now })
+		if got := history(t, h); got["waiting_for_backfill"] != false {
+			t.Fatalf("history = %v", got)
+		}
+	})
+
+	t.Run("a viewer may ask", func(t *testing.T) {
+		if rec, _ := do(t, newServer(t), "GET", "/v1/retention", "", nil); rec.Code != 401 {
+			t.Fatalf("no token: %d", rec.Code)
+		}
+	})
+}
+
+// History turns the setting into days, and says why.
+func TestSettingsHistory(t *testing.T) {
+	for _, c := range []struct {
+		days       int
+		siem       bool
+		want       int
+		wantReason string
+	}{
+		{0, true, 365, "default_siem"},
+		{0, false, 0, "default_no_siem"},
+		{120, true, 120, "set"},
+		{120, false, 120, "set"},
+		{-1, true, 0, "kept_for_good"},
+		{-1, false, 0, "kept_for_good"},
+	} {
+		days, reason := store.TenantSettings{HistoryDays: c.days}.History(c.siem)
+		if days != c.want || reason != c.wantReason {
+			t.Errorf("History(%d, %v) = %d, %q; want %d, %q", c.days, c.siem, days, reason, c.want, c.wantReason)
+		}
 	}
 }
 

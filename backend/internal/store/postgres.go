@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Altiward/altiward/backend/internal/admingroup"
 	"github.com/Altiward/altiward/backend/internal/event"
 	"github.com/Altiward/altiward/backend/internal/session"
 )
@@ -28,6 +30,10 @@ var migrations embed.FS
 type Postgres struct {
 	pool  *pgxpool.Pool
 	sinks []string
+	// raisedIDSecret keys the IDs of the events ingest raises (Installation.RaisedIDSecret),
+	// read once when the store opens. A store connected without migrating has none, and
+	// raises nothing: it is for tools that don't ingest.
+	raisedIDSecret []byte
 
 	watchers     commandWatchers
 	listenOnce   sync.Once
@@ -44,6 +50,10 @@ func OpenPostgres(ctx context.Context, url string, exportSinks []string) (*Postg
 	if err := p.migrate(ctx); err != nil {
 		p.Close()
 		return nil, err
+	}
+	if err := p.pool.QueryRow(ctx, `SELECT raised_id_secret FROM installation`).Scan(&p.raisedIDSecret); err != nil {
+		p.Close()
+		return nil, fmt.Errorf("read the installation secret: %w", err)
 	}
 	return p, nil
 }
@@ -137,19 +147,11 @@ func (p *Postgres) ingest(ctx context.Context, tx pgx.Tx, tenantID string, event
 		return res, fmt.Errorf("lock ingestion: %w", err)
 	}
 	for _, e := range events {
-		body, err := json.Marshal(e)
+		stored, err := p.insertEvent(ctx, tx, tenantID, e, receivedAt)
 		if err != nil {
 			return res, err
 		}
-		tag, err := tx.Exec(ctx, `
-			INSERT INTO events (tenant_id, event_id, type, session_id, device_serial, occurred_at, received_at, body)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-			ON CONFLICT (tenant_id, event_id) DO NOTHING`,
-			tenantID, e.EventID, string(e.Type), e.SessionID, e.Device.Serial, e.Timestamp, receivedAt, body)
-		if err != nil {
-			return res, fmt.Errorf("insert event: %w", err)
-		}
-		if tag.RowsAffected() == 0 {
+		if !stored {
 			res.Duplicate = append(res.Duplicate, e.EventID)
 			continue
 		}
@@ -158,19 +160,131 @@ func (p *Postgres) ingest(ctx context.Context, tx pgx.Tx, tenantID string, event
 				return res, err
 			}
 		}
-		if err := p.applyDevice(ctx, tx, tenantID, e, receivedAt); err != nil {
+		adminGroup, err := p.applyDevice(ctx, tx, tenantID, e, receivedAt)
+		if err != nil {
 			return res, err
 		}
-		for _, sink := range p.sinks {
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO export_outbox (tenant_id, sink, event_id, next_attempt_at) VALUES ($1, $2, $3, $4)
-				ON CONFLICT DO NOTHING`, tenantID, sink, e.EventID, receivedAt); err != nil {
-				return res, fmt.Errorf("queue export: %w", err)
-			}
+		if err := p.queueExports(ctx, tx, tenantID, e.EventID, receivedAt); err != nil {
+			return res, err
 		}
 		res.Accepted = append(res.Accepted, e.EventID)
+		if e.Type == event.AgentHealth {
+			if err := p.raiseAdminGroup(ctx, tx, tenantID, e, adminGroup, receivedAt, &res); err != nil {
+				return res, err
+			}
+		}
 	}
 	return res, nil
+}
+
+// insertEvent stores e unless an event with its ID is stored already, and reports whether
+// it did.
+func (p *Postgres) insertEvent(ctx context.Context, tx pgx.Tx, tenantID string, e event.Event, receivedAt time.Time) (bool, error) {
+	body, err := json.Marshal(e)
+	if err != nil {
+		return false, err
+	}
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO events (tenant_id, event_id, type, session_id, device_serial, occurred_at, received_at, body)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (tenant_id, event_id) DO NOTHING`,
+		tenantID, e.EventID, string(e.Type), e.SessionID, e.Device.Serial, e.Timestamp, receivedAt, body)
+	if err != nil {
+		return false, fmt.Errorf("insert event: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func (p *Postgres) queueExports(ctx context.Context, tx pgx.Tx, tenantID, eventID string, at time.Time) error {
+	for _, sink := range p.sinks {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO export_outbox (tenant_id, sink, event_id, next_attempt_at) VALUES ($1, $2, $3, $4)
+			ON CONFLICT DO NOTHING`, tenantID, sink, eventID, at); err != nil {
+			return fmt.Errorf("queue export: %w", err)
+		}
+	}
+	return nil
+}
+
+// raiseAdminGroup stores the agent.admin_group event that a newly stored health reading
+// raises (admingroup.OnHealth), compared with lastReported, the Mac's devices.admin_group as
+// applyDevice read it under the row's lock: so readings are compared in the order they
+// arrive. A person added keeps a link to a session only when this transaction holds that
+// session open for the same Mac and person (admingroup.KeepHeldSessions). The event is
+// stored and queued for every sink, with no session and no change to the device's state,
+// and the column then records the group. A reading that raises nothing still refreshes the
+// column with its own details (admingroup.Refreshed). Nothing about the reading fails the
+// batch: an event that doesn't validate goes in res.RaisedInvalid and an ID already stored
+// as another type or Mac in res.RaisedIDTaken, and neither is stored or recorded. A database
+// error is returned like any other in the transaction, which can't go on after one.
+func (p *Postgres) raiseAdminGroup(ctx context.Context, tx pgx.Tx, tenantID string, health event.Event, lastReported []byte,
+	receivedAt time.Time, res *IngestResult) error {
+	if len(p.raisedIDSecret) == 0 {
+		return nil
+	}
+	prev := decodeReport(lastReported)
+	raised, next, ok := admingroup.OnHealth(prev, health, tenantID, p.raisedIDSecret, receivedAt)
+	if !ok {
+		// Nothing to raise, but the column still takes the reading's details, so a daily
+		// snapshot says which reading it comes from.
+		next = admingroup.Refreshed(*prev, health)
+	} else {
+		if err := admingroup.KeepHeldSessions(raised, func(user, sessionID string) (bool, error) {
+			var held bool
+			err := tx.QueryRow(ctx, `
+				SELECT EXISTS (SELECT 1 FROM sessions
+				WHERE tenant_id = $1 AND session_id = $2 AND device_serial = $3 AND local_user = $4 AND ended_at IS NULL)`,
+				tenantID, sessionID, health.Device.Serial, user).Scan(&held)
+			if err != nil {
+				return false, fmt.Errorf("check session link: %w", err)
+			}
+			return held, nil
+		}); err != nil {
+			return err
+		}
+		if raised.Validate(receivedAt) != nil {
+			res.RaisedInvalid = append(res.RaisedInvalid, raised.EventID)
+			return nil
+		}
+		stored, err := p.insertEvent(ctx, tx, tenantID, raised, receivedAt)
+		if err != nil {
+			return err
+		}
+		if stored {
+			if err := p.queueExports(ctx, tx, tenantID, raised.EventID, receivedAt); err != nil {
+				return err
+			}
+		} else {
+			var typ, serial string
+			if err := tx.QueryRow(ctx, `SELECT type, device_serial FROM events WHERE tenant_id = $1 AND event_id = $2`,
+				tenantID, raised.EventID).Scan(&typ, &serial); err != nil {
+				return fmt.Errorf("load raised event: %w", err)
+			}
+			if typ != string(raised.Type) || serial != raised.Device.Serial {
+				res.RaisedIDTaken = append(res.RaisedIDTaken, raised.EventID)
+				return nil
+			}
+		}
+	}
+	group, err := json.Marshal(next)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE devices SET admin_group = $3 WHERE tenant_id = $1 AND serial = $2`,
+		tenantID, health.Device.Serial, group); err != nil {
+		return fmt.Errorf("save admin group: %w", err)
+	}
+	return nil
+}
+
+// decodeReport reads a devices.admin_group value: nil when nothing has been reported, or
+// when it can't be read, so that the next reading reports the whole group afresh.
+func decodeReport(raw []byte) *admingroup.Report {
+	var r *admingroup.Report
+	if len(raw) == 0 || json.Unmarshal(raw, &r) != nil {
+		return nil
+	}
+	return r
 }
 
 func ingestLockID(tenantID string) int64 {
@@ -215,37 +329,39 @@ func (p *Postgres) applySession(ctx context.Context, tx pgx.Tx, tenantID, sessio
 	return nil
 }
 
-func (p *Postgres) applyDevice(ctx context.Context, tx pgx.Tx, tenantID string, e event.Event, receivedAt time.Time) error {
+// applyDevice folds e into its device's row, which it locks, and returns the row's
+// admin_group as it was (nil for a new row), for raiseAdminGroup.
+func (p *Postgres) applyDevice(ctx context.Context, tx pgx.Tx, tenantID string, e event.Event, receivedAt time.Time) (adminGroup []byte, err error) {
 	d := session.NewDevice(tenantID, e.Device.Serial)
 	var state []byte
-	err := tx.QueryRow(ctx, `SELECT state FROM devices WHERE tenant_id = $1 AND serial = $2 FOR UPDATE`,
-		tenantID, e.Device.Serial).Scan(&state)
+	err = tx.QueryRow(ctx, `SELECT state, admin_group FROM devices WHERE tenant_id = $1 AND serial = $2 FOR UPDATE`,
+		tenantID, e.Device.Serial).Scan(&state, &adminGroup)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		if e.Type.IsServerRaised() {
-			return nil // no check-in, so no device yet; the event is stored and exported all the same
+			return nil, nil // no check-in, so no device yet; the event is stored and exported all the same
 		}
 	case err != nil:
-		return fmt.Errorf("load device: %w", err)
+		return nil, fmt.Errorf("load device: %w", err)
 	default:
 		if err := json.Unmarshal(state, &d); err != nil {
-			return fmt.Errorf("decode device: %w", err)
+			return nil, fmt.Errorf("decode device: %w", err)
 		}
 	}
 	d.Apply(e)
 	d.Received(e, receivedAt)
 	state, err = json.Marshal(d)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	_, err = tx.Exec(ctx, `
 		INSERT INTO devices (tenant_id, serial, state, last_seen_at) VALUES ($1, $2, $3, $4)
 		ON CONFLICT (tenant_id, serial) DO UPDATE SET state = excluded.state, last_seen_at = excluded.last_seen_at`,
 		tenantID, d.Serial, state, d.CheckedInAt())
 	if err != nil {
-		return fmt.Errorf("save device: %w", err)
+		return nil, fmt.Errorf("save device: %w", err)
 	}
-	return nil
+	return adminGroup, nil
 }
 
 func (p *Postgres) ListSessions(ctx context.Context, tenantID string, f SessionFilter) ([]session.Session, error) {
@@ -327,22 +443,40 @@ func (p *Postgres) GetSession(ctx context.Context, tenantID, sessionID string) (
 	return s, evs, rows.Err()
 }
 
-func (p *Postgres) ListDevices(ctx context.Context, tenantID string) ([]session.Device, error) {
-	rows, err := p.pool.Query(ctx, `SELECT state FROM devices WHERE tenant_id = $1 ORDER BY serial`, tenantID)
+func (p *Postgres) ListDevices(ctx context.Context, tenantID string) ([]Device, error) {
+	rows, err := p.pool.Query(ctx, `SELECT state, retired_at FROM devices WHERE tenant_id = $1 ORDER BY serial`, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	return collectJSON[session.Device](rows)
+	return collectDevices(rows)
 }
 
-func (p *Postgres) SilenceCandidates(ctx context.Context, seenBefore time.Time) ([]session.Device, error) {
+func (p *Postgres) SilenceCandidates(ctx context.Context, seenBefore time.Time) ([]Device, error) {
 	rows, err := p.pool.Query(ctx, `
-		SELECT state FROM devices WHERE last_seen_at <= $1 OR state->'silence'->>'state' = 'silent'
+		SELECT state, retired_at FROM devices WHERE last_seen_at <= $1 OR state->'silence'->>'state' = 'silent'
 		ORDER BY tenant_id, serial`, seenBefore)
 	if err != nil {
 		return nil, err
 	}
-	return collectJSON[session.Device](rows)
+	return collectDevices(rows)
+}
+
+// collectDevices reads rows of (state, retired_at).
+func collectDevices(rows pgx.Rows) ([]Device, error) {
+	defer rows.Close()
+	out := []Device{}
+	for rows.Next() {
+		var raw []byte
+		var d Device
+		if err := rows.Scan(&raw, &d.RetiredAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(raw, &d.Device); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }
 
 func (p *Postgres) ClaimExports(ctx context.Context, sink string, limit int, lease time.Duration, now time.Time) ([]ExportItem, error) {
@@ -430,33 +564,57 @@ func (p *Postgres) RetryExportsNow(ctx context.Context, tenantID, sink string, n
 
 // DropExports removes everything queued for sink and returns how many items it removed.
 // It is for a sink taken out of the configuration, whose queue nothing drains any more;
-// the events themselves stay. The caller checks the sink isn't configured.
+// the events themselves stay. It also forgets the sink's coverage, so a sink configured
+// again under the name later counts as new. The caller checks the sink isn't configured.
 func (p *Postgres) DropExports(ctx context.Context, sink string) (int64, error) {
-	tag, err := p.pool.Exec(ctx, `DELETE FROM export_outbox WHERE sink = $1`, sink)
+	var n int64
+	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `DELETE FROM export_outbox WHERE sink = $1`, sink)
+		if err != nil {
+			return err
+		}
+		n = tag.RowsAffected()
+		_, err = tx.Exec(ctx, `DELETE FROM export_sinks WHERE sink = $1`, sink)
+		return err
+	})
 	if err != nil {
 		return 0, err
 	}
-	return tag.RowsAffected(), nil
+	return n, nil
 }
 
 // ReplayExports queues for sink the events received, and the console actions recorded,
 // since since, oldest first, and returns how many it queued. It is for a sink added after
 // they were written, which they were never queued for. Anything already waiting for sink
-// stays as it is; anything sent before is sent again. The caller checks sink is configured.
+// stays as it is; anything sent before is sent again. It moves the sink's coverage back to
+// since when that is earlier, so history expiry may then remove what was replayed once it
+// is sent. The caller checks sink is configured.
 func (p *Postgres) ReplayExports(ctx context.Context, sink string, since, now time.Time) (int64, error) {
-	tag, err := p.pool.Exec(ctx, `
-		INSERT INTO export_outbox (tenant_id, sink, event_id, audit_id, next_attempt_at)
-		SELECT tenant_id, $1, event_id, audit_id, $3 FROM (
-			SELECT tenant_id, event_id, NULL::uuid AS audit_id, received_at AS t, 0 AS seq
-				FROM events WHERE received_at >= $2
-			UNION ALL
-			SELECT tenant_id, NULL::uuid, id, at, seq FROM audit_log WHERE at >= $2
-		) owed ORDER BY t, seq
-		ON CONFLICT DO NOTHING`, sink, since, now)
+	var queued int64
+	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO export_outbox (tenant_id, sink, event_id, audit_id, next_attempt_at)
+			SELECT tenant_id, $1, event_id, audit_id, $3 FROM (
+				SELECT tenant_id, event_id, NULL::uuid AS audit_id, received_at AS t, 0 AS seq
+					FROM events WHERE received_at >= $2
+				UNION ALL
+				SELECT tenant_id, NULL::uuid, id, at, seq FROM audit_log WHERE at >= $2
+			) owed ORDER BY t, seq
+			ON CONFLICT DO NOTHING`, sink, since, now)
+		if err != nil {
+			return err
+		}
+		queued = tag.RowsAffected()
+		_, err = tx.Exec(ctx, `
+			INSERT INTO export_sinks (sink, covered_from) VALUES ($1, $2)
+			ON CONFLICT (sink) DO UPDATE SET covered_from = LEAST(export_sinks.covered_from, EXCLUDED.covered_from)`,
+			sink, since)
+		return err
+	})
 	if err != nil {
 		return 0, fmt.Errorf("replay exports: %w", err)
 	}
-	return tag.RowsAffected(), nil
+	return queued, nil
 }
 
 func collectJSON[T any](rows pgx.Rows) ([]T, error) {
@@ -474,4 +632,231 @@ func collectJSON[T any](rows pgx.Rows) ([]T, error) {
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+func (p *Postgres) Tenants(ctx context.Context) ([]string, error) {
+	rows, err := p.pool.Query(ctx, `SELECT tenant_id FROM devices UNION SELECT tenant_id FROM tenant_settings ORDER BY 1`)
+	if err != nil {
+		return nil, err
+	}
+	out, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if out == nil {
+		out = []string{}
+	}
+	return out, err
+}
+
+// ExpireHistory runs one statement for each kind of row, each in its own transaction and
+// outside the ingest lock: rows another replica is removing are skipped, not waited for.
+// Every statement keeps to the database's 90-day floor itself, by now(), so the delete
+// triggers of migration 0008 never fire, and filters out events a sink is still waiting
+// for with NOT EXISTS: a delete that met the outbox's foreign key would fail the whole
+// statement.
+func (p *Postgres) ExpireHistory(ctx context.Context, tenantID string, c HistoryCutoff, limit int) (ExpiryCounts, error) {
+	var n ExpiryCounts
+	limit = max(limit, 1)
+	// Ended sessions, each with every one of its events. A session stays whole while any
+	// of its events can't go: received at or after the cutoff or inside the floor, before
+	// the coverage, or waiting for a sink.
+	if err := p.pool.QueryRow(ctx, `
+		WITH doomed AS (
+			SELECT s.tenant_id, s.session_id FROM sessions s
+			WHERE s.tenant_id = $1 AND s.ended_at IS NOT NULL
+			  AND s.updated_at < $2 AND s.updated_at < now() - interval '90 days'
+			  AND NOT EXISTS (
+				SELECT 1 FROM events e
+				WHERE e.tenant_id = s.tenant_id AND e.session_id = s.session_id
+				  AND (e.received_at >= $2 OR e.received_at >= now() - interval '90 days'
+				       OR e.received_at < COALESCE($3::timestamptz, '-infinity')
+				       OR EXISTS (SELECT 1 FROM export_outbox o WHERE o.tenant_id = e.tenant_id AND o.event_id = e.event_id)))
+			ORDER BY s.updated_at
+			LIMIT $4
+			FOR UPDATE OF s SKIP LOCKED
+		), events_gone AS (
+			DELETE FROM events e USING doomed d
+			WHERE e.tenant_id = d.tenant_id AND e.session_id = d.session_id
+			RETURNING 1
+		), sessions_gone AS (
+			DELETE FROM sessions s USING doomed d
+			WHERE s.tenant_id = d.tenant_id AND s.session_id = d.session_id
+			RETURNING 1
+		)
+		SELECT (SELECT count(*) FROM sessions_gone), (SELECT count(*) FROM events_gone)`,
+		tenantID, c.Before, c.NotBefore, limit).Scan(&n.Sessions, &n.Events); err != nil {
+		return n, fmt.Errorf("expire sessions: %w", err)
+	}
+	// Events in no session, or in one that is gone. With no coverage the lower bound is
+	// -infinity rather than "$3 IS NULL OR": a cached generic plan keeps it as an index
+	// bound that way.
+	tag, err := p.pool.Exec(ctx, `
+		WITH doomed AS (
+			SELECT e.tenant_id, e.event_id FROM events e
+			WHERE e.tenant_id = $1 AND e.received_at < $2 AND e.received_at < now() - interval '90 days'
+			  AND e.received_at >= COALESCE($3::timestamptz, '-infinity')
+			  AND (e.session_id IS NULL OR NOT EXISTS (
+				SELECT 1 FROM sessions s WHERE s.tenant_id = e.tenant_id AND s.session_id = e.session_id))
+			  AND NOT EXISTS (SELECT 1 FROM export_outbox o WHERE o.tenant_id = e.tenant_id AND o.event_id = e.event_id)
+			ORDER BY e.received_at
+			LIMIT $4
+			FOR UPDATE OF e SKIP LOCKED
+		)
+		DELETE FROM events e USING doomed d WHERE e.tenant_id = d.tenant_id AND e.event_id = d.event_id`,
+		tenantID, c.Before, c.NotBefore, limit)
+	if err != nil {
+		return n, fmt.Errorf("expire events: %w", err)
+	}
+	n.Events += tag.RowsAffected()
+	tag, err = p.pool.Exec(ctx, `
+		DELETE FROM agent_commands WHERE command_id IN (
+			SELECT command_id FROM agent_commands
+			WHERE tenant_id = $1 AND created_at < $2 AND created_at < now() - interval '90 days'
+			ORDER BY created_at
+			LIMIT $3
+			FOR UPDATE SKIP LOCKED)`, tenantID, c.Before, limit)
+	if err != nil {
+		return n, fmt.Errorf("expire commands: %w", err)
+	}
+	n.Commands = tag.RowsAffected()
+	return n, nil
+}
+
+func (p *Postgres) RemovalCandidates(ctx context.Context, tenantID string, before time.Time) ([]string, error) {
+	rows, err := p.pool.Query(ctx, `SELECT serial FROM devices WHERE tenant_id = $1 AND last_seen_at < $2 ORDER BY serial`,
+		tenantID, before)
+	if err != nil {
+		return nil, err
+	}
+	out, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if out == nil {
+		out = []string{}
+	}
+	return out, err
+}
+
+// errGone rolls back a removal whose Mac was no longer there to delete.
+var errGone = errors.New("device gone")
+
+// RemoveDevice holds the Mac's row lock as well as the two locks, so enrolment, approval,
+// revocation and contests for the Mac wait for it, or it for them. The tenant's ingest lock
+// makes every Mac's ingest in the organisation wait while it runs, not just this Mac's.
+// Each delete keeps to the database's floor by the cutoff it reads, so the delete triggers
+// of migration 0008 never fire.
+func (p *Postgres) RemoveDevice(ctx context.Context, tenantID, serial string, c HistoryCutoff, now time.Time) (RemovedDevice, error) {
+	var res RemovedDevice
+	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+		res = RemovedDevice{}
+		if err := lockSerial(ctx, tx, tenantID, serial); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, ingestLockID(tenantID)); err != nil {
+			return fmt.Errorf("lock ingestion: %w", err)
+		}
+		var raw []byte
+		var before time.Time // the cutoff, never later than the floor
+		err := tx.QueryRow(ctx, `
+			SELECT state, LEAST($3::timestamptz, now() - interval '90 days') FROM devices
+			WHERE tenant_id = $1 AND serial = $2 FOR UPDATE`, tenantID, serial, c.Before).Scan(&raw, &before)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil // removed already
+		}
+		if err != nil {
+			return fmt.Errorf("load device: %w", err)
+		}
+		d := session.NewDevice(tenantID, serial)
+		if err := json.Unmarshal(raw, &d); err != nil {
+			return fmt.Errorf("decode device: %w", err)
+		}
+		switch {
+		case d.LastReceivedAt.IsZero():
+			res.Skipped = SkippedOwnClock
+			return nil
+		case !d.CheckedInAt().Before(before):
+			res.Skipped = SkippedRecentEvent
+			return nil
+		}
+		// Sessions are checked with the events: a session's updated_at is when its newest
+		// event was received, and the floor refuses to delete one changed since the cutoff.
+		if err := tx.QueryRow(ctx, `
+			SELECT CASE
+				WHEN EXISTS (SELECT 1 FROM events WHERE tenant_id = $1 AND device_serial = $2 AND received_at >= $3)
+				  OR EXISTS (SELECT 1 FROM sessions WHERE tenant_id = $1 AND device_serial = $2 AND updated_at >= $3)
+				THEN $5::text
+				WHEN EXISTS (
+					SELECT 1 FROM events e WHERE e.tenant_id = $1 AND e.device_serial = $2
+					  AND (e.received_at < COALESCE($4::timestamptz, '-infinity')
+					       OR EXISTS (SELECT 1 FROM export_outbox o WHERE o.tenant_id = e.tenant_id AND o.event_id = e.event_id)))
+				THEN $6::text
+				WHEN EXISTS (SELECT 1 FROM sessions WHERE tenant_id = $1 AND device_serial = $2 AND ended_at IS NULL)
+				THEN $7::text
+				WHEN EXISTS (SELECT 1 FROM device_credentials WHERE tenant_id = $1 AND serial = $2
+				               AND (created_at >= $3 OR activated_at >= $3))
+				THEN $8::text
+				ELSE '' END`,
+			tenantID, serial, before, c.NotBefore,
+			SkippedRecentEvent, SkippedNotSent, SkippedOpenSession, SkippedRecentKey).Scan(&res.Skipped); err != nil {
+			return fmt.Errorf("check device: %w", err)
+		}
+		if res.Skipped != "" {
+			return nil
+		}
+
+		rows, err := tx.Query(ctx, `
+			UPDATE device_credentials SET status = 'revoked', revoked_at = $3
+			WHERE tenant_id = $1 AND serial = $2 AND status IN ('active', 'pending')
+			RETURNING device_id::text`, tenantID, serial, now)
+		if err != nil {
+			return fmt.Errorf("revoke keys: %w", err)
+		}
+		if res.RevokedKeys, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil {
+			return fmt.Errorf("revoke keys: %w", err)
+		}
+		slices.Sort(res.RevokedKeys)
+		remove := func(n *int64, sql string, args ...any) error {
+			tag, err := tx.Exec(ctx, sql, args...)
+			if err != nil {
+				return fmt.Errorf("remove device: %w", err)
+			}
+			*n = tag.RowsAffected()
+			return nil
+		}
+		// A command from within the period stays until expiry reaches it. Sessions go before
+		// their events, the order expiry locks them in, so the two can't deadlock.
+		if err := remove(&res.Counts.Commands, `DELETE FROM agent_commands WHERE tenant_id = $1 AND serial = $2 AND created_at < $3`,
+			tenantID, serial, before); err != nil {
+			return err
+		}
+		if err := remove(&res.Counts.Sessions, `DELETE FROM sessions WHERE tenant_id = $1 AND device_serial = $2`,
+			tenantID, serial); err != nil {
+			return err
+		}
+		if err := remove(&res.Counts.Events, `DELETE FROM events WHERE tenant_id = $1 AND device_serial = $2`,
+			tenantID, serial); err != nil {
+			return err
+		}
+		if err := remove(&res.Counts.Macs, `DELETE FROM devices WHERE tenant_id = $1 AND serial = $2`,
+			tenantID, serial); err != nil {
+			return err
+		}
+		if res.Counts.Macs != 1 {
+			return errGone
+		}
+		res.Removed = true
+		entries, err := removalEntries(tenantID, d, res.RevokedKeys, c, now, res.Counts)
+		if err != nil {
+			return err
+		}
+		for _, a := range entries {
+			if err := p.insertAudit(ctx, tx, a); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if errors.Is(err, errGone) {
+		return RemovedDevice{}, nil
+	}
+	if err != nil {
+		return RemovedDevice{}, err
+	}
+	return res, nil
 }

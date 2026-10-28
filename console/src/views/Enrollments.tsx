@@ -8,7 +8,7 @@ import { StateBadge } from "../components/StateBadge";
 import { Table } from "../components/Table";
 import { useApi, useCan } from "../context";
 import { explanations } from "../explanations";
-import { dateTime, lastCheckIn, relativeTime } from "../format";
+import { dateTime, hasFailingCheck, lastCheckIn, relativeTime } from "../format";
 import { useLoad } from "../useLoad";
 
 type Filter = CredentialStatus | "rotated" | "all";
@@ -123,6 +123,8 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
         {current && (
           <EnrollmentInspector enrollment={current} onClose={() => setSelected(null)} evidenceVersion={evidenceVersion}
             active={(data ?? []).find((e) => e.serial === current.serial && e.device_id !== current.device_id && e.status === "active")}
+            retiresMac={current.status === "active" && !(data ?? []).some((o) =>
+              o.serial === current.serial && o.device_id !== current.device_id && (o.status === "active" || o.status === "pending"))}
             predecessor={byID(current.rotated_from)} successor={byID(current.rotated_to)} inUse={inUseAfter(current)}
             onFollow={follow}
             onRotated={async (id) => { await reload(); setDone(null); setRotatedTo(id); }}
@@ -134,8 +136,10 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
 }
 
 /** A pending key replaces the Mac's active key when approved, if it has one. */
-function EnrollmentInspector({ enrollment: e, active, predecessor, successor, inUse, evidenceVersion, onClose, onDone, onRotated, onFollow }: {
-  enrollment: Enrollment; active: Enrollment | undefined; predecessor: Enrollment | undefined; successor: Enrollment | undefined;
+function EnrollmentInspector({ enrollment: e, active, retiresMac, predecessor, successor, inUse, evidenceVersion, onClose, onDone, onRotated, onFollow }: {
+  enrollment: Enrollment; active: Enrollment | undefined;
+  /** Revoking this key leaves the Mac with no active key and none waiting for approval. */
+  retiresMac: boolean; predecessor: Enrollment | undefined; successor: Enrollment | undefined;
   /** For a rotated key, the active key its rotations led to, if the list has it. */
   inUse: Enrollment | undefined;
   evidenceVersion: number; onClose: () => void; onDone: (message: string) => void;
@@ -254,17 +258,42 @@ function EnrollmentInspector({ enrollment: e, active, predecessor, successor, in
         <PendingCheckIn key={e.device_id} serial={e.serial} newMac={newMac} refreshVersion={evidenceVersion} />
       )}
       {confirming && (
-        <ConfirmSheet
-          title={e.status === "pending" ? `Reject the new key for ${e.serial}?` : `Revoke the key for ${e.serial}?`}
-          message={e.status === "pending"
-            ? active
-              ? "The Mac keeps reporting with its previous key."
-              : "This Mac has no active key, so it can’t report until it enrols again with a new key."
-            : "The Mac can’t report with this key. Unless re-enrolment needs approval, it enrols again on its next check-in."}
-          confirm={e.status === "pending" ? "Reject" : "Revoke"} destructive busy={busy}
+        <RevokeSheet enrollment={e} active={active} retiresMac={retiresMac} busy={busy}
           onConfirm={() => act("revoke")} onCancel={() => setConfirming(false)} />
       )}
     </aside>
+  );
+}
+
+/** What a revoke does, in the sheet that confirms it. Revoking a Mac's only key retires it, so
+ *  the sheet also says what the Mac still has: someone with admin rights, or a failing check. */
+function RevokeSheet({ enrollment: e, active, retiresMac, busy, onConfirm, onCancel }: {
+  enrollment: Enrollment; active: Enrollment | undefined; retiresMac: boolean; busy: boolean;
+  onConfirm: () => void; onCancel: () => void;
+}) {
+  const api = useApi();
+  // Asked only when the revoke retires the Mac; a failed ask leaves the warnings out. Revoke
+  // waits until both have answered or failed, so nobody confirms before reading them.
+  const sessions = useLoad(async () => (retiresMac ? api.sessions({ open: true, device: e.serial }) : []), [e.serial, retiresMac]);
+  const devices = useLoad(async () => (retiresMac ? api.devices() : []), [e.serial, retiresMac]);
+  const warningsLoading = sessions.loading || devices.loading;
+  const pending = e.status === "pending";
+  const message = pending
+    ? active
+      ? "The Mac keeps reporting with its previous key."
+      : "This Mac has no active key, so it can’t report until it enrols again with a new key."
+    : [
+      "The Mac can’t report with this key. Unless re-enrolment needs approval, it enrols again on its next check-in.",
+      ...(retiresMac ? [
+        "This retires the Mac: it leaves Fleet and the Overview.",
+        (sessions.data ?? []).length > 0 && "Someone still has admin rights on this Mac.",
+        (devices.data ?? []).some((d) => d.serial === e.serial && hasFailingCheck(d)) && "It is failing an integrity check.",
+      ] : []),
+    ].filter(Boolean).join(" ");
+  return (
+    <ConfirmSheet title={pending ? `Reject the new key for ${e.serial}?` : `Revoke the key for ${e.serial}?`}
+      message={message} confirm={pending ? "Reject" : "Revoke"} destructive busy={busy || warningsLoading}
+      onConfirm={onConfirm} onCancel={onCancel} />
   );
 }
 
