@@ -73,4 +73,17 @@ describe("Activity", () => {
     render(<ApiContext.Provider value={fakeApi()}><MemoryRouter><ActivityView /></MemoryRouter></ApiContext.Provider>);
     expect(await screen.findByText("No activity yet")).toBeInTheDocument();
   });
+
+  it("names what the server did itself", async () => {
+    const api = fakeApi({ audit: vi.fn(async () => [
+      entry({ id: "a3", actor: "altiward:server", action: "remove_device", target: "C02XK0AAJGH5" }),
+      entry({ id: "a4", actor: "altiward:server", action: "expire_history", target: "history", at: "2026-10-17T10:00:00Z" }),
+    ]) });
+    render(<ApiContext.Provider value={api}><MemoryRouter><ActivityView /></MemoryRouter></ApiContext.Provider>);
+    expect(await screen.findByText("Removed a Mac")).toBeInTheDocument();
+    expect(screen.getByText("Removed old history")).toBeInTheDocument();
+    expect(screen.getAllByText("Altiward")).toHaveLength(2);
+    expect(screen.queryByText("altiward:server")).toBeNull();
+    expect(actorLabel("altiward:server")).toBe("Altiward");
+  });
 });

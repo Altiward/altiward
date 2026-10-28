@@ -23,6 +23,7 @@ const eventLabels: Record<string, string> = {
   "admin.out_of_band": "Found without a grant",
   "admin.out_of_band_removed": "Removed without a grant",
   "persistence.detected": "New persistence",
+  "agent.admin_group": "Admin group sent to the SIEM",
 };
 
 /** The timeline's name for an event; an end that removed nothing doesn't say Revoked. */

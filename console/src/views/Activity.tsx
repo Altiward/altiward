@@ -16,10 +16,14 @@ const actionTitle: Record<string, string> = {
   test_export: "Sent a SIEM test event",
   retry_exports: "Retried SIEM exports now",
   end_console_session: "Ended someone's console sign-in",
+  remove_device: "Removed a Mac",
+  expire_history: "Removed old history",
 };
 
-/** A person's email with single sign-on; otherwise which token, by fingerprint. */
+/** A person's email with single sign-on; otherwise which token, by fingerprint. The server
+ *  itself, when it acted without anyone asking (it removed a Mac or old history), is Altiward. */
 export function actorLabel(actor: string): string {
+  if (actor === "altiward:server") return "Altiward";
   if (actor.startsWith("token:")) return `Console token ${actor.slice("token:".length)}`;
   if (actor.startsWith("break-glass:")) return `Break-glass token ${actor.slice("break-glass:".length)}`;
   return actor;
@@ -48,6 +52,8 @@ export function auditSummary(a: AuditEntry): string {
       return Array.isArray(d.sinks) ? d.sinks.map((s) => sinkName(String(s))).join(" and ") : "SIEM";
     case "retry_exports":
       return sinkName(a.target);
+    case "remove_device":
+      return str(d.serial) ?? a.target;
     case "end_console_session":
       return str(d.name) ? `${str(d.name)} (${a.target})` : a.target;
   }
