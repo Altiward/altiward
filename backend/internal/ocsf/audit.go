@@ -18,6 +18,9 @@ import (
 //	end_console_session                    → Delete (4), Low: an admin ended someone's sign-in
 //	expire_history                         → Delete (4): the server removed history past the
 //	                                         period it keeps
+//	remove_device                          → Delete (4): the server removed a Mac that stopped
+//	                                         checking in before that period; the keys it
+//	                                         revoked with it are revoke_enrollment entries
 //	sign_in, sign_out                      → Authentication (3002), Logon (1) or Logoff (2),
 //	                                         for single sign-on
 //
@@ -60,6 +63,10 @@ func MapAudit(a store.AuditEntry) Record {
 	case store.AuditExpireHistory:
 		activityID, activity = 4, "Delete"
 		resource["type"] = "History"
+	case store.AuditRemoveDevice:
+		activityID, activity = 4, "Delete"
+		resource["type"] = "Mac"
+		serial = a.Target
 	}
 	if serial != "" {
 		resource["name"] = serial
@@ -182,6 +189,8 @@ func auditMessage(a store.AuditEntry) string {
 		return fmt.Sprintf("%s ended %s's console sign-in from the Altiward console", a.Actor, a.Target)
 	case store.AuditExpireHistory:
 		return historyExpiry(a.Detail)
+	case store.AuditRemoveDevice:
+		return macRemoval(a.Target, a.Detail)
 	}
 	return fmt.Sprintf("%s did %s on %s in the Altiward console", a.Actor, a.Action, a.Target)
 }
@@ -206,6 +215,18 @@ func historyExpiry(detail map[string]any) string {
 	}
 	return fmt.Sprintf("Altiward removed history received before %s, past the %v days it keeps (%s): %s",
 		detailString(detail, "before"), detail["days"], why, strings.Join(removed, ", "))
+}
+
+// macRemoval says which Mac a remove_device entry removed, why, and what went with it.
+func macRemoval(serial string, detail map[string]any) string {
+	counts, _ := detail["counts"].(map[string]any)
+	removed := []string{
+		plural(counts["events"], "event", "events"),
+		plural(counts["sessions"], "session", "sessions"),
+		plural(counts["commands"], "command", "commands"),
+	}
+	return fmt.Sprintf("Altiward removed the Mac %s, which last checked in at %s, past the %v days of history it keeps, with %s",
+		serial, detailString(detail, "last_check_in"), detail["days"], strings.Join(removed, ", "))
 }
 
 // plural is n with the noun for its number. n is a JSON number, or nil for none.

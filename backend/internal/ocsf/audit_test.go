@@ -167,3 +167,28 @@ func TestHistoryExpiryIsADeleteByTheServer(t *testing.T) {
 		t.Errorf("a person's entry: %v", r)
 	}
 }
+
+func TestMacRemovalIsADeleteByTheServer(t *testing.T) {
+	a := auditEntry(store.AuditRemoveDevice, "C02XK0AAJGH5", map[string]any{
+		"last_check_in": "2025-01-01T12:00:00Z", "days": 365.0,
+		"counts":          map[string]any{"events": 5.0, "sessions": 1.0, "commands": 0.0, "macs": 1.0},
+		"silent_event_id": "3f6d1c2a-8b4e-5a7f-9c0d-1e2f3a4b5c6d",
+	})
+	a.Actor = store.ServerActor
+	r := auditJSON(t, a)
+	for path, want := range map[string]any{
+		"class_uid": 6003.0, "activity_id": 4.0, "activity_name": "Delete", "type_uid": 600304.0, "severity_id": 1.0,
+		"actor.user.name": "altiward:server", "actor.user.type": "System", "src_endpoint.name": "Altiward server",
+		"api.operation": "remove_device", "unmapped.altiward.event_type": "console.remove_device",
+		"unmapped.altiward.detail.silent_event_id": "3f6d1c2a-8b4e-5a7f-9c0d-1e2f3a4b5c6d",
+		"message": "Altiward removed the Mac C02XK0AAJGH5, which last checked in at 2025-01-01T12:00:00Z, " +
+			"past the 365 days of history it keeps, with 5 events, 1 session, 0 commands",
+	} {
+		if got := get(r, path); got != want {
+			t.Errorf("%s = %v, want %v", path, got, want)
+		}
+	}
+	if res := r["resources"].([]any)[0].(map[string]any); res["type"] != "Mac" || res["uid"] != "C02XK0AAJGH5" || res["name"] != "C02XK0AAJGH5" {
+		t.Errorf("resources = %v", res)
+	}
+}

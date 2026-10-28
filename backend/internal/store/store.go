@@ -123,6 +123,33 @@ type Store interface {
 	// 90 days, while the Mac kept checking in, so it is accepted rather than keeping a
 	// record of every removed event.
 	ExpireHistory(ctx context.Context, tenantID string, c HistoryCutoff, limit int) (ExpiryCounts, error)
+	// RemovalCandidates lists, in serial order, the tenant's Macs whose last check-in
+	// (session.Device.CheckedInAt) is before before, for RemoveDevice to decide on.
+	RemovalCandidates(ctx context.Context, tenantID string, before time.Time) ([]string, error)
+	// RemoveDevice removes a Mac that has stopped checking in, unless anything says it is
+	// still in use. Under the Mac's lock and then the tenant's ingest lock, the order the
+	// stale-key contest takes them in, it reads the Mac again and keeps it, saying why in
+	// Skipped, when:
+	//
+	//   - only the Mac's own clock says when it last checked in (SkippedOwnClock);
+	//   - it checked in, or any event for it was received, the server's own included, at or
+	//     after the cutoff (SkippedRecentEvent);
+	//   - any of its events is still waiting for a sink, or was received before c.NotBefore
+	//     (SkippedNotSent);
+	//   - it has an open session: someone may still hold admin rights there (SkippedOpenSession);
+	//   - any key for it was created, or approved, at or after the cutoff: it is trying to
+	//     come back, or an admin has just let it (SkippedRecentKey).
+	//
+	// The cutoff is c.Before, or 90 days ago by the database's clock if that is earlier, so
+	// nothing younger than the floor of migration 0008 is touched. Otherwise, in one
+	// transaction, it revokes the Mac's active and pending keys, so that a Mac back after
+	// this long enrols again and waits for approval like any re-enrolment (the keys' records
+	// stay: they are what makes it a re-enrolment); deletes its sessions, events, commands
+	// created before the cutoff, and the Mac itself; and records, under ServerActor at now,
+	// a revoke_enrollment entry for each key it revoked and a remove_device entry for the
+	// Mac, queued for every sink. A Mac already gone, as when another replica removed it
+	// first, changes and records nothing.
+	RemoveDevice(ctx context.Context, tenantID, serial string, c HistoryCutoff, now time.Time) (RemovedDevice, error)
 
 	// ClaimExports leases up to limit due items for sink so concurrent workers don't double-send.
 	ClaimExports(ctx context.Context, sink string, limit int, lease time.Duration, now time.Time) ([]ExportItem, error)
@@ -165,6 +192,27 @@ func (c *ExpiryCounts) Add(o ExpiryCounts) {
 	c.Commands += o.Commands
 	c.Macs += o.Macs
 }
+
+// RemovedDevice says what RemoveDevice did with a Mac.
+type RemovedDevice struct {
+	Removed bool
+	// Skipped is why the Mac was kept (one of the Skipped reasons), or "" when it was
+	// removed or was already gone.
+	Skipped string
+	// RevokedKeys are the device IDs of the keys revoked with the Mac, in order.
+	RevokedKeys []string
+	// Counts is what went with the Mac, and the Mac itself (Macs is 1).
+	Counts ExpiryCounts
+}
+
+// Why RemoveDevice kept a Mac (RemovedDevice.Skipped).
+const (
+	SkippedOwnClock    = "own_clock"
+	SkippedRecentEvent = "recent_event"
+	SkippedNotSent     = "not_sent"
+	SkippedOpenSession = "open_session"
+	SkippedRecentKey   = "recent_key"
+)
 
 // DeviceRef names a Mac.
 type DeviceRef struct {

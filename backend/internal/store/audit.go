@@ -3,7 +3,10 @@ package store
 import (
 	"context"
 	"maps"
+	"math"
 	"time"
+
+	"github.com/Altiward/altiward/backend/internal/session"
 )
 
 // The audit log of console actions. Each mutating console call hands its entry to the
@@ -27,7 +30,15 @@ const (
 	// The server removing an organisation's history past the period it keeps, once per run
 	// that removed anything; the target is "history".
 	AuditExpireHistory = "expire_history"
+	// The server removing a Mac that stopped checking in longer ago than the organisation
+	// keeps history (Store.RemoveDevice); the target is the serial. The keys it revoked
+	// with the Mac each have a revoke_enrollment entry, with RevokeReasonRemoved.
+	AuditRemoveDevice = "remove_device"
 )
+
+// RevokeReasonRemoved is the reason in the detail of a revoke_enrollment entry the server
+// wrote for a key it revoked when it removed the key's Mac.
+const RevokeReasonRemoved = "removed"
 
 // ServerActor is the actor of what the server does by itself, such as expiring history.
 // No person or token can carry it: tokens are "token:" or "break-glass:" and a fingerprint,
@@ -58,6 +69,42 @@ func withRetired(a AuditEntry) AuditEntry {
 	detail["retired"] = true
 	a.Detail = detail
 	return a
+}
+
+// removalEntries are the Activity entries for removing d, a Mac of tenantID that stopped
+// checking in: a revoke_enrollment entry for each key in revoked, then the remove_device
+// entry with counts, what went with it. c and now are the run's: the period in force is
+// the days between them.
+func removalEntries(tenantID string, d session.Device, revoked []string, c HistoryCutoff, now time.Time,
+	counts ExpiryCounts) ([]AuditEntry, error) {
+	out := make([]AuditEntry, 0, len(revoked)+1)
+	add := func(action, target string, detail map[string]any) error {
+		id, err := NewDeviceID() // a random UUID, as for device IDs
+		if err != nil {
+			return err
+		}
+		out = append(out, AuditEntry{ID: id, TenantID: tenantID, At: now, Actor: ServerActor, Action: action,
+			Target: target, Detail: detail})
+		return nil
+	}
+	for _, deviceID := range revoked {
+		if err := add(AuditRevokeEnrollment, deviceID, map[string]any{"serial": d.Serial, "reason": RevokeReasonRemoved}); err != nil {
+			return nil, err
+		}
+	}
+	detail := map[string]any{
+		"last_check_in": d.CheckedInAt().UTC(),
+		"days":          int(math.Round(now.Sub(c.Before).Hours() / 24)),
+		"counts":        counts,
+	}
+	// So that SIEM content can close the finding the alert opened.
+	if d.Silent() {
+		detail["silent_event_id"] = d.Silence.EventID
+	}
+	if err := add(AuditRemoveDevice, d.Serial, detail); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // AuditFilter pages through the log, newest first. For the next page, pass the last

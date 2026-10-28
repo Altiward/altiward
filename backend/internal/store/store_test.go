@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -882,6 +883,355 @@ func suite(t *testing.T, newStore func(t *testing.T, sink string) Store) {
 		}
 	})
 
+	// Removing Macs that have stopped checking in. The fixtures are all one Mac's, received
+	// in 2025 as above, and a run on 2026-06-01 that keeps a year has the cutoff above.
+	mac := "C02XK0AAJGH5"
+	runAt := testfixture.Time(t, "2026-06-01T00:00:00Z")
+	later := testfixture.Time(t, "2025-07-01T12:00:00Z") // after the cutoff, and past the floor
+	enrollAt := func(t *testing.T, s Store, tenant string, at time.Time) DeviceCredential {
+		t.Helper()
+		res, err := s.Enroll(ctx, DeviceCredential{DeviceID: newUUID(t), TenantID: tenant, Serial: mac,
+			HardwareUUID: "HW-" + mac, PublicKey: newKey(t), CreatedAt: at}, EnrollLimits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res.Credential
+	}
+	// quietMac stores an ended session and a reading for the Mac, and a key it enrolled, all
+	// in January 2025, and has the SIEM send everything.
+	quietMac := func(t *testing.T, s Store, tenant, sink string) DeviceCredential {
+		t.Helper()
+		granted, revoked, _, health := fixtures(t)
+		if _, err := s.Ingest(ctx, tenant, []event.Event{granted, revoked, health}, old); err != nil {
+			t.Fatal(err)
+		}
+		key := enrollAt(t, s, tenant, old)
+		sendAll(t, s, sink)
+		return key
+	}
+	removeMac := func(t *testing.T, s Store, tenant string, c HistoryCutoff) RemovedDevice {
+		t.Helper()
+		r, err := s.RemoveDevice(ctx, tenant, mac, c, runAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	// serverEntries are the tenant's Activity entries the server wrote itself, oldest first.
+	serverEntries := func(t *testing.T, s Store, tenant string) []AuditEntry {
+		t.Helper()
+		all, err := s.ListAudit(ctx, tenant, AuditFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := []AuditEntry{}
+		for _, a := range slices.Backward(all) {
+			if a.Actor == ServerActor {
+				out = append(out, a)
+			}
+		}
+		return out
+	}
+	// keptFor checks that RemoveDevice keeps the Mac, for why, and changes nothing.
+	keptFor := func(t *testing.T, s Store, tenant string, c HistoryCutoff, why string) {
+		t.Helper()
+		if r := removeMac(t, s, tenant, c); r.Removed || r.Skipped != why || len(r.RevokedKeys) != 0 || r.Counts != (ExpiryCounts{}) {
+			t.Fatalf("RemoveDevice = %+v, want the Mac kept for %s", r, why)
+		}
+		if devices, err := s.ListDevices(ctx, tenant); err != nil || len(devices) != 1 {
+			t.Fatalf("devices = %+v, %v", devices, err)
+		}
+		if revoked, err := s.ListCredentials(ctx, tenant, CredentialFilter{Status: CredentialRevoked}); err != nil || len(revoked) != 0 {
+			t.Fatalf("revoked keys = %+v, %v", revoked, err)
+		}
+		if got := serverEntries(t, s, tenant); len(got) != 0 {
+			t.Fatalf("recorded %+v", got)
+		}
+	}
+	// forgetReceived makes the Mac's row one stored before the server recorded when it
+	// received each event, so only the Mac's own clock says when it last checked in.
+	forgetReceived := func(t *testing.T, s Store, tenant string) {
+		t.Helper()
+		switch s := s.(type) {
+		case *Memory:
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			d := s.devices[key{tenant, mac}]
+			d.LastReceivedAt = time.Time{}
+			s.devices[key{tenant, mac}] = d
+		case *Postgres:
+			if _, err := s.pool.Exec(ctx, `
+				UPDATE devices SET state = state - 'last_received_at', last_seen_at = (state->>'last_seen_at')::timestamptz
+				WHERE tenant_id = $1 AND serial = $2`, tenant, mac); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			t.Fatalf("no way to forget when %T received events", s)
+		}
+	}
+
+	t.Run("removal candidates are the Macs quiet since the cutoff", func(t *testing.T) {
+		s, tenant, _ := setup(t)
+		_, _, _, health := fixtures(t)
+		recent := health
+		recent.EventID, recent.Device.Serial = newUUID(t), "C02RECENT001"
+		if _, err := s.Ingest(ctx, tenant, []event.Event{health}, old); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Ingest(ctx, tenant, []event.Event{recent}, later); err != nil {
+			t.Fatal(err)
+		}
+		// Another organisation's quiet Mac is that organisation's to remove.
+		if _, err := s.Ingest(ctx, "tenant-"+randomHex(t), []event.Event{health}, old); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := s.RemovalCandidates(ctx, tenant, cutoff); err != nil || !slices.Equal(got, []string{mac}) {
+			t.Fatalf("candidates = %v, %v", got, err)
+		}
+	})
+
+	t.Run("removes a quiet Mac", func(t *testing.T) {
+		s, tenant, sink := setup(t)
+		key := quietMac(t, s, tenant, sink)
+		granted, _, _, _ := fixtures(t)
+		cmd := oldCommand(t, s, tenant, old)
+		// A command from within the period stays until expiry reaches it.
+		newer := oldCommand(t, s, tenant, later)
+		// Its silence alert is still open.
+		silent := testfixture.Event(t, "agent-silent")
+		if _, err := s.Ingest(ctx, tenant, []event.Event{silent}, old); err != nil {
+			t.Fatal(err)
+		}
+		sendAll(t, s, sink)
+
+		r := removeMac(t, s, tenant, HistoryCutoff{Before: cutoff})
+		// The session's grant and revoke, the reading, the admin group it raised, and the alert.
+		want := ExpiryCounts{Events: 5, Sessions: 1, Commands: 1, Macs: 1}
+		if !r.Removed || r.Skipped != "" || !slices.Equal(r.RevokedKeys, []string{key.DeviceID}) || r.Counts != want {
+			t.Fatalf("RemoveDevice = %+v", r)
+		}
+		if devices, err := s.ListDevices(ctx, tenant); err != nil || len(devices) != 0 {
+			t.Fatalf("devices = %+v, %v", devices, err)
+		}
+		if _, _, err := s.GetSession(ctx, tenant, *granted.SessionID); err != ErrNotFound {
+			t.Fatalf("session: %v, want ErrNotFound", err)
+		}
+		if _, err := s.GetCommand(ctx, tenant, cmd.CommandID); err != ErrNotFound {
+			t.Fatalf("command: %v, want ErrNotFound", err)
+		}
+		if _, err := s.GetCommand(ctx, tenant, newer.CommandID); err != nil {
+			t.Fatalf("command from within the period: %v", err)
+		}
+		if c, err := s.Credential(ctx, key.DeviceID); err != nil || c.Status != CredentialRevoked || c.RevokedAt == nil || !c.RevokedAt.Equal(runAt) {
+			t.Fatalf("key = %+v, %v", c, err)
+		}
+		entries := serverEntries(t, s, tenant)
+		if len(entries) != 2 {
+			t.Fatalf("entries = %+v", entries)
+		}
+		revoke, removed := entries[0], entries[1]
+		if revoke.Action != AuditRevokeEnrollment || revoke.Target != key.DeviceID || !revoke.At.Equal(runAt) ||
+			revoke.Detail["serial"] != mac || revoke.Detail["reason"] != RevokeReasonRemoved {
+			t.Fatalf("revoke entry = %#v", revoke)
+		}
+		counts, _ := removed.Detail["counts"].(map[string]any)
+		if removed.Action != AuditRemoveDevice || removed.Target != mac || !removed.At.Equal(runAt) ||
+			removed.Detail["last_check_in"] != "2025-01-01T12:00:00Z" || removed.Detail["days"] != 365.0 ||
+			removed.Detail["silent_event_id"] != silent.EventID ||
+			counts["events"] != 5.0 || counts["sessions"] != 1.0 || counts["commands"] != 1.0 || counts["macs"] != 1.0 {
+			t.Fatalf("remove entry = %#v", removed)
+		}
+		// Both go to the SIEM.
+		queued, err := s.ClaimExports(ctx, sink, 10, time.Minute, time.Now())
+		if err != nil || len(queued) != 2 || queued[0].Audit == nil || queued[0].Audit.ID != revoke.ID ||
+			queued[1].Audit == nil || queued[1].Audit.ID != removed.ID {
+			t.Fatalf("queued = %+v, %v", queued, err)
+		}
+		// The key's record stays, so the Mac's next key is a re-enrolment, which waits for approval.
+		if again := enrollAt(t, s, tenant, time.Now()); again.Status != CredentialPending {
+			t.Fatalf("enrolled again as %s, want pending", again.Status)
+		}
+	})
+
+	t.Run("revokes a key waiting for approval too", func(t *testing.T) {
+		s, tenant, sink := setup(t)
+		active := quietMac(t, s, tenant, sink)
+		pending := enrollAt(t, s, tenant, old.Add(time.Hour))
+		if pending.Status != CredentialPending {
+			t.Fatalf("second key %s, want pending", pending.Status)
+		}
+		want := []string{active.DeviceID, pending.DeviceID}
+		slices.Sort(want)
+		if r := removeMac(t, s, tenant, HistoryCutoff{Before: cutoff}); !r.Removed || !slices.Equal(r.RevokedKeys, want) {
+			t.Fatalf("RemoveDevice = %+v, want %v revoked", r, want)
+		}
+		if c, err := s.Credential(ctx, pending.DeviceID); err != nil || c.Status != CredentialRevoked {
+			t.Fatalf("pending key = %+v, %v", c, err)
+		}
+		entries := serverEntries(t, s, tenant)
+		if len(entries) != 3 || entries[0].Action != AuditRevokeEnrollment || entries[1].Action != AuditRevokeEnrollment ||
+			!slices.Equal([]string{entries[0].Target, entries[1].Target}, want) || entries[2].Action != AuditRemoveDevice {
+			t.Fatalf("entries = %+v", entries)
+		}
+	})
+
+	t.Run("a retired Mac goes with no key to revoke, and comes back afresh", func(t *testing.T) {
+		s, tenant, sink := setup(t)
+		key := quietMac(t, s, tenant, sink)
+		if _, err := s.RevokeCredential(ctx, tenant, key.DeviceID, old, auditFor(t, tenant, AuditRevokeEnrollment)); err != nil {
+			t.Fatal(err)
+		}
+		if devices, err := s.ListDevices(ctx, tenant); err != nil || len(devices) != 1 || devices[0].RetiredAt == nil {
+			t.Fatalf("not retired: %+v, %v", devices, err)
+		}
+		if r := removeMac(t, s, tenant, HistoryCutoff{Before: cutoff}); !r.Removed || len(r.RevokedKeys) != 0 {
+			t.Fatalf("RemoveDevice = %+v", r)
+		}
+		if entries := serverEntries(t, s, tenant); len(entries) != 1 || entries[0].Action != AuditRemoveDevice {
+			t.Fatalf("entries = %+v", entries)
+		}
+		// Back with a reading, it is a Mac the server hasn't seen: in Fleet, and its whole
+		// admin group goes to the SIEM again.
+		sendAll(t, s, sink)
+		_, _, _, health := fixtures(t)
+		health.EventID = newUUID(t)
+		if _, err := s.Ingest(ctx, tenant, []event.Event{health}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		devices, err := s.ListDevices(ctx, tenant)
+		if err != nil || len(devices) != 1 || devices[0].RetiredAt != nil || !devices[0].FirstSeenAt.Equal(health.Timestamp) {
+			t.Fatalf("devices = %+v, %v", devices, err)
+		}
+		queued, err := s.ClaimExports(ctx, sink, 10, time.Minute, time.Now())
+		if err != nil || len(queued) != 2 || queued[1].Event.Type != event.AgentAdminGroup {
+			t.Fatalf("queued = %+v, %v; want the reading and its admin group", queued, err)
+		}
+	})
+
+	t.Run("a raised event can't bring it back", func(t *testing.T) {
+		s, tenant, sink := setup(t)
+		quietMac(t, s, tenant, sink)
+		if r := removeMac(t, s, tenant, HistoryCutoff{Before: cutoff}); !r.Removed {
+			t.Fatalf("RemoveDevice = %+v", r)
+		}
+		// The silence monitor read its candidates before the removal, and raises its alert after.
+		res, err := s.Ingest(ctx, tenant, []event.Event{testfixture.Event(t, "agent-silent")}, time.Now())
+		if err != nil || len(res.Accepted) != 1 {
+			t.Fatalf("res = %+v, %v", res, err)
+		}
+		if devices, err := s.ListDevices(ctx, tenant); err != nil || len(devices) != 0 {
+			t.Fatalf("devices = %+v, %v", devices, err)
+		}
+		// Nor can the day's admin group snapshot.
+		if ok, err := s.RaiseAdminGroupSnapshot(ctx, tenant, mac, time.Now()); ok || err != nil {
+			t.Fatalf("snapshot = %v, %v", ok, err)
+		}
+	})
+
+	t.Run("a second removal finds nothing", func(t *testing.T) {
+		s, tenant, sink := setup(t)
+		quietMac(t, s, tenant, sink)
+		if r := removeMac(t, s, tenant, HistoryCutoff{Before: cutoff}); !r.Removed {
+			t.Fatalf("RemoveDevice = %+v", r)
+		}
+		if r := removeMac(t, s, tenant, HistoryCutoff{Before: cutoff}); r.Removed || r.Skipped != "" || len(r.RevokedKeys) != 0 || r.Counts != (ExpiryCounts{}) {
+			t.Fatalf("second RemoveDevice = %+v", r)
+		}
+		if entries := serverEntries(t, s, tenant); len(entries) != 2 {
+			t.Fatalf("entries = %+v", entries)
+		}
+	})
+
+	t.Run("keeps a Mac known only by its own clock", func(t *testing.T) {
+		s, tenant, sink := setup(t)
+		quietMac(t, s, tenant, sink)
+		forgetReceived(t, s, tenant)
+		keptFor(t, s, tenant, HistoryCutoff{Before: cutoff}, SkippedOwnClock)
+	})
+
+	t.Run("keeps a Mac with any event since the cutoff", func(t *testing.T) {
+		s, tenant, sink := setup(t)
+		quietMac(t, s, tenant, sink)
+		// A use of its rotated key after the cutoff, which the server raised: no check-in,
+		// so still a candidate, but something is still happening.
+		used := testfixture.Event(t, "agent-enrollment-rotated-key-used")
+		if _, err := s.Ingest(ctx, tenant, []event.Event{used}, later); err != nil {
+			t.Fatal(err)
+		}
+		sendAll(t, s, sink)
+		if got, err := s.RemovalCandidates(ctx, tenant, cutoff); err != nil || !slices.Equal(got, []string{mac}) {
+			t.Fatalf("candidates = %v, %v", got, err)
+		}
+		keptFor(t, s, tenant, HistoryCutoff{Before: cutoff}, SkippedRecentEvent)
+	})
+
+	t.Run("never removes a Mac heard from in the last 90 days", func(t *testing.T) {
+		s, tenant, sink := setup(t)
+		_, _, _, health := fixtures(t)
+		if _, err := s.Ingest(ctx, tenant, []event.Event{health}, time.Now().AddDate(0, 0, -30)); err != nil {
+			t.Fatal(err)
+		}
+		sendAll(t, s, sink)
+		// Asked to remove what is quiet since now, the stores keep the last 90 days all the same.
+		keptFor(t, s, tenant, HistoryCutoff{Before: time.Now()}, SkippedRecentEvent)
+	})
+
+	t.Run("keeps a Mac with events the SIEM hasn't had", func(t *testing.T) {
+		s, tenant, sink := setup(t)
+		quietMac(t, s, tenant, sink)
+		if _, err := s.Ingest(ctx, tenant, []event.Event{testfixture.Event(t, "agent-tamper")}, old); err != nil {
+			t.Fatal(err)
+		}
+		keptFor(t, s, tenant, HistoryCutoff{Before: cutoff}, SkippedNotSent)
+		// Sent, but received before the SIEM's coverage starts.
+		sendAll(t, s, sink)
+		covered := testfixture.Time(t, "2025-03-01T00:00:00Z")
+		keptFor(t, s, tenant, HistoryCutoff{Before: cutoff, NotBefore: &covered}, SkippedNotSent)
+		if r := removeMac(t, s, tenant, HistoryCutoff{Before: cutoff}); !r.Removed {
+			t.Fatalf("once nothing holds it, RemoveDevice = %+v", r)
+		}
+	})
+
+	t.Run("keeps a Mac with an open session", func(t *testing.T) {
+		s, tenant, sink := setup(t)
+		quietMac(t, s, tenant, sink)
+		_, _, oob, _ := fixtures(t)
+		if _, err := s.Ingest(ctx, tenant, []event.Event{oob}, old); err != nil {
+			t.Fatal(err)
+		}
+		sendAll(t, s, sink)
+		keptFor(t, s, tenant, HistoryCutoff{Before: cutoff}, SkippedOpenSession)
+	})
+
+	t.Run("keeps a Mac with a key since the cutoff", func(t *testing.T) {
+		s, tenant, sink := setup(t)
+		quietMac(t, s, tenant, sink)
+		// It is trying to come back: a new key, waiting for approval.
+		if again := enrollAt(t, s, tenant, later); again.Status != CredentialPending {
+			t.Fatalf("new key %s, want pending", again.Status)
+		}
+		keptFor(t, s, tenant, HistoryCutoff{Before: cutoff}, SkippedRecentKey)
+	})
+
+	t.Run("keeps a Mac whose key an admin approved since the cutoff", func(t *testing.T) {
+		s, tenant, sink := setup(t)
+		quietMac(t, s, tenant, sink)
+		waiting := enrollAt(t, s, tenant, old.Add(time.Hour))
+		a := auditFor(t, tenant, AuditApproveEnrollment)
+		a.At = later
+		if _, err := s.ApproveCredential(ctx, tenant, waiting.DeviceID, later, a); err != nil {
+			t.Fatal(err)
+		}
+		sendAll(t, s, sink)
+		// The approval revoked the key it replaced; removing now would revoke the new one.
+		if r := removeMac(t, s, tenant, HistoryCutoff{Before: cutoff}); r.Removed || r.Skipped != SkippedRecentKey {
+			t.Fatalf("RemoveDevice = %+v, want the Mac kept for %s", r, SkippedRecentKey)
+		}
+		if c, err := s.Credential(ctx, waiting.DeviceID); err != nil || c.Status != CredentialActive {
+			t.Fatalf("approved key = %+v, %v", c, err)
+		}
+	})
+
 	t.Run("export outbox claim, retry and complete", func(t *testing.T) {
 		s, tenant, sink := setup(t)
 		granted, revoked, _, _ := fixtures(t)
@@ -1187,6 +1537,68 @@ func TestPostgresStats(t *testing.T) {
 	}
 	if after, err := ro.Stats(ctx, now); err != nil || after.Events != st.Events {
 		t.Fatalf("events after drop = %d, want %d (%v)", after.Events, st.Events, err)
+	}
+}
+
+// TestPostgresRemoveDeviceOnce: two replicas removing the same Mac at once remove it once,
+// revoke its key once and record it once, and neither fails.
+func TestPostgresRemoveDeviceOnce(t *testing.T) {
+	url := os.Getenv("ALTIWARD_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("ALTIWARD_TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	open := func() *Postgres {
+		s, err := OpenPostgres(ctx, url, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(s.Close)
+		return s
+	}
+	replicas := []*Postgres{open(), open()}
+	tenant, serial := "tenant-"+randomHex(t), "C02XK0AAJGH5"
+	old := testfixture.Time(t, "2025-01-01T12:00:00Z")
+	events := []event.Event{testfixture.Event(t, "elevation-granted"), testfixture.Event(t, "elevation-revoked"),
+		testfixture.Event(t, "agent-health")}
+	if _, err := replicas[0].Ingest(ctx, tenant, events, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := replicas[0].Enroll(ctx, DeviceCredential{DeviceID: newUUID(t), TenantID: tenant, Serial: serial,
+		HardwareUUID: "HW", PublicKey: newKey(t), CreatedAt: old}, EnrollLimits{}); err != nil {
+		t.Fatal(err)
+	}
+
+	c := HistoryCutoff{Before: testfixture.Time(t, "2025-06-01T00:00:00Z")}
+	results := make([]RemovedDevice, len(replicas))
+	errs := make([]error, len(replicas))
+	var wg sync.WaitGroup
+	for i, s := range replicas {
+		wg.Go(func() { results[i], errs[i] = s.RemoveDevice(ctx, tenant, serial, c, time.Now()) })
+	}
+	wg.Wait()
+	removed := 0
+	for i := range replicas {
+		if errs[i] != nil {
+			t.Fatalf("replica %d: %v", i, errs[i])
+		}
+		if results[i].Removed {
+			removed++
+		}
+	}
+	if removed != 1 {
+		t.Fatalf("results = %+v, want the Mac removed once", results)
+	}
+	entries, err := replicas[0].ListAudit(ctx, tenant, AuditFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := map[string]int{}
+	for _, a := range entries {
+		actions[a.Action]++
+	}
+	if len(entries) != 2 || actions[AuditRemoveDevice] != 1 || actions[AuditRevokeEnrollment] != 1 {
+		t.Fatalf("entries = %+v", entries)
 	}
 }
 

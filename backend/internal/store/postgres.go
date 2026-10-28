@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -688,4 +689,144 @@ func (p *Postgres) ExpireHistory(ctx context.Context, tenantID string, c History
 	}
 	n.Commands = tag.RowsAffected()
 	return n, nil
+}
+
+func (p *Postgres) RemovalCandidates(ctx context.Context, tenantID string, before time.Time) ([]string, error) {
+	rows, err := p.pool.Query(ctx, `SELECT serial FROM devices WHERE tenant_id = $1 AND last_seen_at < $2 ORDER BY serial`,
+		tenantID, before)
+	if err != nil {
+		return nil, err
+	}
+	out, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if out == nil {
+		out = []string{}
+	}
+	return out, err
+}
+
+// errGone rolls back a removal whose Mac was no longer there to delete.
+var errGone = errors.New("device gone")
+
+// RemoveDevice holds the Mac's row lock as well as the two locks, so ingest, enrolment,
+// approval, revocation and contests for the Mac wait for it, or it for them. Each delete
+// keeps to the database's floor by the cutoff it reads, so the delete triggers of migration
+// 0008 never fire.
+func (p *Postgres) RemoveDevice(ctx context.Context, tenantID, serial string, c HistoryCutoff, now time.Time) (RemovedDevice, error) {
+	var res RemovedDevice
+	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+		res = RemovedDevice{}
+		if err := lockSerial(ctx, tx, tenantID, serial); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, ingestLockID(tenantID)); err != nil {
+			return fmt.Errorf("lock ingestion: %w", err)
+		}
+		var raw []byte
+		var before time.Time // the cutoff, never later than the floor
+		err := tx.QueryRow(ctx, `
+			SELECT state, LEAST($3::timestamptz, now() - interval '90 days') FROM devices
+			WHERE tenant_id = $1 AND serial = $2 FOR UPDATE`, tenantID, serial, c.Before).Scan(&raw, &before)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil // removed already
+		}
+		if err != nil {
+			return fmt.Errorf("load device: %w", err)
+		}
+		d := session.NewDevice(tenantID, serial)
+		if err := json.Unmarshal(raw, &d); err != nil {
+			return fmt.Errorf("decode device: %w", err)
+		}
+		switch {
+		case d.LastReceivedAt.IsZero():
+			res.Skipped = SkippedOwnClock
+			return nil
+		case !d.CheckedInAt().Before(before):
+			res.Skipped = SkippedRecentEvent
+			return nil
+		}
+		// Sessions are checked with the events: a session's updated_at is when its newest
+		// event was received, and the floor refuses to delete one changed since the cutoff.
+		if err := tx.QueryRow(ctx, `
+			SELECT CASE
+				WHEN EXISTS (SELECT 1 FROM events WHERE tenant_id = $1 AND device_serial = $2 AND received_at >= $3)
+				  OR EXISTS (SELECT 1 FROM sessions WHERE tenant_id = $1 AND device_serial = $2 AND updated_at >= $3)
+				THEN $5::text
+				WHEN EXISTS (
+					SELECT 1 FROM events e WHERE e.tenant_id = $1 AND e.device_serial = $2
+					  AND (e.received_at < $4::timestamptz
+					       OR EXISTS (SELECT 1 FROM export_outbox o WHERE o.tenant_id = e.tenant_id AND o.event_id = e.event_id)))
+				THEN $6::text
+				WHEN EXISTS (SELECT 1 FROM sessions WHERE tenant_id = $1 AND device_serial = $2 AND ended_at IS NULL)
+				THEN $7::text
+				WHEN EXISTS (SELECT 1 FROM device_credentials WHERE tenant_id = $1 AND serial = $2
+				               AND (created_at >= $3 OR activated_at >= $3))
+				THEN $8::text
+				ELSE '' END`,
+			tenantID, serial, before, c.NotBefore,
+			SkippedRecentEvent, SkippedNotSent, SkippedOpenSession, SkippedRecentKey).Scan(&res.Skipped); err != nil {
+			return fmt.Errorf("check device: %w", err)
+		}
+		if res.Skipped != "" {
+			return nil
+		}
+
+		rows, err := tx.Query(ctx, `
+			UPDATE device_credentials SET status = 'revoked', revoked_at = $3
+			WHERE tenant_id = $1 AND serial = $2 AND status IN ('active', 'pending')
+			RETURNING device_id::text`, tenantID, serial, now)
+		if err != nil {
+			return fmt.Errorf("revoke keys: %w", err)
+		}
+		if res.RevokedKeys, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil {
+			return fmt.Errorf("revoke keys: %w", err)
+		}
+		slices.Sort(res.RevokedKeys)
+		remove := func(n *int64, sql string, args ...any) error {
+			tag, err := tx.Exec(ctx, sql, args...)
+			if err != nil {
+				return fmt.Errorf("remove device: %w", err)
+			}
+			*n = tag.RowsAffected()
+			return nil
+		}
+		// A command from within the period stays until expiry reaches it. Sessions go before
+		// their events, the order expiry locks them in, so the two can't deadlock.
+		if err := remove(&res.Counts.Commands, `DELETE FROM agent_commands WHERE tenant_id = $1 AND serial = $2 AND created_at < $3`,
+			tenantID, serial, before); err != nil {
+			return err
+		}
+		if err := remove(&res.Counts.Sessions, `DELETE FROM sessions WHERE tenant_id = $1 AND device_serial = $2`,
+			tenantID, serial); err != nil {
+			return err
+		}
+		if err := remove(&res.Counts.Events, `DELETE FROM events WHERE tenant_id = $1 AND device_serial = $2`,
+			tenantID, serial); err != nil {
+			return err
+		}
+		if err := remove(&res.Counts.Macs, `DELETE FROM devices WHERE tenant_id = $1 AND serial = $2`,
+			tenantID, serial); err != nil {
+			return err
+		}
+		if res.Counts.Macs != 1 {
+			return errGone
+		}
+		res.Removed = true
+		entries, err := removalEntries(tenantID, d, res.RevokedKeys, c, now, res.Counts)
+		if err != nil {
+			return err
+		}
+		for _, a := range entries {
+			if err := p.insertAudit(ctx, tx, a); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if errors.Is(err, errGone) {
+		return RemovedDevice{}, nil
+	}
+	if err != nil {
+		return RemovedDevice{}, err
+	}
+	return res, nil
 }
