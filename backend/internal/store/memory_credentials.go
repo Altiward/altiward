@@ -48,6 +48,12 @@ func (m *Memory) Enroll(_ context.Context, c DeviceCredential, limits EnrollLimi
 	return res, nil
 }
 
+func (m *Memory) EnrollAllowed(_ context.Context, c DeviceCredential, limits EnrollLimits) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.enforceEnrollLimits(c, limits)
+}
+
 func (m *Memory) Credential(_ context.Context, deviceID string) (DeviceCredential, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

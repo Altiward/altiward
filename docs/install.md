@@ -898,10 +898,11 @@ what the errors mean.
   in a key's details, and the **Require an Intune match** setting. It asks Intune for the
   device ID the Mac's profile sent ([step 2](#2-deploy-the-agent)) once, when the Mac enrols,
   waits at most 10 seconds and makes at most 30 lookups a minute. A Mac enrolling again with
-  a key it already has makes none. Three things wait for the first sync, which copies
-  Intune's Macs: the **Not in Intune** tag on a Mac Intune doesn't list, telling a profile
-  that sends the Mac's Entra ID device ID apart from an ID Intune doesn't know, and
-  `mdm_serial_known` in the `agent.enrollment` event.
+  a key it already has makes none, and neither does a key that an
+  [enrolment limit](#6-settings-worth-reviewing) refuses. Three things wait for the first
+  sync, which copies Intune's Macs: the **Not in Intune** tag on a Mac Intune doesn't list,
+  telling a profile that sends the Mac's Entra ID device ID apart from an ID Intune doesn't
+  know, and `mdm_serial_known` in the `agent.enrollment` event.
 - Once the first sync has finished, **Fleet** shows, in a Mac's details, its **Primary user
   (Intune)** and **Last Intune check-in**, or **Not in Intune**. A panel above the table,
   **In Intune, never reported to Altiward**, lists the Macs Intune manages that no agent has
