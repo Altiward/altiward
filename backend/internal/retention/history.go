@@ -10,6 +10,10 @@ import (
 	"github.com/Altiward/altiward/backend/internal/store"
 )
 
+// recordTimeout bounds the write of the entry for what a run removed, which doesn't stop
+// when the run does: what was removed stays removed.
+const recordTimeout = 10 * time.Second
+
 // History removes each organisation's history past the period it keeps
 // (TenantSettings.History): ended sessions with their events, events and commands. It
 // never removes what a SIEM is still waiting for or, under the default period, anything
@@ -104,30 +108,40 @@ func (h *History) purge(ctx context.Context, tenant string) (store.ExpiryCounts,
 	if batch <= 0 {
 		batch = 1000
 	}
+	err = h.expire(ctx, tenant, c, batch, &n)
+	// Each batch is removed for good as it goes, so what a run removed before it failed or
+	// was stopped, as at shutdown, is logged and recorded all the same.
+	h.Log.Info("history expiry", "tenant", tenant, "days", days, "reason", reason, "before", c.Before,
+		"events", n.Events, "sessions", n.Sessions, "commands", n.Commands, "macs", n.Macs)
+	return n, errors.Join(err, h.record(ctx, tenant, now, days, reason, c, n))
+}
+
+// expire removes the tenant's history that c allows, batch by batch, adding to n.
+func (h *History) expire(ctx context.Context, tenant string, c store.HistoryCutoff, batch int, n *store.ExpiryCounts) error {
 	for {
 		got, err := h.Store.ExpireHistory(ctx, tenant, c, batch)
 		n.Add(got)
 		if err != nil {
-			return n, errors.Join(err, h.record(ctx, tenant, now, days, reason, c, n))
+			return err
 		}
 		if got == (store.ExpiryCounts{}) {
 			break
 		}
 	}
 	// Removing whole Macs that have stopped checking in comes here, adding to n.Macs.
-	h.Log.Info("history expiry", "tenant", tenant, "days", days, "reason", reason, "before", c.Before,
-		"events", n.Events, "sessions", n.Sessions, "commands", n.Commands, "macs", n.Macs)
-	return n, h.record(ctx, tenant, now, days, reason, c, n)
+	return nil
 }
 
 // record writes one Activity entry for what a run removed for tenant, which goes to the
 // SIEM like any other, so routine expiry is never silent. A run that removed nothing
-// records nothing.
+// records nothing. The entry is written even once ctx is cancelled, within recordTimeout.
 func (h *History) record(ctx context.Context, tenant string, now time.Time, days int, reason string,
 	c store.HistoryCutoff, n store.ExpiryCounts) error {
 	if n == (store.ExpiryCounts{}) {
 		return nil
 	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
+	defer cancel()
 	id, err := store.NewDeviceID() // a random UUID, as for device IDs
 	if err != nil {
 		return err

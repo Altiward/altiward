@@ -1,12 +1,16 @@
 package retention_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Altiward/altiward/backend/internal/command"
 	"github.com/Altiward/altiward/backend/internal/event"
 	"github.com/Altiward/altiward/backend/internal/retention"
 	"github.com/Altiward/altiward/backend/internal/store"
@@ -184,5 +188,75 @@ func TestHistoryExpiryIsRecordedOncePerOrganisation(t *testing.T) {
 	}
 	if got := expiryEntries(t, s, "acme"); len(got) != 1 {
 		t.Fatalf("entries after a second run = %+v", got)
+	}
+}
+
+// stopsAfterOneBatch is a store whose run is stopped, as at shutdown, once one batch of
+// history has gone. Like Postgres, it then refuses anything asked on the cancelled context,
+// and it refuses an entry recorded with no time limit.
+type stopsAfterOneBatch struct {
+	store.Store
+	stop context.CancelFunc
+}
+
+func (s *stopsAfterOneBatch) ExpireHistory(ctx context.Context, tenant string, c store.HistoryCutoff, limit int) (store.ExpiryCounts, error) {
+	if err := ctx.Err(); err != nil {
+		return store.ExpiryCounts{}, err
+	}
+	n, err := s.Store.ExpireHistory(ctx, tenant, c, limit)
+	s.stop()
+	return n, err
+}
+
+func (s *stopsAfterOneBatch) RecordAudit(ctx context.Context, a store.AuditEntry) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		return errors.New("recorded with no time limit")
+	}
+	return s.Store.RecordAudit(ctx, a)
+}
+
+// What a run removed before it was stopped stays removed, so it is still recorded and logged.
+func TestHistoryStoppedPartWayRecordsWhatItRemoved(t *testing.T) {
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	mem := store.NewMemory(nil)
+	setHistory(t, mem, "acme", 365)
+	oldSession(t, mem, "acme")
+	for range 2 {
+		c := command.Command{CommandID: newID(t), TenantID: "acme", Serial: "C02XK0AAJGH5", Type: command.TypeRevokeAdmin,
+			IssuedBy: "token:test", CreatedAt: received, ExpiresAt: received.Add(command.Lifetime)}
+		a := store.AuditEntry{ID: newID(t), TenantID: "acme", At: received, Actor: "token:test",
+			Action: store.AuditRevokeDevice, Target: "C02XK0AAJGH5"}
+		if err := mem.CreateCommand(context.Background(), c, a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	backfilled(t, mem)
+	logged := &bytes.Buffer{}
+	h := &retention.History{Store: &stopsAfterOneBatch{Store: mem, stop: stop}, Log: slog.New(slog.NewTextHandler(logged, nil)),
+		Now: func() time.Time { return runAt }, BatchSize: 1}
+
+	// The first batch takes the session with its two events, and one of the commands.
+	n, err := h.Purge(ctx)
+	if !errors.Is(err, context.Canceled) || n != (store.ExpiryCounts{Events: 2, Sessions: 1, Commands: 1}) {
+		t.Fatalf("removed %+v, %v", n, err)
+	}
+	if left, _ := mem.ListCommands(context.Background(), "acme", store.CommandFilter{}, runAt); len(left) != 1 {
+		t.Fatalf("commands left = %d, want the run stopped with one to go", len(left))
+	}
+	got := expiryEntries(t, mem, "acme")
+	if len(got) != 1 {
+		t.Fatalf("entries = %+v", got)
+	}
+	if counts, _ := got[0].Detail["counts"].(map[string]any); counts["events"] != 2.0 || counts["sessions"] != 1.0 || counts["commands"] != 1.0 {
+		t.Fatalf("detail = %#v", got[0].Detail)
+	}
+	for _, want := range []string{"tenant=acme", "events=2", "sessions=1", "commands=1"} {
+		if !strings.Contains(logged.String(), want) {
+			t.Errorf("log has no %s:\n%s", want, logged)
+		}
 	}
 }
