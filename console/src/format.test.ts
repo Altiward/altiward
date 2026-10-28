@@ -134,6 +134,8 @@ describe("integrity labels", () => {
     ["privileges_renewal", "Privileges renewals off"],
     ["privileges_give_back_hook", "Privileges reports give-backs"],
     ["privileges_revoke_exclusions", "Privileges spares permanent admins"],
+    ["platform_sso_link", "Platform SSO link added or removed"],
+    ["platform_sso_link_changed", "Platform SSO link changed"],
     ["something_new", "Something new"],
   ])("%s is %s", (check, want) => expect(integrityCheckLabel(check)).toBe(want));
 

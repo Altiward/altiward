@@ -30,9 +30,32 @@ public struct OpenSession: Sendable, Equatable {
     public let expiresAt: Date?
     /// `elevation.overdue` was already sent for the current expiry.
     public var overdueReported = false
-    /// The UPN the session started with, which every event of the session carries. Nil for a
-    /// session an older agent opened, whose events read the UPN when they are made.
-    public var upn: String? = nil
+    /// The UPN every event of the session carries.
+    public var upn: PinnedUPN = .unknown
+}
+
+/// The UPN every event of a session carries, read once: when its grant claim arrived, or when
+/// its out-of-band rights were found. So a Platform SSO link changed during the session can't
+/// move it onto someone else.
+public enum PinnedUPN: Sendable, Equatable, Codable {
+    /// A session or held claim an older agent stored: each event reads the UPN as it is made.
+    case unknown
+    /// Read then; nil when the user had none.
+    case read(String?)
+
+    /// Stored as NULL when unknown, and as an empty string when read with none.
+    init(column: String?) {
+        guard let column else {
+            self = .unknown
+            return
+        }
+        self = .read(column.isEmpty ? nil : column)
+    }
+
+    var column: SQLiteValue {
+        guard case .read(let upn) = self else { return .null }
+        return .text(upn ?? "")
+    }
 }
 
 /// A use of a permanent admin account with a start and an end (a sign-in), from when it is
@@ -71,11 +94,10 @@ public struct PendingClaim: Sendable, Equatable {
     public var invocation: HookInvocation
     /// The uid of the process that sent the claim, when the daemon could tell.
     public var callerUID: UInt32?
-    /// The user's UPN when the claim arrived, before they could change their Platform SSO
-    /// link with the rights it claims. Nil for a claim an older agent held.
-    public var upn: String?
+    /// The user's UPN when the claim arrived, which the session keeps.
+    public var upn: PinnedUPN
 
-    public init(claimID: String, invocation: HookInvocation, callerUID: UInt32?, upn: String? = nil) {
+    public init(claimID: String, invocation: HookInvocation, callerUID: UInt32?, upn: PinnedUPN = .unknown) {
         self.claimID = claimID
         self.invocation = invocation
         self.callerUID = callerUID
@@ -326,7 +348,7 @@ public final class AgentStore: @unchecked Sendable {
                 [
                     .text(s.user), .text(s.sessionID), .text(s.source.rawValue),
                     .double(s.startedAt.timeIntervalSince1970), .optional(s.expiresAt?.timeIntervalSince1970),
-                    .int(s.overdueReported ? 1 : 0), .optional(s.upn),
+                    .int(s.overdueReported ? 1 : 0), s.upn.column,
                 ])
         }
     }
@@ -352,7 +374,7 @@ public final class AgentStore: @unchecked Sendable {
             startedAt: Date(timeIntervalSince1970: row.double(3)!),
             expiresAt: row.double(4).map(Date.init(timeIntervalSince1970:)),
             overdueReported: row.int(5) == 1,
-            upn: row.text(6))
+            upn: PinnedUPN(column: row.text(6)))
     }
 
     // MARK: Permanent admin uses
@@ -441,7 +463,7 @@ public final class AgentStore: @unchecked Sendable {
                 [
                     .text(claim.claimID), .text(claim.invocation.user), .optional(claim.invocation.reason),
                     .double(claim.invocation.invokedAt.timeIntervalSince1970),
-                    claim.callerUID.map { .int(Int64($0)) } ?? .null, .optional(claim.upn),
+                    claim.callerUID.map { .int(Int64($0)) } ?? .null, claim.upn.column,
                 ])
         }
     }
@@ -457,7 +479,8 @@ public final class AgentStore: @unchecked Sendable {
                     invocation: HookInvocation(
                         user: row.text(1)!, state: .admin, reason: row.text(2),
                         invokedAt: Date(timeIntervalSince1970: row.double(3)!)),
-                    callerUID: row.int(4).map { UInt32(truncatingIfNeeded: $0) }, upn: row.text(5))
+                    callerUID: row.int(4).map { UInt32(truncatingIfNeeded: $0) },
+                    upn: PinnedUPN(column: row.text(5)))
             }
         }
     }

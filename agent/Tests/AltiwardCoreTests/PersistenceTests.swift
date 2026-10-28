@@ -15,7 +15,6 @@ struct PersistenceTests {
     let admins = FakeAdmins([])
     let root: URL
     let remote = OSAllocatedUnfairLock<Set<String>?>(initialState: [])
-    let links = OSAllocatedUnfairLock<[String: String]?>(initialState: ["jdoe": "jane.doe@example.com"])
     let accounts = OSAllocatedUnfairLock(initialState: [
         LocalAccount(name: "root", uid: 0, home: "/var/root"),
         LocalAccount(name: "_www", uid: 70, home: "/Library/WebServer"),
@@ -30,10 +29,9 @@ struct PersistenceTests {
     }
 
     var sources: PersistenceSources {
-        let (accounts, remote, links) = (accounts, remote, links)
+        let (accounts, remote) = (accounts, remote)
         return PersistenceSources(
-            root: root, accounts: { accounts.withLock { $0 } }, remoteAccess: { remote.withLock { $0 } },
-            platformSSOLinks: { links.withLock { $0 } })
+            root: root, accounts: { accounts.withLock { $0 } }, remoteAccess: { remote.withLock { $0 } })
     }
 
     func tracker(snapshot: (@Sendable () -> PersistenceSnapshot)? = nil) -> ElevationTracker {
@@ -286,58 +284,23 @@ struct PersistenceTests {
             ])
     }
 
-    @Test func aSnapshotHoldsEachAccountsPlatformSSOLink() {
-        let byKey = Dictionary(uniqueKeysWithValues: sources.snapshot().items.map { ($0.key, $0) })
-        #expect(byKey["local_account:jdoe"]?.fields["platform_sso"] == "jane.doe@example.com")
-        #expect(byKey["local_account:root"]?.fields["platform_sso"] == nil)
-    }
-
-    /// Linking an account to someone else's Platform SSO account while elevated would put the
-    /// next sessions on their UPN: a link added, changed or removed is a changed account.
-    @Test(arguments: [
-        ["jdoe": "ceo@example.com"],
-        [:],
-        ["jdoe": "jane.doe@example.com", "_www": "ceo@example.com"],
-    ])
-    func aPlatformSSOLinkChangedDuringASessionIsReported(after: [String: String]) throws {
-        let t = tracker()
-        _ = try open("jdoe")
-        try t.checkPersistence()
-        links.withLock { $0 = after }
-        let event = try #require(try t.checkPersistence().first)
-        #expect(event.type == .persistenceDetected)
-        #expect(findings(event).count == 1)
-        #expect(findings(event).first?["kind"] == "local_account")
-        #expect(findings(event).first?["change"] == "modified")
-    }
-
-    @Test func aLinkMadeWhileNoSessionIsOpenIsTakenInSilently() throws {
-        let t = tracker()
-        try t.checkPersistence()
-        links.withLock { $0 = ["jdoe": "ceo@example.com"] }
-        #expect(try t.checkPersistence().isEmpty)
-    }
-
-    @Test func unreadableLinksKeepTheLastAccounts() throws {
-        let t = tracker()
-        _ = try open("jdoe")
-        try t.checkPersistence()
-        links.withLock { $0 = nil }
-        #expect(try t.checkPersistence().isEmpty)
-        #expect(sources.snapshot().unreadable == ["accounts"])
-        links.withLock { $0 = ["jdoe": "jane.doe@example.com"] }
-        #expect(try t.checkPersistence().isEmpty)
-    }
-
+    /// Persistence found during a session is reported with the UPN the session started with.
     @Test func persistenceFindingsCarryTheSessionsUPN() throws {
         let t = tracker()
         try store.upsertOpenSession(
             OpenSession(
                 user: "jdoe", sessionID: newID(), source: .privileges, startedAt: clock.now, expiresAt: nil,
-                upn: "jane.doe@example.com"))
+                upn: .read("jane.doe@example.com")))
         try t.checkPersistence()
-        links.withLock { $0 = ["jdoe": "ceo@example.com"] }
+        try write("/Users/jdoe/.ssh/authorized_keys", Self.key + "\n")
         #expect(try #require(try t.checkPersistence().first).user?.upn == "jane.doe@example.com")
+    }
+
+    /// A baseline an older agent stored, with no UPN on its sessions, still reads.
+    @Test func anOlderBaselineStillDecodes() throws {
+        let json = #"{"takenAt":"2026-10-28T10:00:00.000Z","items":[],"sessions":[{"user":"jdoe","sessionID":"s1","source":"privileges"}],"unreadable":[]}"#
+        let baseline = try AltiwardJSON.decoder().decode(PersistenceBaseline.self, from: Data(json.utf8))
+        #expect(baseline.sessions.first?.upn == nil)
     }
 
     @Test func anAccountMadeAdminIsNotAChangedAccount() throws {

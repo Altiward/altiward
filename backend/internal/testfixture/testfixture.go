@@ -21,7 +21,7 @@ var Names = []string{
 	"agent-tamper-privileges-blocked", "admin-permanent-use-started", "admin-permanent-use-ended", "admin-permanent-use-prompt",
 	"agent-tamper-grant-claim", "agent-enrollment-pending", "agent-enrollment-enrolled",
 	"agent-enrollment-rotated", "agent-enrollment-rotated-key-used", "agent-enrollment-pending-mdm-mismatch",
-	"agent-admin-group-changed", "agent-admin-group-snapshot",
+	"agent-admin-group-changed", "agent-admin-group-snapshot", "agent-tamper-platform-sso-link-changed",
 }
 
 func read(t testing.TB, dir, name string) []byte {

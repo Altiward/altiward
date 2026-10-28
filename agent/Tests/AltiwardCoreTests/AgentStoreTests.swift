@@ -263,13 +263,13 @@ struct AgentStoreTests {
         #expect(
             try store.openSession(user: "jdoe")
                 == OpenSession(user: "jdoe", sessionID: "s1", source: .privileges, startedAt: start, expiresAt: nil))
-        #expect(try store.pendingClaims().map(\.upn) == [nil])
+        #expect(try store.pendingClaims().map(\.upn) == [.unknown])
 
         try store.upsertOpenSession(
             OpenSession(
                 user: "jdoe", sessionID: "s1", source: .privileges, startedAt: start, expiresAt: nil,
-                upn: "jane.doe@example.com"))
-        #expect(try store.openSession(user: "jdoe")?.upn == "jane.doe@example.com")
+                upn: .read("jane.doe@example.com")))
+        #expect(try store.openSession(user: "jdoe")?.upn == .read("jane.doe@example.com"))
     }
 
     @Test func pendingClaimsRoundTrip() throws {
@@ -282,7 +282,7 @@ struct AgentStoreTests {
         let earlier = PendingClaim(
             claimID: "c1",
             invocation: HookInvocation(user: "jdoe", state: .admin, reason: "probe reason", invokedAt: start),
-            callerUID: 501, upn: "jane.doe@example.com")
+            callerUID: 501, upn: .read("jane.doe@example.com"))
         // Added out of order: the oldest invocation still comes first.
         try store.addPendingClaim(later)
         try store.addPendingClaim(earlier)

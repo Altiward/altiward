@@ -70,8 +70,9 @@ public struct AgentEnvironment: Sendable {
     public var privilegesRenewals: @Sendable (_ since: Date) -> [PrivilegesRenewalLine]
     /// The UUIDs of SAP's agent executable on disk, one for each architecture.
     public var privilegesAgentImageUUIDs: @Sendable () -> Set<String>
-    /// The account Platform SSO links to a Mac account (``PlatformSSO/lookup(_:)``).
-    public var platformSSO: @Sendable (_ shortName: String) -> PlatformSSO.Lookup
+    /// The account Platform SSO links to each Mac account, by short name; nil when the
+    /// directory can't be read (``PlatformSSO/allLinks()``).
+    public var platformSSOLinks: @Sendable () -> [String: String]?
 
     public init(
         device: @escaping @Sendable () -> DeviceInfo,
@@ -101,7 +102,7 @@ public struct AgentEnvironment: Sendable {
         userID: @escaping @Sendable (_ shortName: String) -> UInt32? = { _ in nil },
         privilegesRenewals: @escaping @Sendable (_ since: Date) -> [PrivilegesRenewalLine] = { _ in [] },
         privilegesAgentImageUUIDs: @escaping @Sendable () -> Set<String> = { [] },
-        platformSSO: @escaping @Sendable (_ shortName: String) -> PlatformSSO.Lookup = { _ in .notLinked }
+        platformSSOLinks: @escaping @Sendable () -> [String: String]? = { [:] }
     ) {
         self.device = device
         self.privileges = privileges
@@ -128,13 +129,13 @@ public struct AgentEnvironment: Sendable {
         self.userID = userID
         self.privilegesRenewals = privilegesRenewals
         self.privilegesAgentImageUUIDs = privilegesAgentImageUUIDs
-        self.platformSSO = platformSSO
+        self.platformSSOLinks = platformSSOLinks
     }
 
     /// The real system.
     public static func live(config: AgentConfiguration) -> AgentEnvironment {
         let system = SystemIntegrity.live(config: config)
-        let sources = PersistenceSources.live(platformSSO: config.platformSSOIdentity)
+        let sources = PersistenceSources.live()
         return AgentEnvironment(
             device: { DeviceIdentity.current() },
             privileges: { PrivilegesSettings.current() },
@@ -160,7 +161,7 @@ public struct AgentEnvironment: Sendable {
             userID: { ProcessIdentity.uid(of: $0) },
             privilegesRenewals: { PrivilegesAgentLog.renewals(since: $0) },
             privilegesAgentImageUUIDs: { MachOImage.uuids(atPath: PrivilegesAgentLog.executable) },
-            platformSSO: { PlatformSSO.lookup($0) })
+            platformSSOLinks: { PlatformSSO.allLinks() })
     }
 }
 
@@ -357,7 +358,7 @@ public final class ElevationTracker: Sendable {
         // A grant while a Privileges session is open renews that session.
         let renewing = existing?.source == .privileges ? existing : nil
         let sessionID = renewing?.sessionID ?? newID()
-        let user = UserInfo(localName: invocation.user, upn: renewing?.upn ?? upn)
+        let user = UserInfo(localName: invocation.user, upn: renewing.map { self.upn($0.upn, of: $0.user) } ?? upn)
         let limit = env.privileges().expiry(grantedAt: grantedAt, timer: timer)
         let expiresAt = limit?.date
         detail["renewed"] = .bool(renewing != nil)
@@ -383,7 +384,7 @@ public final class ElevationTracker: Sendable {
             OpenSession(
                 user: invocation.user, sessionID: sessionID, source: .privileges,
                 startedAt: renewing?.startedAt ?? invocation.invokedAt, expiresAt: expiresAt,
-                overdueReported: unchanged && renewing?.overdueReported == true, upn: user.upn))
+                overdueReported: unchanged && renewing?.overdueReported == true, upn: .read(user.upn)))
         let event = AltiwardEvent(
             type: .elevationGranted, sessionID: sessionID, timestamp: invocation.invokedAt,
             device: device, user: user,
@@ -775,17 +776,18 @@ public final class ElevationTracker: Sendable {
     /// for the caller to enqueue. `audit` says which process added them, when Privileges'
     /// system extension logged it. The session starts at `startedAt`, when the rights were
     /// first seen, or `now` when that isn't given; the grace period counts from it. The session
-    /// keeps `upn`, the UPN read when a refused claim arrived, or else the one read now.
+    /// keeps `upn`, the UPN read when a refused claim arrived, or else the one recorded now.
     func openOutOfBand(
-        _ user: String, now: Date, startedAt: Date? = nil, upn: String? = nil, device: DeviceInfo,
+        _ user: String, now: Date, startedAt: Date? = nil, upn pin: PinnedUPN = .unknown, device: DeviceInfo,
         audit: [PrivilegesAuditRecord]
     ) throws -> AltiwardEvent {
         let sessionID = newID()
         let firstObserved = startedAt ?? now
-        let upn = upn ?? self.upn(for: user)
+        let upn = upn(pin, of: user)
         try store.upsertOpenSession(
             OpenSession(
-                user: user, sessionID: sessionID, source: .outOfBand, startedAt: firstObserved, expiresAt: nil, upn: upn))
+                user: user, sessionID: sessionID, source: .outOfBand, startedAt: firstObserved, expiresAt: nil,
+                upn: .read(upn)))
         var detail: [String: JSONValue] = ["first_observed": .date(firstObserved)]
         if let instigator = try instigator(of: user, in: audit) { detail["instigator"] = instigator }
         return AltiwardEvent(

@@ -1,0 +1,70 @@
+[
+  {
+    "activity_id": 1,
+    "activity_name": "Create",
+    "category_name": "Findings",
+    "category_uid": 2,
+    "class_name": "Detection Finding",
+    "class_uid": 2004,
+    "device": {
+      "hw_info": {
+        "serial_number": "C02XK0AAJGH5"
+      },
+      "os": {
+        "name": "macOS",
+        "type": "macOS",
+        "type_id": 300,
+        "version": "27.2.0"
+      },
+      "uid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D"
+    },
+    "finding_info": {
+      "analytic": {
+        "name": "altiward.tamper.platform_sso_link_changed",
+        "type": "Rule",
+        "type_id": 1
+      },
+      "created_time": 1793202012000,
+      "desc": "A Mac account was linked to another person's account in Platform SSO on C02XK0AAJGH5: jdoe's Mac account moved from jane.doe@example.com to ceo@example.com in Platform SSO",
+      "first_seen_time": 1793202012000,
+      "title": "A Mac account was linked to another person's account in Platform SSO",
+      "types": [
+        "Defense Evasion"
+      ],
+      "uid": "5d2e8f14-7a3b-4c6e-9f01-2b4d6a8c0e13"
+    },
+    "is_alert": true,
+    "message": "A Mac account was linked to another person's account in Platform SSO on C02XK0AAJGH5: jdoe's Mac account moved from jane.doe@example.com to ceo@example.com in Platform SSO",
+    "metadata": {
+      "logged_time": 1793202012000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward",
+        "version": "1.2.0"
+      },
+      "tenant_uid": "acme",
+      "uid": "5d2e8f14-7a3b-4c6e-9f01-2b4d6a8c0e13",
+      "version": "1.9.0"
+    },
+    "severity": "High",
+    "severity_id": 4,
+    "status": "New",
+    "status_id": 1,
+    "time": 1793202012000,
+    "type_name": "Detection Finding: Create",
+    "type_uid": 200401,
+    "unmapped": {
+      "altiward": {
+        "detail": {
+          "check": "platform_sso_link_changed",
+          "previous_upn": "jane.doe@example.com",
+          "problem": "jdoe's Mac account moved from jane.doe@example.com to ceo@example.com in Platform SSO",
+          "state": "detected",
+          "upn": "ceo@example.com",
+          "user": "jdoe"
+        },
+        "event_type": "agent.tamper"
+      }
+    }
+  }
+]

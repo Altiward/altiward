@@ -193,8 +193,7 @@ Create these in your MDM and scope them to a pilot group first.
      account Platform SSO signed in with, normally the person's UPN. An entry here wins over
      the link, but only from MDM: a map set with `defaults write` is reported as tampering
      and the link wins over it. Map an account here if you need certainty about its UPN:
-     an admin can change a Platform SSO link, and Altiward reports that only when it
-     happens while someone holds admin rights it records (see below).
+     an admin can change a Platform SSO link (see below).
    - `PlatformSSOIdentity` (optional): set it to `false` if your data protection rules allow
      only UPNs you supply. The agent then reads no Platform SSO links: UPNs come only from
      `UserPrincipalNames`, and a changed link is no longer reported. Only MDM can turn it
@@ -213,14 +212,16 @@ Create these in your MDM and scope them to a pilot group first.
    `PlatformSSOIdentity` or `HookCodeRequirement` set outside MDM as tampering (it doesn't
    check the other keys).
 
-   **Where a UPN comes from.** An elevation keeps the UPN its user had when the grant
-   arrived, so changing a Platform SSO link during the elevation can't move it onto someone
-   else. A link added, changed or removed while someone holds admin rights is reported on
-   their session as a changed account (**Changed account jdoe** in the console,
-   `persistence.detected` in your SIEM), with the account's new link in `platform_sso`. A
-   person's UPN changing in Entra ID is the usual innocent cause: their Entra ID audit log
-   shows it. A change while nobody is elevated, which only a permanent admin or your MDM
-   can make, isn't reported.
+   **Where a UPN comes from.** The agent keeps its own record of each Mac account's
+   Platform SSO link, and events take the UPN from that record, never straight from the
+   Mac. It reads the links when it starts, on every heartbeat and after each grant and
+   give-back, and reports every change to them, whenever it happens, as tampering:
+   **Platform SSO link changed** (High) when an account moves from one person's account to
+   another's, and **Platform SSO link added or removed** (Medium) otherwise. A person
+   registering for Platform SSO adds a link, once. A person's UPN changing in Entra ID is
+   the usual innocent cause of a changed link: their Entra ID audit log shows it. An
+   elevation keeps the UPN on record when its grant arrived, or none if there was none,
+   so a link changed during the elevation can't move it onto someone else.
 2. **Login items profile** (`altiward-login-items.mobileconfig`), so people can't turn
    the agent off and don't see a background-item notice.
 3. **SAP Privileges:** download `corp.sap.privileges.plist` from the **same agent release

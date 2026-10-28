@@ -83,23 +83,17 @@ public struct PersistenceSources: Sendable {
     /// The remote access services switched on (`remote_login`, `screen_sharing`), or nil
     /// when launchd couldn't be asked.
     public var remoteAccess: @Sendable () -> Set<String>?
-    /// The account Platform SSO links to each Mac account, by short name
-    /// (``PlatformSSO/allLinks()``), or nil when the directory can't be read.
-    public var platformSSOLinks: @Sendable () -> [String: String]?
 
     public init(
         root: URL, accounts: @escaping @Sendable () -> [LocalAccount],
-        remoteAccess: @escaping @Sendable () -> Set<String>?,
-        platformSSOLinks: @escaping @Sendable () -> [String: String]? = { [:] }
+        remoteAccess: @escaping @Sendable () -> Set<String>?
     ) {
         self.root = root
         self.accounts = accounts
         self.remoteAccess = remoteAccess
-        self.platformSSOLinks = platformSSOLinks
     }
 
-    /// The real system. With `platformSSO` off, no account's link is read.
-    public static func live(platformSSO: Bool = true) -> PersistenceSources {
+    public static func live() -> PersistenceSources {
         PersistenceSources(
             root: URL(fileURLWithPath: "/"),
             accounts: {
@@ -110,8 +104,7 @@ public struct PersistenceSources: Sendable {
                     return account
                 }
             },
-            remoteAccess: { Self.launchdRemoteAccess() },
-            platformSSOLinks: { platformSSO ? PlatformSSO.allLinks() : [:] })
+            remoteAccess: { Self.launchdRemoteAccess() })
     }
 
     /// Caps that keep one finding small: a launch item's arguments and a sudoers file's
@@ -126,26 +119,15 @@ public struct PersistenceSources: Sendable {
         var unreadable: [String] = []
         let accounts = accounts()
 
-        // An account linked to someone else's Platform SSO account would put the next
-        // elevations on their UPN, so the link is part of the account. Unreadable, the last
-        // snapshot's accounts stand in rather than every link reading as removed.
-        if let links = platformSSOLinks() {
-            for account in accounts {
-                // Admin membership is reported but not part of the digest: someone given admin
-                // rights is an elevation, not a changed account.
-                var fields: [String: JSONValue] = ["name": .string(account.name), "uid": .number(Double(account.uid))]
-                if let admin = account.admin { fields["admin"] = .bool(admin) }
-                var digest = String(account.uid)
-                if let link = links[account.name] {
-                    fields["platform_sso"] = .string(link)
-                    digest += " \(PlatformSSO.prefix)\(link)"
-                }
-                items.append(
-                    PersistenceItem(
-                        kind: .localAccount, id: account.name, location: "accounts", digest: digest, fields: fields))
-            }
-        } else {
-            unreadable.append("accounts")
+        for account in accounts {
+            // Admin membership is reported but not part of the digest: someone given admin
+            // rights is an elevation, not a changed account.
+            var fields: [String: JSONValue] = ["name": .string(account.name), "uid": .number(Double(account.uid))]
+            if let admin = account.admin { fields["admin"] = .bool(admin) }
+            items.append(
+                PersistenceItem(
+                    kind: .localAccount, id: account.name, location: "accounts", digest: String(account.uid),
+                    fields: fields))
         }
 
         launchItems(.launchDaemon, in: "/Library/LaunchDaemons", user: nil, into: &items, unreadable: &unreadable)
@@ -349,7 +331,7 @@ struct PersistenceBaseline: Codable {
         var sessionID: String
         var source: ElevationSource
         /// The session's UPN (``OpenSession/upn``); nil in a baseline an older agent stored.
-        var upn: String?
+        var upn: PinnedUPN?
     }
 
     var takenAt: Date
@@ -410,7 +392,7 @@ extension ElevationTracker {
                             AltiwardEvent(
                                 type: .persistenceDetected, sessionID: session.sessionID, timestamp: now,
                                 device: device,
-                                user: UserInfo(localName: session.user, upn: session.upn ?? upn(for: session.user)),
+                                user: UserInfo(localName: session.user, upn: upn(session.upn ?? .unknown, of: session.user)),
                                 elevation: ElevationInfo(source: session.source),
                                 detail: [
                                     "findings": .array(findings), "since": .date(baseline.takenAt),

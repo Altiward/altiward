@@ -133,10 +133,11 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
   None of it needs Apple's Endpoint Security entitlement.
 - **Maps users to UPNs** from a `UserPrincipalNames` MDM sets, or else from the account
   Platform SSO links to each Mac account (`PlatformSSO:` in the account's
-  `AltSecurityIdentities`, read through OpenDirectory). A session keeps the UPN its user
-  had when the grant arrived, and the persistence snapshot includes each account's link,
-  so a link changed while someone is admin is reported on their session. A
-  `PlatformSSOIdentity` of `false` from MDM turns the read off.
+  `AltSecurityIdentities`, read through OpenDirectory). The agent keeps its own record of
+  every account's link and events take UPNs from it; each change to it, at any time, is
+  reported as `agent.tamper` (`platform_sso_link`, `platform_sso_link_changed`). A session
+  keeps the UPN on record when its grant arrived. A `PlatformSSOIdentity` of `false` from
+  MDM turns the read off.
 
 Every setting is read when the daemon starts. It checks for changes every 15 seconds and,
 when one has changed, logs which and exits for launchd to start it again with them, so a

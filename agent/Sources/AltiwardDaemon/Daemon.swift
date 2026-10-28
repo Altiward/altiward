@@ -65,6 +65,9 @@ final class Daemon: Sendable {
             log.error("permanent admin catch-up failed: \(String(describing: error), privacy: .public)")
         }
 
+        // Before any claim, so the first sessions have the links on record.
+        Self.checkPlatformSSOLinks(tracker)
+
         let listener = NSXPCListener(machServiceName: altiwardMachServiceName)
         let delegate = ListenerDelegate(
             tracker: tracker, requirement: configuration.hookCodeRequirement,
@@ -221,6 +224,16 @@ final class Daemon: Sendable {
         }
     }
 
+    /// Records each account's Platform SSO link and reports what changed: alongside each
+    /// persistence check, and once at start.
+    static func checkPlatformSSOLinks(_ tracker: ElevationTracker) {
+        do {
+            logTampers(try tracker.checkPlatformSSOLinks())
+        } catch {
+            log.error("Platform SSO link check failed: \(String(describing: error), privacy: .public)")
+        }
+    }
+
     /// One line per `admin.permanent_use` event, as `admin.permanent_use started for
     /// breakglass (ssh, ttys003)`.
     static func logPermanentUses(_ events: [AltiwardEvent]) {
@@ -240,6 +253,7 @@ final class Daemon: Sendable {
     /// Checks for persistence: runs after anything that may have opened or closed a
     /// session, and on the heartbeat. Each finding is in the daemon log as well as in the event.
     static func checkPersistence(_ tracker: ElevationTracker) {
+        checkPlatformSSOLinks(tracker)
         do {
             for event in try tracker.checkPersistence() {
                 guard case .array(let findings) = event.detail["findings"] else { continue }

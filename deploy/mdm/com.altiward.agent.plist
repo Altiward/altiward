@@ -30,9 +30,9 @@
                        Optional on Platform SSO Macs: without an entry, the agent takes the
                        account Platform SSO links to the Mac account. An entry wins.
   PlatformSSOIdentity  true (default) reads the account Platform SSO links to each Mac
-                       account, for UPNs and to report a link changed while someone is
-                       admin. false reads no links: UPNs come only from UserPrincipalNames.
-                       Only MDM can turn it off.
+                       account, for UPNs, and reports each change to a link. false reads
+                       no links: UPNs come only from UserPrincipalNames. Only MDM can
+                       turn it off.
   HookCodeRequirement  Code-signing requirement the hook must meet to reach the daemon.
                        Replace TEAMID with the Developer ID team that signs the agent.
   ExpiryEnforcement    What to do when rights from a SAP Privileges grant outlive the expiry

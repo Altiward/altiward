@@ -140,7 +140,7 @@ func makeEnvironment(
     userID: @escaping @Sendable (_ shortName: String) -> UInt32? = { ["jdoe": 501, "mallory": 502, "itadmin": 503][$0] },
     privilegesRenewals: @escaping @Sendable (_ since: Date) -> [PrivilegesRenewalLine] = { _ in [] },
     privilegesAgentImageUUIDs: @escaping @Sendable () -> Set<String> = { [] },
-    platformSSO: @escaping @Sendable (_ shortName: String) -> PlatformSSO.Lookup = { _ in .notLinked }
+    platformSSOLinks: @escaping @Sendable () -> [String: String]? = { [:] }
 ) -> AgentEnvironment {
     AgentEnvironment(
         device: device,
@@ -160,7 +160,7 @@ func makeEnvironment(
         privilegesLogAvailability: privilegesLogAvailability, privilegesDaemonLines: privilegesDaemonLines,
         processIdentity: processIdentity, privilegesExtensionPID: privilegesExtensionPID, userID: userID,
         privilegesRenewals: privilegesRenewals, privilegesAgentImageUUIDs: privilegesAgentImageUUIDs,
-        platformSSO: platformSSO)
+        platformSSOLinks: platformSSOLinks)
 }
 
 /// Writes a store as agent 0.2 left it: the 0.1.0 tables at schema version 1.

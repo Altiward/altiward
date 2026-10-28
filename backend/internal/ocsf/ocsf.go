@@ -214,6 +214,8 @@ var tamperChecks = map[string]struct {
 	"privileges_renewal":           {"SAP Privileges allows renewals that Altiward doesn't see", SeverityMedium},
 	"privileges_give_back_hook":    {"SAP Privileges may not report give-backs to Altiward", SeverityMedium},
 	"privileges_revoke_exclusions": {"SAP Privileges removes admin rights from a permanent admin account", SeverityMedium},
+	"platform_sso_link":            {"A Mac account was linked to or unlinked from an account in Platform SSO", SeverityMedium},
+	"platform_sso_link_changed":    {"A Mac account was linked to another person's account in Platform SSO", SeverityHigh},
 }
 
 // TamperSeverities names the severity a failure of each known tamper check is exported
