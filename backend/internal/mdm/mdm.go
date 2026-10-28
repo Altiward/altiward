@@ -39,7 +39,7 @@ type Checker struct {
 	mu       sync.Mutex
 	started  []time.Time                          // when each live lookup in the last minute started
 	inflight map[string]*lookup                   // live lookups in flight, by ID or serial
-	notFound map[string]time.Time                 // IDs Intune didn't know, and when it said so
+	notFound map[string]missing                   // IDs Intune didn't know, and what they turned out to be
 	warned   map[string]time.Time                 // when each warning was last logged
 	after    func(time.Duration) <-chan time.Time // nil: time.After; a test's clock otherwise
 }

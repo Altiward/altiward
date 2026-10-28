@@ -20,20 +20,31 @@ const (
 	defaultLookupTimeout = 10 * time.Second
 	maxLookups           = 30 // live lookups started in any minute
 	lookupWindow         = time.Minute
-	// notFoundFor is how long an ID Intune didn't know is answered from memory.
+	// notFoundFor is how long an ID Intune didn't know, and what it turned out to be, is
+	// answered from memory.
 	notFoundFor = 5 * time.Minute
 	// warnEvery is how often each warning about a profile's MDMDeviceID is logged.
 	warnEvery = time.Hour
 )
 
 const (
-	warnInvalidID = "MDMDeviceID isn't an Intune device ID"
+	warnInvalidID = "MDMDeviceID isn't an Intune device ID: use {{deviceid}}"
 	warnEntraID   = "MDMDeviceID is the Mac's Entra device ID: use {{deviceid}}"
 	warnCapped    = "more than 30 Intune lookups in a minute: enrolments are checked as unavailable until there is room"
 )
 
 // errUnavailable is a live lookup that wasn't made, or wasn't answered in time.
 var errUnavailable = errors.New("mdm: Intune couldn't be asked in time")
+
+// errEntraID is an ID Intune didn't know that is a Mac's Entra device ID.
+var errEntraID = errors.New("mdm: the ID is a Mac's Entra device ID")
+
+// missing is what an ID Intune didn't know turned out to be, and when Intune said so:
+// MDMUnknownID, or MDMInvalidID for a Mac's Entra device ID.
+type missing struct {
+	at    time.Time
+	check store.MDMCheck
+}
 
 // lookup is one live lookup in flight. val and err are set before done is closed.
 type lookup struct {
@@ -46,9 +57,12 @@ type lookup struct {
 // that holdsForApproval in the store decides on. deviceID is never logged.
 //
 // It gives MDMNotChecked for a tenant Intune isn't connected for, MDMNotSent for an empty
-// ID, and MDMInvalidID for one that isn't a GUID or is a Mac's Entra device ID. Otherwise
-// it looks the device up, live: MDMUnknownID when Intune has no such device or one without
-// a serial, MDMMismatch when its serial isn't exactly the Mac's, and MDMMatch when it is.
+// ID, and MDMInvalidID for one that isn't a GUID. Otherwise it looks the device up, live:
+// MDMUnknownID when Intune has no such device or one without a serial, MDMMismatch when its
+// serial isn't exactly the Mac's, and MDMMatch when it is. An ID Intune doesn't have is
+// MDMInvalidID instead when it is the Entra device ID of a Mac in the copy. Only then is the
+// copy read, so that read sits under the same bounds as the lookup, and for notFoundFor
+// both the outcome is answered from memory, without a lookup or a read.
 // It gives MDMUnavailable when the lookup fails, isn't answered in time or ctx ends, or
 // when the minute's lookups are spent.
 //
@@ -67,24 +81,38 @@ func (c *Checker) Check(ctx context.Context, tenantID, deviceID, serial, hardwar
 		return store.MDMInvalidID
 	}
 	id = strings.ToLower(id)
-	if c.isEntraDeviceID(ctx, tenantID, id) {
-		c.warnOnce(warnEntraID, tenantID, serial)
-		return store.MDMInvalidID
-	}
-	if c.knownMissing(id) {
-		return store.MDMUnknownID
+	if check, ok := c.knownMissing(id); ok {
+		if check == store.MDMInvalidID {
+			c.warnOnce(warnEntraID, tenantID, serial)
+		}
+		return check
 	}
 	if c.Source == nil {
 		return store.MDMUnavailable
 	}
 	d, err := live(c, ctx, tenantID, "device:"+id, func(ctx context.Context) (intune.Device, error) {
 		d, err := c.Source.Device(ctx, id)
-		if errors.Is(err, intune.ErrNotFound) {
-			c.rememberMissing(id)
+		if !errors.Is(err, intune.ErrNotFound) {
+			return d, err
+		}
+		// A profile can name the Mac's Entra device ID by mistake: a GUID too, which only the
+		// copy tells apart. A copy that can't be read leaves it unknown, and unremembered.
+		entra, rerr := c.isEntraDeviceID(ctx, tenantID, id)
+		switch {
+		case rerr != nil:
+			c.logger().Warn("can't read the copy of Intune's Macs", "tenant", tenantID, "err", rerr)
+		case entra:
+			c.rememberMissing(id, store.MDMInvalidID)
+			return d, errEntraID
+		default:
+			c.rememberMissing(id, store.MDMUnknownID)
 		}
 		return d, err
 	})
 	switch {
+	case errors.Is(err, errEntraID):
+		c.warnOnce(warnEntraID, tenantID, serial)
+		return store.MDMInvalidID
 	case errors.Is(err, intune.ErrNotFound):
 		return store.MDMUnknownID
 	case err != nil:
@@ -222,54 +250,55 @@ func (c *Checker) startLookup() bool {
 }
 
 // isEntraDeviceID reports whether id, lower-cased, is the Entra device ID of a Mac in the
-// copy: a profile that names the wrong ID. It is a GUID too, so only the copy tells.
-func (c *Checker) isEntraDeviceID(ctx context.Context, tenantID, id string) bool {
+// copy. It reads the whole copy, so it runs only after Intune said it has no device id.
+func (c *Checker) isEntraDeviceID(ctx context.Context, tenantID, id string) (bool, error) {
 	if c.Store == nil {
-		return false
+		return false, nil
 	}
 	devices, err := c.Store.MDMDevices(ctx, tenantID, store.MDMIntune)
 	if err != nil {
-		c.logger().Warn("can't read the copy of Intune's Macs", "tenant", tenantID, "err", err)
-		return false
+		return false, err
 	}
 	for _, d := range devices {
 		if strings.EqualFold(strings.TrimSpace(d.EntraDeviceID), id) {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
-// knownMissing reports whether Intune said it had no device id in the last notFoundFor.
-func (c *Checker) knownMissing(id string) bool {
+// knownMissing gives what an ID Intune said it didn't have in the last notFoundFor turned
+// out to be, if it did.
+func (c *Checker) knownMissing(id string) (store.MDMCheck, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	at, ok := c.notFound[id]
+	m, ok := c.notFound[id]
 	if !ok {
-		return false
+		return "", false
 	}
-	if c.now().Before(at.Add(notFoundFor)) {
-		return true
+	if c.now().Before(m.at.Add(notFoundFor)) {
+		return m.check, true
 	}
 	delete(c.notFound, id)
-	return false
+	return "", false
 }
 
-// rememberMissing remembers that Intune has no device id. The memory holds at most the
-// IDs looked up in the last notFoundFor, which the cap on lookups bounds.
-func (c *Checker) rememberMissing(id string) {
+// rememberMissing remembers that Intune has no device id, and what it turned out to be. The
+// memory holds at most the IDs looked up in the last notFoundFor, which the cap on lookups
+// bounds.
+func (c *Checker) rememberMissing(id string, check store.MDMCheck) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.now()
-	for k, at := range c.notFound {
-		if !now.Before(at.Add(notFoundFor)) {
+	for k, m := range c.notFound {
+		if !now.Before(m.at.Add(notFoundFor)) {
 			delete(c.notFound, k)
 		}
 	}
 	if c.notFound == nil {
-		c.notFound = map[string]time.Time{}
+		c.notFound = map[string]missing{}
 	}
-	c.notFound[id] = now
+	c.notFound[id] = missing{at: now, check: check}
 }
 
 // warnOnce logs msg as a warning, at most once every warnEvery for each message.

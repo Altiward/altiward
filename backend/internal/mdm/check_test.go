@@ -320,7 +320,8 @@ func TestCheckCapsLiveLookups(t *testing.T) {
 
 // TestCheckNamesTheEntraDeviceIDMistake (Review Focus 1): a profile that sends the Mac's
 // Entra device ID instead of Intune's is an invalid ID, and the admin is told which mistake
-// it is, at most once an hour, without the ID.
+// it is, at most once an hour, without the ID. Intune is asked first; the answer is
+// remembered like any ID it doesn't know.
 func TestCheckNamesTheEntraDeviceIDMistake(t *testing.T) {
 	env := newCheck(t)
 	if err := env.st.ReplaceMDMDevices(context.Background(), "acme", store.MDMIntune, []store.MDMDevice{
@@ -331,8 +332,8 @@ func TestCheckNamesTheEntraDeviceIDMistake(t *testing.T) {
 	const warning = "MDMDeviceID is the Mac's Entra device ID: use {{deviceid}}"
 	env.want(t, entraID, macSerial, store.MDMInvalidID)
 	env.want(t, strings.ToUpper(entraID), macSerial, store.MDMInvalidID)
-	if calls, _ := env.src.counts(); calls != 0 {
-		t.Fatalf("calls = %d, want none", calls)
+	if calls, _ := env.src.counts(); calls != 1 {
+		t.Fatalf("calls = %d, want one, then the answer from memory", calls)
 	}
 	if n := strings.Count(env.log.String(), warning); n != 1 {
 		t.Fatalf("warned %d times, want once:\n%s", n, env.log)
@@ -350,9 +351,68 @@ func TestCheckNamesTheEntraDeviceIDMistake(t *testing.T) {
 	env.want(t, intuneID, macSerial, store.MDMMatch)
 }
 
+// countingStore counts the reads of the whole copy of Intune's Macs.
+type countingStore struct {
+	store.Store
+	mu    sync.Mutex
+	reads int
+}
+
+func (s *countingStore) MDMDevices(ctx context.Context, tenantID, source string) ([]store.MDMDevice, error) {
+	s.mu.Lock()
+	s.reads++
+	s.mu.Unlock()
+	return s.Store.MDMDevices(ctx, tenantID, source)
+}
+
+func (s *countingStore) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reads
+}
+
+// The enrolment token can't make every enrolment read the whole copy: it is read only once
+// Intune has said it doesn't know the ID, within the cap on lookups, and an Entra device ID
+// sent again within 5 minutes costs neither a lookup nor a read.
+func TestCheckReadsTheCopyOnlyForAnIDIntuneDoesNotKnow(t *testing.T) {
+	env := newCheck(t)
+	counting := &countingStore{Store: env.st}
+	env.c.Store = counting
+	if err := env.st.ReplaceMDMDevices(context.Background(), "acme", store.MDMIntune, []store.MDMDevice{
+		{DeviceID: intuneID, Serial: macSerial, EntraDeviceID: entraID},
+	}, env.clock.now()); err != nil {
+		t.Fatal(err)
+	}
+	env.want(t, intuneID, macSerial, store.MDMMatch)
+	env.want(t, "{{deviceid}}", macSerial, store.MDMInvalidID)
+	if n := counting.count(); n != 0 {
+		t.Fatalf("copy reads = %d, want none for an ID Intune knows or an invalid one", n)
+	}
+	env.want(t, entraID, macSerial, store.MDMInvalidID)
+	calls, _ := env.src.counts()
+	if n := counting.count(); n != 1 {
+		t.Fatalf("copy reads = %d, want one", n)
+	}
+	for range 5 {
+		env.clock.advance(time.Minute - time.Second)
+		env.want(t, entraID, macSerial, store.MDMInvalidID)
+	}
+	if again, _ := env.src.counts(); again != calls || counting.count() != 1 {
+		t.Fatalf("repeats made %d lookups and %d copy reads, want none", again-calls, counting.count()-1)
+	}
+	// An ID Intune doesn't know that isn't an Entra device ID reads the copy once too.
+	const unknown = "ffffffff-0000-4000-8000-000000000001"
+	env.want(t, unknown, macSerial, store.MDMUnknownID)
+	env.want(t, unknown, macSerial, store.MDMUnknownID)
+	if n := counting.count(); n != 2 {
+		t.Fatalf("copy reads = %d, want two", n)
+	}
+	env.logHasNoID(t, entraID, intuneID, unknown)
+}
+
 func TestCheckInvalidID(t *testing.T) {
 	env := newCheck(t)
-	const warning = "MDMDeviceID isn't an Intune device ID"
+	const warning = "MDMDeviceID isn't an Intune device ID: use {{deviceid}}"
 	for _, id := range []string{"{{deviceid}}", "{{DeviceID}}", "abc"} {
 		env.want(t, id, macSerial, store.MDMInvalidID)
 	}
@@ -362,7 +422,7 @@ func TestCheckInvalidID(t *testing.T) {
 	if n := strings.Count(env.log.String(), warning); n != 1 {
 		t.Fatalf("warned %d times in the hour, want once:\n%s", n, env.log)
 	}
-	env.logHasNoID(t, "{{deviceid}}", "abc")
+	env.logHasNoID(t, "abc")
 	env.clock.advance(time.Hour)
 	env.want(t, "abc", macSerial, store.MDMInvalidID)
 	if n := strings.Count(env.log.String(), warning); n != 2 {
