@@ -18,6 +18,7 @@ import (
 //	end_console_session                    → Delete (4), Low: an admin ended someone's sign-in
 //	sign_in, sign_out                      → Authentication (3002), Logon (1) or Logoff (2),
 //	                                         for single sign-on
+//	sign_in by a console token             → Authentication (3002), Logon (1); Low for break-glass
 //
 // The actor is a console token's fingerprint (token:3f2a9c1b) until single sign-on names
 // a person. The event type in unmapped.altiward is "console." and the action.
@@ -90,10 +91,21 @@ func MapAudit(a store.AuditEntry) Record {
 	return r
 }
 
-// signIn maps signing in to the console, or out of it, through single sign-on.
+// signIn maps signing in to the console, or out of it, through single sign-on, and each
+// hour a console token is used (a sign_in with method "token").
 func signIn(a store.AuditEntry) Record {
 	activityID, activity := 1, "Logon"
+	protocolID, protocol, severity := 4, "OpenID", SeverityInformational
 	msg := fmt.Sprintf("%s signed in to the Altiward console", a.Actor)
+	if detailString(a.Detail, "method") == "token" {
+		// A console token is a bearer token: no OCSF protocol names it, so it is Other (99).
+		protocolID, protocol = 99, "Bearer token"
+		kind := "console"
+		if strings.HasPrefix(a.Actor, "break-glass:") {
+			kind, severity = "break-glass", SeverityLow
+		}
+		msg += " with a " + kind + " token"
+	}
 	if role := detailString(a.Detail, "role"); role != "" {
 		msg += " as " + role
 	}
@@ -125,8 +137,8 @@ func signIn(a store.AuditEntry) Record {
 		},
 		"user":             user,
 		"service":          map[string]any{"name": "Altiward console"},
-		"auth_protocol_id": 4,
-		"auth_protocol":    "OpenID",
+		"auth_protocol_id": protocolID,
+		"auth_protocol":    protocol,
 		"status_id":        1,
 		"status":           "Success",
 		"message":          msg,
@@ -134,7 +146,7 @@ func signIn(a store.AuditEntry) Record {
 			"event_type": AuditEventType(a), "action": a.Action, "target": a.Target, "detail": a.Detail,
 		}},
 	}
-	setSeverity(r, SeverityInformational)
+	setSeverity(r, severity)
 	return r
 }
 

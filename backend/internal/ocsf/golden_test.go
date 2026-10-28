@@ -54,6 +54,8 @@ func extraExamples(t *testing.T) map[string][]ocsf.Record {
 				map[string]any{"serial": "C02XK0AAJGH5", "user": "jdoe", "command_id": "3b4c5d6e-7f80-4a91-b2c3-d4e5f6a7b8c9"})),
 			ocsf.MapAudit(entry("8b3f4e5d-6c7b-4a01-9f2e-3d4c5e6f7081", "break-glass:3f2a9c1b", store.AuditApproveEnrollment, "C02XK0AAJGH5",
 				map[string]any{"serial": "C02XK0AAJGH5"})),
+			ocsf.MapAudit(entry("9c4a5f6e-7d8c-4b12-a03f-4e5d6f708192", "break-glass:3f2a9c1b", store.AuditSignIn, "console",
+				map[string]any{"method": "token", "role": "admin", "route": "GET /v1/auth/me"})),
 		},
 	}
 }
