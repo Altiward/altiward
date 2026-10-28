@@ -238,14 +238,15 @@ by its own clock, what is older than the period:
 - commands created before it, results included;
 - each Mac whose last check-in is before it, with its sessions, events and commands, and its
   latest state. Its active and pending keys are revoked first, so a Mac that comes back
-  enrols again and waits for approval like any re-enrolment. Its enrolment keys stay, and
-  that is what makes it a re-enrolment.
+  enrols again, and waits for approval while **Approve Macs that enrol again** is on (the
+  default). Its enrolment keys stay, and that is what makes it a re-enrolment.
 
 A Mac is kept, and looked at again at the next run, when only its own clock says when it
 last checked in, when the server received any event for it within the period (its own alerts
-included), when it has an open session, or when a key for it was created or approved within the
-period. A Mac that an admin retired goes the same way, once its last check-in is older than
-the period.
+included), when it has an open session, when a key for it was created or approved within the
+period, or when any of its events is still waiting for a SIEM or, under the default period,
+was received before the SIEM's coverage date (the first two rules below). A Mac that an
+admin retired goes the same way, once its last check-in is older than the period.
 
 It never removes:
 
