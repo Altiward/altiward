@@ -5,12 +5,12 @@ import { App } from "./App";
 import type { Me } from "./api";
 import { overview } from "./test/fixtures";
 
-type Server = { sso?: boolean; session?: Me | null; tokenMe?: Me; providerSignOutURL?: string };
+type Server = { sso?: boolean; session?: Me | null; tokenMe?: Me; tokenStatus?: number; providerSignOutURL?: string };
 
 const tokenMe: Me = { actor: "token:3f2a9c1b", name: "", role: "admin", method: "token" };
 
 // App builds its own API, so the tests answer fetch as the server would.
-function serve({ sso = false, session = null, tokenMe: asToken = tokenMe, providerSignOutURL }: Server) {
+function serve({ sso = false, session = null, tokenMe: asToken = tokenMe, tokenStatus = 200, providerSignOutURL }: Server) {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     const path = new URL(url, "http://localhost").pathname;
     const bearer = new Headers(init?.headers).get("Authorization");
@@ -19,7 +19,8 @@ function serve({ sso = false, session = null, tokenMe: asToken = tokenMe, provid
     switch (path) {
       case "/v1/auth/config": return json({ sso });
       case "/v1/auth/me":
-        if (bearer) return bearer === "Bearer console-token-000000001" ? json(asToken) : json({ error: "bad token" }, 401);
+        if (bearer === "Bearer console-token-000000001") return tokenStatus === 200 ? json(asToken) : json({ error: "no" }, tokenStatus);
+        if (bearer) return json({ error: "bad token" }, 401);
         return session ? json(session) : json({ error: "sign in" }, 401);
       case "/v1/auth/logout":
         return providerSignOutURL ? json({ provider_sign_out_url: providerSignOutURL }) : json(null, 204);
@@ -70,6 +71,53 @@ describe("signing in", () => {
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("The server rejected that token");
   });
+
+  it.each([401, 403])("forgets a stored token when the server answers %i on reload", async (status) => {
+    sessionStorage.setItem("altiward.consoleToken", "console-token-000000001");
+    serve({ tokenStatus: status });
+    render(<App />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("The server rejected that token");
+    expect(sessionStorage.getItem("altiward.consoleToken")).toBeNull();
+  });
+
+  it("keeps the token and says to try again when the server can't sign it in", async () => {
+    serve({ tokenStatus: 500 });
+    render(<App />);
+    await userEvent.type(await screen.findByLabelText("Console token"), "console-token-000000001");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Your token wasn’t rejected, so try again shortly");
+    expect(alert).not.toHaveTextContent("rejected that token");
+    expect(screen.getByLabelText("Console token")).toHaveValue("console-token-000000001");
+    expect(sessionStorage.getItem("altiward.consoleToken")).toBeNull();
+  });
+
+  it("keeps a stored token when the server can't sign it in on reload", async () => {
+    sessionStorage.setItem("altiward.consoleToken", "console-token-000000001");
+    serve({ sso: true, tokenStatus: 500 });
+    render(<App />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your token wasn’t rejected, so try again shortly");
+    expect(sessionStorage.getItem("altiward.consoleToken")).toBe("console-token-000000001");
+    expect(screen.getByLabelText("Break-glass token")).toHaveValue("console-token-000000001");
+  });
+
+  // Otherwise the load on return from the identity provider would prefer the token, and
+  // sign the person in as break-glass.
+  it.each(["Sign in with single sign-on", "Use a different account"])(
+    "forgets a kept token when %s is chosen", async (name) => {
+      sessionStorage.setItem("altiward.consoleToken", "console-token-000000001");
+      serve({ sso: true, tokenStatus: 500 });
+      render(<App />);
+      expect(await screen.findByRole("alert")).toHaveTextContent("Your token wasn’t rejected");
+      const stay = (e: MouseEvent) => e.preventDefault(); // jsdom can't follow the link
+      document.addEventListener("click", stay);
+      try {
+        await userEvent.click(screen.getByRole("link", { name }));
+      } finally {
+        document.removeEventListener("click", stay);
+      }
+      expect(sessionStorage.getItem("altiward.consoleToken")).toBeNull();
+    });
 
   it("offers single sign-on, with a break-glass token behind a link", async () => {
     window.history.replaceState(null, "", "/fleet");

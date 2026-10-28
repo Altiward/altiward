@@ -76,6 +76,14 @@ describe("Activity", () => {
       .toBe("Single sign-on as operator");
   });
 
+  it("says a console token signed in, and on which request", () => {
+    const token = { method: "token", role: "admin", route: "GET /v1/devices" };
+    expect(auditSummary(entry({ action: "sign_in", target: "console", detail: token })))
+      .toBe("Token, first request GET /v1/devices");
+    expect(auditSummary(entry({ action: "sign_in", target: "console", detail: { method: "token", role: "admin" } })))
+      .toBe("Token");
+  });
+
   it("says which SIEMs a test event or a retry was for", async () => {
     expect(auditSummary(entry({ action: "test_export", target: "exports", detail: { sinks: ["sentinel", "splunk"] } })))
       .toBe("Microsoft Sentinel and Splunk");

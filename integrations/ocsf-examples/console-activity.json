@@ -159,5 +159,51 @@
         "target": "C02XK0AAJGH5"
       }
     }
+  },
+  {
+    "activity_id": 1,
+    "activity_name": "Logon",
+    "auth_protocol": "Bearer token",
+    "auth_protocol_id": 99,
+    "category_name": "Identity \u0026 Access Management",
+    "category_uid": 3,
+    "class_name": "Authentication",
+    "class_uid": 3002,
+    "message": "break-glass:3f2a9c1b signed in to the Altiward console with a break-glass token as admin",
+    "metadata": {
+      "logged_time": 1792144920000,
+      "product": {
+        "name": "Altiward",
+        "vendor_name": "Altiward"
+      },
+      "tenant_uid": "acme",
+      "uid": "9c4a5f6e-7d8c-4b12-a03f-4e5d6f708192",
+      "version": "1.9.0"
+    },
+    "service": {
+      "name": "Altiward console"
+    },
+    "severity": "Low",
+    "severity_id": 2,
+    "status": "Success",
+    "status_id": 1,
+    "time": 1792144920000,
+    "type_name": "Authentication: Logon",
+    "type_uid": 300201,
+    "unmapped": {
+      "altiward": {
+        "action": "sign_in",
+        "detail": {
+          "method": "token",
+          "role": "admin",
+          "route": "GET /v1/auth/me"
+        },
+        "event_type": "console.sign_in",
+        "target": "console"
+      }
+    },
+    "user": {
+      "name": "break-glass:3f2a9c1b"
+    }
   }
 ]

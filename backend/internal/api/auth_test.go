@@ -340,6 +340,55 @@ func TestSignInRefusals(t *testing.T) {
 	})
 }
 
+// A person named like a console token would show as one in the audit log, and set off the
+// break-glass alert.
+func TestSingleSignOnRefusesTokenLikeNames(t *testing.T) {
+	env := newSSOServer(t)
+	// The SIEM's rules match the prefix in any case. A name with a colon is refused too, as
+	// no email or UPN has one and every token's name does (so is one with a lookalike
+	// hyphen), and so is a name with a control or format character, such as a zero-width
+	// space or a byte order mark.
+	names := []string{"break-glass:3f2a9c1b", "token:3f2a9c1b", "Break-Glass:3f2a9c1b", "TOKEN:3f2a9c1b", " break-glass:3f2a9c1b",
+		"break\u2010glass:3f2a9c1b", "\u200bbreak-glass:3f2a9c1b", "\ufefftoken:3f2a9c1b", "jane:doe@example.com"}
+	for _, name := range names {
+		b := env.browser(t)
+		rec, _ := b.do("GET", "/v1/auth/login", nil)
+		claims := person("g-admin")
+		claims["email"] = name
+		back, err := url.Parse(env.idp.Authorize(rec.Header().Get("Location"), claims))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec, _ = b.do("GET", back.RequestURI(), nil)
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/?sso_error=failed" {
+			t.Errorf("%s: %d %q, want refusal %q", name, rec.Code, rec.Header().Get("Location"), "failed")
+		}
+		if _, ok := b.cookies["__Host-altiward_session"]; ok {
+			t.Errorf("%s got a session", name)
+		}
+	}
+	sessions, _ := env.store.ListConsoleSessions(context.Background(), "acme", env.now)
+	entries, _ := env.store.ListAudit(context.Background(), "acme", store.AuditFilter{})
+	if len(sessions) != 0 || len(entries) != 0 {
+		t.Fatalf("sessions = %+v, audit = %+v", sessions, entries)
+	}
+	if n := strings.Count(env.log.String(), "the name could pass for the Altiward server or a console token"); n != len(names) {
+		t.Errorf("want %d refusals logged, log:\n%s", len(names), env.log)
+	}
+
+	// Anyone else still signs in.
+	b := env.browser(t)
+	if to := b.signIn(env.idp, "/", person("g-admin")); to != "/" {
+		t.Fatalf("returned to %q", to)
+	}
+	if _, ok := b.cookies["__Host-altiward_session"]; !ok {
+		t.Fatal("a person got no session")
+	}
+	if entries := signIns(t, env.store); len(entries) != 1 || entries[0].Actor != "jane.doe@example.com" {
+		t.Fatalf("sign-ins = %+v", entries)
+	}
+}
+
 func TestSessionsExpireAndSignOut(t *testing.T) {
 	env := newSSOServer(t)
 	b := env.browser(t)
@@ -649,8 +698,10 @@ func TestBreakGlassTokensAreAuditedAdmins(t *testing.T) {
 	if rec, _ := do(t, env.h, "PUT", "/v1/settings", consoleToken, map[string]any{"silent_after_hours": 24}); rec.Code != 200 {
 		t.Fatalf("settings: %d", rec.Code)
 	}
+	// The change, and the sign-in the token's first request recorded.
 	entries, _ := env.store.ListAudit(context.Background(), "acme", store.AuditFilter{})
-	if len(entries) != 1 || entries[0].Actor != actor {
+	if len(entries) != 2 || entries[0].Actor != actor || entries[0].Action != store.AuditChangeSettings ||
+		entries[1].Actor != actor || entries[1].Action != store.AuditSignIn {
 		t.Fatalf("audit = %+v", entries)
 	}
 	if rec, _ := do(t, env.h, "GET", "/v1/devices", "not-a-token-at-all", nil); rec.Code != http.StatusUnauthorized {

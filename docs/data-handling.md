@@ -101,9 +101,11 @@ on every platform. None of it is sent to your SIEM.
 macOS version, the person's short name and UPN, the reason they typed, and the event's
 details. That includes every permanent admin use event the agent sends: sign-in
 times, terminals and SSH addresses, who approved prompts, and screen sharing viewers' addresses, as listed above. Console
-actions go there too, naming the person who made them. So does what the server does
-by itself ([How long history is kept](#how-long-history-is-kept)): removing old history or a
-Mac that stopped checking in, and revoking that Mac's keys. Those entries name the server
+actions go there too, sign-ins and sign-outs included, naming the person who made them
+or, for a console token, its fingerprint (`token:` or `break-glass:` and 8 hex digits,
+never the token). So does what the server does by itself
+([How long history is kept](#how-long-history-is-kept)): removing old history or a Mac that
+stopped checking in, and revoking that Mac's keys. Those entries name the server
 (`altiward:server`) as the actor, never a person.
 
 Health readings, which are most of what the server stores, are never sent to a SIEM, and
@@ -213,7 +215,7 @@ Everything is in your Postgres database.
 | Each Mac's latest state: versions, admins, health, the admin group last sent to your SIEM, whether an admin has retired the Mac, its newest 20 alerts, its open permanent admin sign-ins (up to 20) and its newest 20 other permanent admin uses (the console shows up to 10, open sign-ins first) | Replaced as it changes, until the Mac is removed. The newest alerts and uses can be older than the history period while the Mac is kept |
 | Each Mac's enrolment: serial, hardware UUID, **public** key, whether the Mac says its key is in its Secure Enclave, and the fingerprint of the enrolment token it used (never the token). For each key, also the key it replaced by rotation, when the Mac signed that rotation, and when a use of the key after it was replaced was last reported | Forever, even after the Mac is removed; revoking stops the Mac reporting |
 | Commands sent from the console, who sent them, and their results | For the history period |
-| Activity: every change made in the console, every sign-in, and what the server does by itself | Forever by default; or from 365 days, with `ALTIWARD_AUDIT_RETENTION_DAYS` |
+| Activity: every change made in the console, every sign-in and sign-out through single sign-on, a sign-in for each hour a console token is used, with the route of its first request in that hour (such as `GET /v1/sessions/{id}`: the kind of request, never the address it asked for), and what the server does by itself | Forever by default; or from 365 days, with `ALTIWARD_AUDIT_RETENTION_DAYS` |
 | Console sign-in sessions: the person's email, name, identity-provider ID and role | 12 hours at most, 1 hour idle; removed on sign-out, or when an admin ends it |
 | Events waiting for each SIEM | Until the SIEM accepts them |
 | When each SIEM last accepted something | Replaced at each delivery |
@@ -336,9 +338,11 @@ security records ([Backups](install.md#backups)).
   Mac's first key waits for approval too; per-device bootstrap credentials are needed
   for stronger first-enrolment assurance. Changing the token doesn't affect Macs already
   enrolled.
-- **Console and agent tokens** are kept in the server's `.env` file (keep it `chmod 600`).
-  The server holds only their SHA-256 digests in memory and records each by a fingerprint,
-  never the token.
+- **Console and agent tokens** are kept in the server's `.env` file (keep it `chmod 600`),
+  or with the Deploy to Azure template in its key vault. The server holds only their
+  SHA-256 digests in memory and records each by a fingerprint, never the token. Each hour
+  a console token is used, Activity records a sign-in by its fingerprint
+  ([Console token and break-glass](install.md#console-token-and-break-glass)).
 - **Console sessions** are an HttpOnly cookie, Secure and `__Host-` prefixed over HTTPS,
   with SameSite=Lax and a CSRF token on every change. The database stores a hash of
   the session ID, not the ID itself.
@@ -388,11 +392,11 @@ It logs to the Mac's unified log under `com.altiward.agent`.
 ## Diagnostics
 
 `altiward-api diagnose` prints a JSON report to attach to a bug report. It contains the
-version, which settings are set, migration state, record counts, each SIEM's backlog and
-last error, whether each SIEM, the identity provider and Microsoft Graph accept a
-connection (and the Azure VM's metadata service or the container app's identity endpoint,
-when Sentinel or Intune uses a managed identity), when the Intune sync last succeeded and
-its last error, and when the server was set up.
+version, which settings are set, each token's organisation and fingerprint, migration
+state, record counts, each SIEM's backlog and last error, whether each SIEM, the identity
+provider and Microsoft Graph accept a connection (and the Azure VM's metadata service or
+the container app's identity endpoint, when Sentinel or Intune uses a managed identity),
+when the Intune sync last succeeded and its last error, and when the server was set up.
 
 It hides every secret: tokens, client secrets, the database password. It holds no event
 contents, names or reasons, only counts. It sends nothing: you read it, then decide

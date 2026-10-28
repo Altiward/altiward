@@ -98,8 +98,10 @@ The deployment's **Outputs** list what you need next:
    ```
 
    Use the part after `=`. The console token signs you in to the console, and is a
-   break-glass login once single sign-on is set up. The agent token is the profile's
-   `EnrollmentToken`.
+   break-glass login once single sign-on is set up: the install guide's
+   [Console token and break-glass](../../docs/install.md#console-token-and-break-glass)
+   covers what's recorded, where to keep it and what to do if it leaks. The agent token is
+   the profile's `EnrollmentToken`.
 
 2. **Open the console** at `consoleUrl` from one of the allowed networks, and sign in
    with the console token.
@@ -240,7 +242,9 @@ az containerapp revision restart --name <appName> --resource-group <group> \
   --revision "$(az containerapp show --name <appName> --resource-group <group> --query properties.latestRevisionName -o tsv)"
 ```
 
-Enrolled Macs keep working with a new agent token; new Macs need it in the profile.
+Enrolled Macs keep working with a new agent token; new Macs need it in the profile. For
+the console token, [The console token](#the-console-token) covers changing it without a
+gap, revoking one and turning it off.
 
 **Replicas.** One is enough for most fleets, and more are safe: migrations, SIEM exports,
 the silent-Mac alerts and command wake-ups all coordinate through the database. Every
@@ -253,6 +257,104 @@ az containerapp update --name <appName> --resource-group <group> --min-replicas 
 **A bigger database.** Altiward keeps history for a year once a SIEM is connected, and for
 good until then, unless you set **Keep history for** in the console's Settings. Change the
 server's size or storage under its **Compute + storage** settings as your fleet grows.
+
+## The console token
+
+The install guide's
+[Console token and break-glass](../../docs/install.md#console-token-and-break-glass) says
+what the console token is for, what's recorded and what to do after a leak. Here the
+tokens are the key vault's `console-tokens` secret, which the app reads as its own secret
+of the same name and gives the `altiward` container as `ALTIWARD_CONSOLE_TOKENS`. The app
+reads the secret's newest version, so each change is a new version holding every console
+token you keep, comma separated. This adds one without the tokens showing on screen, in
+your shell history or in the list of running processes, then restarts the app so it uses
+the new version at once rather than within 30 minutes:
+
+```sh
+read -rs v    # paste yourcompany=<token>, or several comma separated, then press Enter
+printf %s "$v" | az keyvault secret set --vault-name <vaultName> --name console-tokens \
+  --file /dev/stdin --encoding utf-8 -o none
+unset v
+az containerapp revision restart --name <appName> --resource-group <group> \
+  --revision "$(az containerapp show --name <appName> --resource-group <group> --query properties.latestRevisionName -o tsv)"
+```
+
+**Changing it without a gap:**
+
+1. Add a version holding the old token and the new one,
+   `yourcompany=<old>,yourcompany=<new>`, and restart.
+2. Sign in with the new token.
+3. Add a version holding only the new one, and restart again.
+4. Disable every older version, so the old token can't be read from the vault:
+
+   ```sh
+   for id in $(az keyvault secret list-versions --vault-name <vaultName> \
+       --name console-tokens -o tsv \
+       --query "sort_by([?attributes.enabled], &attributes.created)[:-1].id"); do
+     az keyvault secret set-attributes --id "$id" --enabled false -o none
+   done
+   ```
+
+   This keeps the newest version, the one the app reads, enabled. Never disable that one
+   while the app uses it: the app could no longer read its tokens, and its next restart
+   would fail. A disabled version can still be enabled again, and then read, by anyone who
+   can manage the vault's secrets, such as with the Key Vault Secrets Officer role that
+   whoever deployed it has, so keep that to the few people who may hold a console token.
+
+**Revoking one token** is steps 3 and 4, with a version that leaves it out (and a new
+token in its place if it was your only way in). `az keyvault secret show`, as in
+[Get the tokens](#after-it-deploys), shows what the secret holds now. Then check that its
+fingerprint is gone from `tokens` in the diagnostics report ([Running it](#running-it)).
+If it's still listed, the app hasn't read the new version yet: restart it again, or wait
+up to 30 minutes, and check again.
+
+**Turning it off**, once single sign-on works and gives someone the admin role. First
+remove the setting from the `altiward` container, which starts a new revision without it:
+
+```sh
+az containerapp update --name <appName> --resource-group <group> --container-name altiward \
+  --remove-env-vars ALTIWARD_CONSOLE_TOKENS
+```
+
+The server refuses to start without single sign-on and admin groups, and its log says so.
+Once the new revision is running and you can sign in through single sign-on, remove the
+app's secret and disable every version in the key vault, so that nobody who can only read
+the vault can use the token, and putting the reference back can't revive it (someone who
+can manage its secrets could still enable a version again):
+
+```sh
+az containerapp secret remove --name <appName> --resource-group <group> \
+  --secret-names console-tokens
+for id in $(az keyvault secret list-versions --vault-name <vaultName> \
+    --name console-tokens --query "[?attributes.enabled].id" -o tsv); do
+  az keyvault secret set-attributes --id "$id" --enabled false -o none
+done
+```
+
+Then check that `tokens` in the diagnostics report ([Running it](#running-it)) lists no
+token with the role `console`. If the report fails, or still lists one, the new revision
+isn't running and the old one is still serving with the token: its log says why. The
+token is off only once this check passes.
+
+Running the template again over the install brings a token back: it generates a new one
+and sets the secret and the setting again.
+
+**Turning it back on**, always with a new token in a new version. Never enable an old
+version again: its token may have been read while it was in use.
+
+```sh
+read -rs v    # paste yourcompany=<new token>, then press Enter
+printf %s "$v" | az keyvault secret set --vault-name <vaultName> --name console-tokens \
+  --file /dev/stdin --encoding utf-8 -o none
+unset v
+identity=$(az identity show --name <appName>-identity --resource-group <group> --query id -o tsv)
+az containerapp secret set --name <appName> --resource-group <group> --secrets \
+  "console-tokens=keyvaultref:https://<vaultName>.vault.azure.net/secrets/console-tokens,identityref:$identity"
+az containerapp update --name <appName> --resource-group <group> --container-name altiward \
+  --set-env-vars ALTIWARD_CONSOLE_TOKENS=secretref:console-tokens
+```
+
+The reference names no version, as the template's does, so the app reads the newest.
 
 ## Deleting it
 

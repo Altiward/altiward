@@ -71,9 +71,9 @@ their name, with the agent version `0`. They carry `suser` (who did it: a person
 with single sign-on, otherwise `token:` or `break-glass:` and a console token's
 fingerprint), `act` (the action), `cs5` `target` (the session, serial, enrollment ID,
 `settings`, `exports` for a test event, the sink retried, or the person whose sign-in was
-ended) and, where they apply, `dvchost`, `duser` and `cs2`. Console sign-ins and
-sign-outs are OCSF Authentication records, with the event types `console.sign_in` and
-`console.sign_out`.
+ended) and, where they apply, `dvchost`, `duser` and `cs2`. Console sign-ins (single
+sign-on, and each hour a console token is used) and sign-outs are OCSF Authentication
+records, with the event types `console.sign_in` and `console.sign_out`.
 
 What the server does by itself is recorded the same way, with `suser=altiward:server`
 (OCSF: a System user, "Altiward server"): `console.expire_history` (`API Activity: Delete`,
@@ -113,4 +113,7 @@ so a rule can close that finding.
   `duser` is the account and `msg` says how it was used. For an admin prompt on another
   user's session, `suser` is that user.
 - **Settings changes:** signature `console.change_settings`.
-- **Break-glass token use:** `suser` starting `break-glass:`.
+- **Break-glass token use:** signature starting `console.` and `suser` starting
+  `break-glass:`, on sign-ins (`console.sign_in`, Authentication records) as well as
+  changes. Not `suser` alone: on a key rotation it is the serial the Mac enrolled with,
+  which whoever enrols it chooses.

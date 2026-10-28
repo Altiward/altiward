@@ -73,7 +73,10 @@ revokes (`POST /v1/sessions/{id}/revoke`, `POST /v1/devices/{serial}/revoke`). *
 also approves and revokes enrollments and changes settings. A console token is an admin.
 A person signed in through single sign-on has the highest role their groups map to. A
 request that changes anything with the session cookie must send the session's CSRF
-token in `X-CSRF-Token`; requests with a token don't.
+token in `X-CSRF-Token`; requests with a token don't. A console token's first request in
+each hour, to any console endpoint or `GET /v1/auth/me`, first writes a `sign_in` audit
+entry (`internal/api/token_use.go`); if that fails, the request is refused with 500 and
+its handler doesn't run.
 
 | Method and path | Purpose |
 | --- | --- |
@@ -99,7 +102,7 @@ token in `X-CSRF-Token`; requests with a token don't.
 | `GET /v1/console-sessions` | Admin. Who is signed in to the console through single sign-on: `{"sessions": [{"id", "actor", "name", "role", "created_at", "ends_at", "expires_at", "current"}]}`. `id` is the hex of the session's stored hash, never its cookie. |
 | `DELETE /v1/console-sessions/{id}` | Admin. Ends that sign-in, audited as `end_console_session`. 204, or 404 if it has already ended. |
 | `GET /v1/about` | `{"version", "oldest_supported_agent", "tamper_severities", "update_check"}`: the server's version, the oldest agent minor release it accepts, the severity each known tamper check's failure is exported with, and whether the console may check GitHub for newer releases (`ALTIWARD_UPDATE_CHECK`). On Azure Container Apps it adds `"platform": "azure-container-apps"` and `"app"`, the app's name. The console shows the version, tags older agents, gives failing checks their severity and tells admins when a newer release is out, and how to install it where the server runs. |
-| `GET /v1/audit` | Console actions, newest first: `{"entries": [{"id", "at", "actor", "action", "target", "detail", "seq"}]}`. Actions: `revoke_session`, `revoke_device`, `approve_enrollment`, `revoke_enrollment`, `change_settings` (with `previous` and `settings`), `sign_in` (with `role`, `name` and `subject`), `sign_out`, `test_export`, `retry_exports` and `end_console_session` (its target is the signed-in person's actor). The server writes three more by itself, with the actor `altiward:server`: `expire_history` (one for each organisation per run that removed anything: the cutoff, the period and why, and counts), `remove_device` (a Mac that stopped checking in, removed with its history: its serial, last check-in, counts and the event ID of its open `agent.silent` alert, if any) and `revoke_enrollment` for each key the server revoked with the Mac. `actor` is the person's email with single sign-on; for a token it is `token:` and the first 8 hex digits of its SHA-256, or `break-glass:` and the same digits once single sign-on is on. Single sign-on refuses to sign in a person whose actor (their email, else username, UPN or subject) starts with `altiward:`, `token:` or `break-glass:`. Entries in the same instant list newest first by `seq`, the order recorded. Query: `before` (RFC 3339), `before_seq` (with `before`: the next page starts after the last entry's `at` and `seq`, so none are skipped), `limit` (≤ 500). Each entry is written in the transaction that made the change; the table is append-only, except that entries older than 365 days can be removed by retention. |
+| `GET /v1/audit` | Console actions, newest first: `{"entries": [{"id", "at", "actor", "action", "target", "detail", "seq"}]}`. Actions: `revoke_session`, `revoke_device`, `approve_enrollment`, `revoke_enrollment`, `change_settings` (with `previous` and `settings`), `sign_in` (through single sign-on, with `role`, `name` and `subject`; for a console token's first request in an hour, with `method` `token`, `role` and `route`, the matched route pattern such as `GET /v1/sessions/{id}`, never the path), `sign_out`, `test_export`, `retry_exports` and `end_console_session` (its target is the signed-in person's actor). The server writes three more by itself, with the actor `altiward:server`: `expire_history` (one for each organisation per run that removed anything: the cutoff, the period and why, and counts), `remove_device` (a Mac that stopped checking in, removed with its history: its serial, last check-in, counts and the event ID of its open `agent.silent` alert, if any) and `revoke_enrollment` for each key the server revoked with the Mac. `actor` is the person's email with single sign-on; for a token it is `token:` and the first 8 hex digits of its SHA-256, or `break-glass:` and the same digits once single sign-on is on. Single sign-on refuses to sign in a person whose actor (their email, else username, UPN or subject) has a colon, as the server's and every token's do, or a control or format character. Entries in the same instant list newest first by `seq`, the order recorded. Query: `before` (RFC 3339), `before_seq` (with `before`: the next page starts after the last entry's `at` and `seq`, so none are skipped), `limit` (≤ 500). Each entry is written in the transaction that made the change; the table is append-only, except that entries older than 365 days can be removed by retention. |
 | `GET /v1/auth/config` | No authentication. `{"sso": true}` when single sign-on is set up. |
 | `GET /v1/auth/login` | No authentication. Starts single sign-on: sets a short-lived sign-in cookie and redirects to the identity provider. Query: `next`, a path on this site to return to, and `select_account=1`, which asks the identity provider for its account picker (as does the first sign-in after a sign-out). |
 | `GET /v1/auth/callback` | Where the identity provider sends the browser back. Sets the session cookie (`__Host-altiward_session`, HttpOnly, Secure, SameSite=Lax) and redirects to `next`, or to `/?sso_error=` with `no_role`, `groups`, `expired`, `denied`, `unavailable` or `failed`. |
@@ -126,7 +129,7 @@ out-of-band session).
 | `ALTIWARD_LISTEN_ADDR` | `:8080` | |
 | `ALTIWARD_DATABASE_URL` | None | Postgres URL. Unset means the in-memory store (development only). Migrations run on start. |
 | `ALTIWARD_AGENT_TOKENS` | None | Enrollment tokens, `tenant=token,tenant=token` (tokens ≥ 16 chars). They only enroll. |
-| `ALTIWARD_CONSOLE_TOKENS` | None | Same format |
+| `ALTIWARD_CONSOLE_TOKENS` | None | Same format. Admin tokens for the console and its API; break-glass logins with single sign-on. Optional once single sign-on with `ALTIWARD_OIDC_ADMIN_GROUPS` works: start fails when a tenant has no console token and no single sign-on serving it (`ALTIWARD_OIDC_TENANT`), or no console token and single sign-on without admin groups. `,` alone counts as none. |
 | `ALTIWARD_EXPORT_INTERVAL` | `10s` | How often export workers poll |
 | `ALTIWARD_AUDIT_RETENTION_DAYS` | None | Remove audit entries older than this, daily; at least 365. Unset or `0` keeps them forever. Entries still waiting for export stay until sent, and the database refuses to delete any younger than 365 days. |
 | `ALTIWARD_ENROLL_NEW_MACS_PER_HOUR` | `1000` | How many serials new to a tenant may enrol in an hour. More are refused with 429 until the hour has passed. `0` turns the limit off. |
@@ -136,7 +139,7 @@ out-of-band session).
 | `ALTIWARD_OIDC_ISSUER` | None | The identity provider's issuer URL. Turns on console single sign-on; console tokens become break-glass logins. |
 | `ALTIWARD_OIDC_CLIENT_ID`, `_CLIENT_SECRET` | None | The app registration. The secret may be empty for a public client. |
 | `ALTIWARD_CONSOLE_URL` | None | Required with single sign-on: the console's URL. The redirect URL to register is this plus `/v1/auth/callback`. https, or http on localhost. |
-| `ALTIWARD_OIDC_ADMIN_GROUPS`, `_OPERATOR_GROUPS`, `_VIEWER_GROUPS` | None | Comma-separated group IDs or names, as the groups claim carries them. At least one. |
+| `ALTIWARD_OIDC_ADMIN_GROUPS`, `_OPERATOR_GROUPS`, `_VIEWER_GROUPS` | None | Comma-separated group IDs or names, as the groups claim carries them. At least one; admin groups are required when there is no console token. |
 | `ALTIWARD_OIDC_GROUPS_CLAIM` | `groups` | The claim holding groups; `roles` for Entra app roles |
 | `ALTIWARD_OIDC_SCOPES` | `openid email profile` | Okta needs `groups` added |
 | `ALTIWARD_OIDC_PROVIDER_SIGN_OUT` | `false` | `true` makes signing out of the console also sign the person out of Entra ID, through the provider's `end_session_endpoint`. Register `<ALTIWARD_CONSOLE_URL>/signed-out` as a redirect URI in the app registration. Refused unless the issuer is `login.microsoftonline.com`, until 1.2.0. |
@@ -148,8 +151,9 @@ out-of-band session).
 | `ALTIWARD_SYSLOG_ADDR`, `_TLS`, `_CA_FILE`, `_FORMAT`, `_FRAMING` | TLS, `cef`, `octet` | Enables the syslog sink; see [integrations/syslog](../integrations/syslog/README.md) |
 
 Each sink gets every exportable agent event and every console action from the audit log
-(OCSF API Activity, event type `console.<action>`), including what the server does by itself,
-whose actor maps to a System user, "Altiward server". Both share one outbox queue per sink,
+(event type `console.<action>`: OCSF Authentication for `sign_in` and `sign_out`, API
+Activity for the rest), including what the server does by itself, whose actor maps to a
+System user, "Altiward server". Both share one outbox queue per sink,
 written in the transaction that stores the event or makes the change. An `agent.admin_group`
 event becomes OCSF Group Management (3006) records: one for each person added, removed or in
 the group, and one for the Mac. Health readings and command results are never exported.

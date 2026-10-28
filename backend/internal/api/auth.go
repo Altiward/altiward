@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	"golang.org/x/oauth2"
 
@@ -31,9 +32,10 @@ import (
 )
 
 const (
-	SessionLifetime = 12 * time.Hour   // however busy
-	SessionIdle     = time.Hour        // unused
-	loginLifetime   = 10 * time.Minute // from leaving for the identity provider to coming back
+	SessionLifetime  = 12 * time.Hour   // however busy
+	SessionIdle      = time.Hour        // unused
+	TokenSignInEvery = time.Hour        // how long a console token's sign-in covers its use (token_use.go)
+	loginLifetime    = 10 * time.Minute // from leaving for the identity provider to coming back
 	// sessionTouch is how stale a session's expiry may get before a request extends it, so
 	// a busy console doesn't write on every call.
 	sessionTouch = time.Minute
@@ -87,6 +89,10 @@ func (s *Server) consolePrincipal(w http.ResponseWriter, r *http.Request) (auth.
 		}
 		if p.Role != auth.RoleConsole {
 			writeError(w, http.StatusForbidden, "token not valid for this endpoint")
+			return p, nil, false
+		}
+		if err := s.recordTokenUse(r, p); err != nil {
+			s.serverError(w, "record console token sign-in", err)
 			return p, nil, false
 		}
 		return p, nil, true
@@ -214,8 +220,10 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		signInFailed(w, r, "failed")
 		return
 	}
+	// Some identity providers let people choose their names, and one like the server's or a
+	// console token's would pass for it in Activity and the SIEM.
 	if reservedActor(id.Email) {
-		s.log.Warn("sign-in refused: the account's name is one Altiward keeps for the server and tokens",
+		s.log.Warn("sign-in refused: the name could pass for the Altiward server or a console token",
 			"actor", id.Email, "subject", id.Subject)
 		signInFailed(w, r, "failed")
 		return
@@ -249,18 +257,16 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, st.Next, http.StatusFound)
 }
 
-// reservedActor reports whether a person's actor would read as the server
-// (store.ServerActor) or as a token in the audit log. A person's actor is their email, but
-// can fall back to their preferred username or subject, which the identity provider may
-// let them choose.
+// reservedActor reports whether a person's actor could pass for the server
+// (store.ServerActor) or a console token. A person's actor is their email, but can fall back
+// to their preferred username or subject, which the identity provider may let them choose.
+// It refuses any colon: the server's and every token's actor has one (altiward:, token:,
+// break-glass:, which the SIEM's rules match in any case), and no email or UPN does. It also
+// refuses a control or format character, which can hide in a name (a zero-width space, a
+// byte order mark).
 func reservedActor(actor string) bool {
-	actor = strings.ToLower(strings.TrimSpace(actor))
-	for _, prefix := range []string{"altiward:", "token:", "break-glass:"} {
-		if strings.HasPrefix(actor, prefix) {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(actor, ":") ||
+		strings.ContainsFunc(actor, func(r rune) bool { return unicode.Is(unicode.Cc, r) || unicode.Is(unicode.Cf, r) })
 }
 
 // signInFailed sends the browser back to the console's sign-in page with a reason it can

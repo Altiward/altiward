@@ -234,8 +234,8 @@ Altiward is an independent project, not affiliated with or endorsed by SAP.
 
 The server sends every event, and every console action, to your SIEM in
 [OCSF](https://schema.ocsf.io): admin grants and removals as User Access Management,
-console actions as API Activity. Set it up in `.env`
-([install guide, step 4](docs/install.md#4-connect-your-siem)):
+console sign-ins and sign-outs as Authentication, and other console actions as API
+Activity. Set it up in `.env` ([install guide, step 4](docs/install.md#4-connect-your-siem)):
 
 - **Splunk** through the HTTP Event Collector, with a starter dashboard:
   [integrations/splunk](integrations/splunk/)

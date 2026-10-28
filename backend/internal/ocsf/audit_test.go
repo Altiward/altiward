@@ -97,6 +97,35 @@ func TestSignInIsAnAuthentication(t *testing.T) {
 	}
 }
 
+func TestTokenSignInIsAnAuthentication(t *testing.T) {
+	detail := map[string]any{"method": "token", "role": "admin", "route": "GET /v1/auth/me"}
+	for _, tc := range []struct {
+		actor, kind string
+		severity    float64
+	}{
+		{"break-glass:3f2a9c1b", "break-glass", 2},
+		{"token:3f2a9c1b", "console", 1},
+	} {
+		a := auditEntry(store.AuditSignIn, "console", detail)
+		a.Actor = tc.actor
+		r := auditJSON(t, a)
+		for path, want := range map[string]any{
+			"class_uid": 3002.0, "activity_id": 1.0, "type_uid": 300201.0, "user.name": tc.actor,
+			"auth_protocol_id": 99.0, "auth_protocol": "Bearer token", "status": "Success",
+			"severity_id":                  tc.severity,
+			"unmapped.altiward.event_type": "console.sign_in",
+			"message":                      tc.actor + " signed in to the Altiward console with a " + tc.kind + " token as admin",
+		} {
+			if got := get(r, path); got != want {
+				t.Errorf("%s: %s = %v, want %v", tc.actor, path, got, want)
+			}
+		}
+		if got := get(r, "user.email_addr"); got != nil {
+			t.Errorf("%s: user.email_addr = %v, want none", tc.actor, got)
+		}
+	}
+}
+
 func TestSIEMTestEventSaysWhatItIs(t *testing.T) {
 	r := auditJSON(t, auditEntry(store.AuditTestExport, "exports", nil))
 	for path, want := range map[string]any{

@@ -21,7 +21,7 @@ const (
 	AuditApproveEnrollment = "approve_enrollment"
 	AuditRevokeEnrollment  = "revoke_enrollment"
 	AuditChangeSettings    = "change_settings"
-	AuditSignIn            = "sign_in"       // through single sign-on
+	AuditSignIn            = "sign_in"       // through single sign-on, or a console token's first request in an hour (detail.method "token")
 	AuditSignOut           = "sign_out"      // signing out; a session that just expires records nothing
 	AuditTestExport        = "test_export"   // a test event for the SIEM: the entry is the event
 	AuditRetryExports      = "retry_exports" // retrying a sink's failed exports now
@@ -132,7 +132,16 @@ type Audit interface {
 	// RecordAudit records a console action that changes nothing else, such as a test event
 	// for the SIEM, and queues it for every sink.
 	RecordAudit(ctx context.Context, a AuditEntry) error
+	// RecordTokenSignIn records a, a console token's sign-in, unless the tenant already has
+	// a token sign-in by a.Actor from within before a.At up to a minute after it (clocks
+	// differ between instances). It returns the time of the covering entry, the newest, or
+	// a.At when it recorded a. Calls for one actor run one at a time, so only one of
+	// several at once records.
+	RecordTokenSignIn(ctx context.Context, a AuditEntry, within time.Duration) (time.Time, error)
 }
+
+// tokenSignInSkew is how far ahead of a sign-in an entry can be and still cover it.
+const tokenSignInSkew = time.Minute
 
 func auditLimit(n int) int {
 	if n <= 0 || n > MaxAuditPage {

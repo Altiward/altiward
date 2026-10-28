@@ -518,7 +518,7 @@ function ConsoleSignIns() {
       )}
       <p className="hint">
         After a role change at your identity provider, end the person’s sign-in so the new role applies now.
-        Break-glass tokens don’t sign in, so they aren’t listed.
+        Break-glass tokens have no sign-in to end, so they aren’t listed: Activity shows when one is used.
       </p>
       {result && <p className="hint" role="status">{result}</p>}
     </div>

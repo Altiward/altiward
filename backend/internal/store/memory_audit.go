@@ -38,6 +38,23 @@ func (m *Memory) RecordAudit(_ context.Context, a AuditEntry) error {
 	return nil
 }
 
+func (m *Memory) RecordTokenSignIn(_ context.Context, a AuditEntry, within time.Duration) (time.Time, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var covered time.Time
+	for _, e := range m.audit {
+		if e.TenantID == a.TenantID && e.Action == AuditSignIn && e.Actor == a.Actor && e.Detail["method"] == "token" &&
+			!e.At.Before(a.At.Add(-within)) && !e.At.After(a.At.Add(tokenSignInSkew)) && e.At.After(covered) {
+			covered = e.At
+		}
+	}
+	if !covered.IsZero() {
+		return covered, nil
+	}
+	m.record(a)
+	return a.At, nil
+}
+
 func (m *Memory) ListAudit(_ context.Context, tenantID string, f AuditFilter) ([]AuditEntry, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

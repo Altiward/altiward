@@ -22,17 +22,21 @@ func TestConsoleActionsAreAudited(t *testing.T) {
 
 	rec, out := do(t, h, "GET", "/v1/audit", consoleToken, nil)
 	entries, _ := out["entries"].([]any)
-	if rec.Code != 200 || len(entries) != 2 {
+	// The two actions, and the sign-in the token's first request recorded.
+	if rec.Code != 200 || len(entries) != 3 {
 		t.Fatalf("audit: %d %s", rec.Code, rec.Body)
 	}
 	actor := fmt.Sprintf("token:%x", sha256.Sum256([]byte(consoleToken)))[:len("token:")+8]
-	// The test clock is fixed, so both entries share a time; find each by its action.
+	// The test clock is fixed, so the entries share a time; find each by its action.
 	byAction := map[string]map[string]any{}
 	for _, e := range entries {
 		m := e.(map[string]any)
 		byAction[m["action"].(string)] = m
 	}
-	revoke, settings := byAction["revoke_device"], byAction["change_settings"]
+	revoke, settings, signIn := byAction["revoke_device"], byAction["change_settings"], byAction["sign_in"]
+	if signIn["actor"] != actor {
+		t.Fatalf("sign-in entry = %v", signIn)
+	}
 	detail := revoke["detail"].(map[string]any)
 	if revoke["action"] != "revoke_device" || revoke["target"] != fixtureSerial || revoke["actor"] != actor ||
 		detail["command_id"] != cmd["command_id"] || detail["user"] != "jdoe" {
@@ -47,14 +51,15 @@ func TestConsoleActionsAreAudited(t *testing.T) {
 		t.Fatalf("settings entry = %v", settings)
 	}
 
-	// Another tenant sees none of it, and a refused change records nothing.
-	if _, out := do(t, h, "GET", "/v1/audit", otherConsole, nil); len(out["entries"].([]any)) != 0 {
+	// Another tenant sees only its own token's sign-in, and a refused change records nothing.
+	if _, out := do(t, h, "GET", "/v1/audit", otherConsole, nil); len(out["entries"].([]any)) != 1 ||
+		out["entries"].([]any)[0].(map[string]any)["tenant_id"] != "other" {
 		t.Fatalf("other tenant sees %v", out)
 	}
 	if rec, _ := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"silent_after_hours": 9999}); rec.Code != 400 {
 		t.Fatalf("bad settings: %d", rec.Code)
 	}
-	if _, out := do(t, h, "GET", "/v1/audit?limit=10", consoleToken, nil); len(out["entries"].([]any)) != 2 {
+	if _, out := do(t, h, "GET", "/v1/audit?limit=10", consoleToken, nil); len(out["entries"].([]any)) != 3 {
 		t.Fatalf("refused change was audited: %v", out)
 	}
 }
