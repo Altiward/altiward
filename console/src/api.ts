@@ -65,7 +65,7 @@ export interface Device {
   /** The newest agent.silent the server raised for this Mac; missing or null if none. */
   silence?: Silence | null;
   /** When an admin revoked the Mac's only key and none is waiting for approval; missing while the Mac is in use.
-   *  A new key for the serial un-retires it. */
+   *  Approving a key for the serial restores it, as does a stale-key contest. */
   retired_at?: string;
 }
 

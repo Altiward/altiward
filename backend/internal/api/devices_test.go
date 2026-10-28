@@ -417,6 +417,66 @@ func TestRevokeEnrollmentAuditRecordsWhatItEnds(t *testing.T) {
 	}
 }
 
+func TestRetiredMacEnrollmentWaitsForApproval(t *testing.T) {
+	for _, approval := range []bool{true, false} {
+		t.Run(fmt.Sprintf("approval setting %t", approval), func(t *testing.T) {
+			h, st := newServerWithQueue(t)
+			if rec, _ := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"reenrollment_requires_approval": approval}); rec.Code != http.StatusOK {
+				t.Fatalf("settings: %d %s", rec.Code, rec.Body)
+			}
+			original := enrollAgent(t, h, fixtureSerial)
+			if rec, _ := original.post(t, batch(t, "agent-health")); rec.Code != http.StatusOK {
+				t.Fatalf("ingest: %d %s", rec.Code, rec.Body)
+			}
+			if rec, _ := do(t, h, "POST", "/v1/enrollments/"+original.deviceID+"/revoke", consoleToken, nil); rec.Code != http.StatusOK {
+				t.Fatalf("revoke: %d %s", rec.Code, rec.Body)
+			}
+			retiredAt := func() any {
+				_, out := do(t, h, "GET", "/v1/devices", consoleToken, nil)
+				devices := out["devices"].([]any)
+				if len(devices) != 1 {
+					t.Fatalf("devices = %v", devices)
+				}
+				return devices[0].(map[string]any)["retired_at"]
+			}
+			at := retiredAt()
+			if at == nil {
+				t.Fatal("Mac was not retired")
+			}
+			pending := enrollAgent(t, h, fixtureSerial)
+			if pending.status != "pending" || retiredAt() != at {
+				t.Fatalf("new key status = %s, retired_at = %v, want pending and %v", pending.status, retiredAt(), at)
+			}
+			for range 2 {
+				if rec, out := pending.enroll(t, fixtureSerial); rec.Code != http.StatusOK || out["status"] != "pending" || out["device_id"] != pending.deviceID {
+					t.Fatalf("retry: %d %s", rec.Code, rec.Body)
+				}
+			}
+			if retiredAt() != at {
+				t.Fatal("pending enrolment retries changed retirement")
+			}
+			pendingEvents := 0
+			for _, e := range queuedEnrollments(t, st) {
+				if e.Detail["device_id"] == pending.deviceID && e.Detail["state"] == "pending" {
+					pendingEvents++
+				}
+			}
+			if pendingEvents != 1 {
+				t.Fatalf("pending events = %d, want one across retries", pendingEvents)
+			}
+			if rec, out := pending.post(t, batch(t, "agent-health")); rec.Code != http.StatusForbidden || out["code"] != "enrollment_pending" {
+				t.Fatalf("pending ingest: %d %s", rec.Code, rec.Body)
+			}
+			if rec, _ := do(t, h, "POST", "/v1/enrollments/"+pending.deviceID+"/approve", consoleToken, nil); rec.Code != http.StatusOK {
+				t.Fatalf("approve: %d %s", rec.Code, rec.Body)
+			}
+			if retiredAt() != nil {
+				t.Fatal("approval did not restore Mac")
+			}
+		})
+	}
+}
+
 func TestRevokeEnrollmentAuditOmitsWhatIsNotThere(t *testing.T) {
 	h := newServer(t)
 	a := enrollAgent(t, h, fixtureSerial)

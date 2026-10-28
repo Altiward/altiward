@@ -182,8 +182,9 @@ function GeneralSettings() {
               <span>Approve Macs that enrol again</span>
               <p className="hint">
                 On by default and recommended. A new key for a Mac that enrolled before waits for approval
-                in Enrollments; its current key keeps reporting. Turning this off lets anyone with the
-                enrolment token replace an enrolled Mac's identity by naming its serial and hardware UUID.
+                in Enrollments; its active key keeps reporting. Retired Macs always need approval for a
+                new key. Turning this off lets anyone with the enrolment token replace an enrolled Mac's
+                identity by naming its serial and hardware UUID.
                 First enrolments still use the shared token: check them against your device inventory, or
                 approve every new Mac.
               </p>

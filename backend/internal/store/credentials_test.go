@@ -822,31 +822,106 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 			wantNotRetired(t, s, tenant, serial)
 		})
 
-		t.Run("re-keying brings a Mac back", func(t *testing.T) {
-			s, tenant, serial := retiredMac(t)
-			key := enroll(t, s, tenant, serial, newKey(t), t0).Credential
-			revokeAudited(t, s, tenant, key.DeviceID, t0.Add(time.Minute))
-			wantRetired(t, s, tenant, serial, t0.Add(time.Minute))
-			// Approval is on by default, so the new key waits; the Mac is back in Fleet at once.
-			pending := enroll(t, s, tenant, serial, newKey(t), t0.Add(time.Hour)).Credential
-			if pending.Status != CredentialPending {
-				t.Fatalf("new key = %+v, want pending", pending)
-			}
-			wantNotRetired(t, s, tenant, serial)
-		})
+		for _, approval := range []bool{true, false} {
+			t.Run(fmt.Sprintf("retired Mac requires approval with setting %t", approval), func(t *testing.T) {
+				s, tenant, serial := retiredMac(t)
+				if err := s.PutTenantSettings(ctx, tenant, TenantSettings{ReenrollmentRequiresApproval: approval}, auditFor(t, tenant, AuditChangeSettings)); err != nil {
+					t.Fatal(err)
+				}
+				originalKey := newKey(t)
+				original := enroll(t, s, tenant, serial, originalKey, t0).Credential
+				at := t0.Add(time.Minute)
+				revokeAudited(t, s, tenant, original.DeviceID, at)
+				wantRetired(t, s, tenant, serial, at)
+				pendingKey := newKey(t)
+				pending := enroll(t, s, tenant, serial, pendingKey, t0.Add(time.Hour)).Credential
+				if pending.Status != CredentialPending || pending.ActivatedAt != nil {
+					t.Fatalf("new key = %+v, want pending without activation", pending)
+				}
+				wantRetired(t, s, tenant, serial, at)
+				// A settings change and exhausted limits cannot change a same-key retry.
+				if err := s.PutTenantSettings(ctx, tenant, TenantSettings{}, auditFor(t, tenant, AuditChangeSettings)); err != nil {
+					t.Fatal(err)
+				}
+				for _, retry := range []struct {
+					key    []byte
+					id     string
+					status CredentialStatus
+				}{{pendingKey, pending.DeviceID, CredentialPending}, {originalKey, original.DeviceID, CredentialRevoked}} {
+					got, err := enrollLimited(s, tenant, serial, "HW-"+serial, retry.key, t0.Add(2*time.Hour), EnrollLimits{KeysPerMacPerDay: 1})
+					if err != nil || got.Credential.DeviceID != retry.id || got.Credential.Status != retry.status {
+						t.Fatalf("retry = %+v, %v", got, err)
+					}
+					wantRetired(t, s, tenant, serial, at)
+				}
+				// A refused new key must leave the retirement and credentials untouched.
+				if _, err := enrollLimited(s, tenant, serial, "HW-"+serial, newKey(t), t0.Add(2*time.Hour), EnrollLimits{KeysPerMacPerDay: 2}); !errors.Is(err, ErrKeysPerMacLimited) {
+					t.Fatalf("limited enrolment = %v", err)
+				}
+				if keys, err := s.ListCredentials(ctx, tenant, CredentialFilter{Serial: serial}); err != nil || len(keys) != 2 {
+					t.Fatalf("keys = %+v, %v, want two", keys, err)
+				}
+				wantRetired(t, s, tenant, serial, at)
+				for range 2 {
+					revokeAudited(t, s, tenant, pending.DeviceID, t0.Add(3*time.Hour))
+					wantRetired(t, s, tenant, serial, at)
+				}
+				if _, err := s.ApproveCredential(ctx, tenant, pending.DeviceID, t0.Add(4*time.Hour), auditFor(t, tenant, AuditApproveEnrollment)); !errors.Is(err, ErrInvalidState) {
+					t.Fatalf("approve rejected key = %v", err)
+				}
+				if got := enroll(t, s, tenant, serial, pendingKey, t0.Add(4*time.Hour)).Credential; got.DeviceID != pending.DeviceID || got.Status != CredentialRevoked {
+					t.Fatalf("rejected key retry = %+v", got)
+				}
+				wantRetired(t, s, tenant, serial, at)
+				fresh := enroll(t, s, tenant, serial, newKey(t), t0.Add(4*time.Hour)).Credential
+				if fresh.Status != CredentialPending {
+					t.Fatalf("fresh key = %+v, want pending", fresh)
+				}
+				wantRetired(t, s, tenant, serial, at)
+				approvedAt := t0.Add(5 * time.Hour)
+				approved, err := s.ApproveCredential(ctx, tenant, fresh.DeviceID, approvedAt, auditFor(t, tenant, AuditApproveEnrollment))
+				if err != nil || approved.Status != CredentialActive || approved.ActivatedAt == nil || !approved.ActivatedAt.Equal(approvedAt) {
+					t.Fatalf("approval = %+v, %v", approved, err)
+				}
+				wantNotRetired(t, s, tenant, serial)
+			})
+		}
 
-		t.Run("a new active key brings a Mac back", func(t *testing.T) {
+		t.Run("retirement is isolated by tenant for the same serial", func(t *testing.T) {
 			s, tenant, serial := retiredMac(t)
-			if err := s.PutTenantSettings(ctx, tenant, TenantSettings{ReenrollmentRequiresApproval: false}, auditFor(t, tenant, AuditChangeSettings)); err != nil {
+			original := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+			at := t0.Add(time.Minute)
+			revokeAudited(t, s, tenant, original.DeviceID, at)
+			other := "tenant-" + randomHex(t)
+			if err := s.PutTenantSettings(ctx, other, TenantSettings{}, auditFor(t, other, AuditChangeSettings)); err != nil {
 				t.Fatal(err)
 			}
-			key := enroll(t, s, tenant, serial, newKey(t), t0).Credential
-			revokeAudited(t, s, tenant, key.DeviceID, t0.Add(time.Minute))
-			wantRetired(t, s, tenant, serial, t0.Add(time.Minute))
-			if again := enroll(t, s, tenant, serial, newKey(t), t0.Add(time.Hour)).Credential; again.Status != CredentialActive {
-				t.Fatalf("new key = %+v, want active", again)
+			for range 2 {
+				if got := enroll(t, s, other, serial, newKey(t), t0.Add(time.Hour)).Credential; got.Status != CredentialActive {
+					t.Fatalf("other tenant key = %+v, want active", got)
+				}
+				wantRetired(t, s, tenant, serial, at)
 			}
-			wantNotRetired(t, s, tenant, serial)
+		})
+
+		t.Run("failed approval audit preserves retirement and pending key", func(t *testing.T) {
+			s, tenant, serial := retiredMac(t)
+			if _, ok := s.(*Postgres); !ok {
+				t.Skip("memory audit recording cannot fail")
+			}
+			original := enroll(t, s, tenant, serial, newKey(t), t0).Credential
+			at := t0.Add(time.Minute)
+			revokeAudited(t, s, tenant, original.DeviceID, at)
+			pending := enroll(t, s, tenant, serial, newKey(t), t0.Add(time.Hour)).Credential
+			a := auditFor(t, tenant, AuditApproveEnrollment)
+			a.Detail = map[string]any{"invalid": make(chan bool)}
+			if _, err := s.ApproveCredential(ctx, tenant, pending.DeviceID, t0.Add(2*time.Hour), a); err == nil {
+				t.Fatal("approval with invalid audit succeeded")
+			}
+			wantRetired(t, s, tenant, serial, at)
+			if got := lookup(t, s, pending.DeviceID); got.Status != CredentialPending || got.ActivatedAt != nil {
+				t.Fatalf("key after failed approval = %+v", got)
+			}
 		})
 
 		t.Run("revoking the active key with a key pending doesn't retire", func(t *testing.T) {
@@ -869,7 +944,7 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 			revokeAudited(t, s, tenant, key.DeviceID, t0.Add(time.Minute))
 			wantRetired(t, s, tenant, serial, t0.Add(time.Minute))
 			pending := enroll(t, s, tenant, serial, newKey(t), t0.Add(time.Hour)).Credential
-			wantNotRetired(t, s, tenant, serial)
+			wantRetired(t, s, tenant, serial, t0.Add(time.Minute))
 			if _, err := s.ApproveCredential(ctx, tenant, pending.DeviceID, t0.Add(2*time.Hour), auditFor(t, tenant, AuditApproveEnrollment)); err != nil {
 				t.Fatal(err)
 			}
