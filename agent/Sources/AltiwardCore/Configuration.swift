@@ -187,6 +187,9 @@ public struct AgentConfiguration: Sendable, Equatable {
     public var permanentAdmins: Set<String>
     /// Short name → corporate UPN. Typically filled from an MDM variable.
     public var userPrincipalNames: [String: String]
+    /// Whether MDM forces `UserPrincipalNames`. Only a forced map wins over Platform SSO: a
+    /// local admin can write one to /Library/Preferences.
+    public var userPrincipalNamesForced: Bool
     /// Designated-requirement string the hook helper must satisfy to talk to the daemon.
     public var hookCodeRequirement: String?
     public var expiryEnforcement: ExpiryEnforcement
@@ -211,6 +214,7 @@ public struct AgentConfiguration: Sendable, Equatable {
         flushInterval: TimeInterval = 60,
         permanentAdmins: Set<String> = [],
         userPrincipalNames: [String: String] = [:],
+        userPrincipalNamesForced: Bool = true,
         hookCodeRequirement: String? = nil,
         expiryEnforcement: ExpiryEnforcement = .alert,
         expiryGracePeriod: TimeInterval = 300,
@@ -226,6 +230,7 @@ public struct AgentConfiguration: Sendable, Equatable {
         self.flushInterval = flushInterval
         self.permanentAdmins = permanentAdmins
         self.userPrincipalNames = userPrincipalNames
+        self.userPrincipalNamesForced = userPrincipalNamesForced
         self.hookCodeRequirement = hookCodeRequirement
         self.expiryEnforcement = expiryEnforcement
         self.expiryGracePeriod = expiryGracePeriod
@@ -245,7 +250,11 @@ public struct AgentConfiguration: Sendable, Equatable {
             ("HeartbeatInterval", heartbeatInterval != other.heartbeatInterval),
             ("FlushInterval", flushInterval != other.flushInterval),
             ("PermanentAdmins", permanentAdmins != other.permanentAdmins),
-            ("UserPrincipalNames", userPrincipalNames != other.userPrincipalNames),
+            (
+                "UserPrincipalNames",
+                userPrincipalNames != other.userPrincipalNames
+                    || userPrincipalNamesForced != other.userPrincipalNamesForced
+            ),
             ("HookCodeRequirement", hookCodeRequirement != other.hookCodeRequirement),
             ("ExpiryEnforcement", expiryEnforcement != other.expiryEnforcement),
             ("ExpiryGraceMinutes", expiryGracePeriod != other.expiryGracePeriod),
@@ -278,6 +287,7 @@ public struct AgentConfiguration: Sendable, Equatable {
         }
         c.permanentAdmins = Set(p.strings("PermanentAdmins") ?? [])
         c.userPrincipalNames = p.stringMap("UserPrincipalNames") ?? [:]
+        c.userPrincipalNamesForced = p.isForced("UserPrincipalNames")
         c.hookCodeRequirement = p.string("HookCodeRequirement")
         // An unrecognised value keeps the default rather than silently turning expiry enforcement off.
         if let mode = p.string("ExpiryEnforcement").flatMap(ExpiryEnforcement.init(rawValue:)) {
@@ -301,8 +311,11 @@ public struct AgentConfiguration: Sendable, Equatable {
         return c
     }
 
-    public func upn(for user: String) -> String? {
-        userPrincipalNames[user]
+    /// A person's UPN: from a `UserPrincipalNames` MDM forces, then the account Platform SSO
+    /// links to their Mac account (`platformSSO`), then a map set outside MDM.
+    public func upn(for user: String, platformSSO: (String) -> String? = { _ in nil }) -> String? {
+        if userPrincipalNamesForced, let upn = userPrincipalNames[user] { return upn }
+        return platformSSO(user) ?? userPrincipalNames[user]
     }
 }
 

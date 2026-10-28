@@ -27,6 +27,8 @@
                        SSH file copies aren't recorded until Apple grants the Endpoint
                        Security entitlement. Evidence only; nothing alerts.
   UserPrincipalNames   Local short name → corporate UPN. Use your MDM's user variables.
+                       Optional on Platform SSO Macs: without an entry, the agent takes the
+                       account Platform SSO links to the Mac account. An entry wins.
   HookCodeRequirement  Code-signing requirement the hook must meet to reach the daemon.
                        Replace TEAMID with the Developer ID team that signs the agent.
   ExpiryEnforcement    What to do when rights from a SAP Privileges grant outlive the expiry

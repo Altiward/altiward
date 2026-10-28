@@ -186,6 +186,16 @@ Create these in your MDM and scope them to a pilot group first.
      > manages if it isn't in `PermanentAdmins`. Read [Enforcement](#enforcement) before
      > turning it on.
 
+   - `UserPrincipalNames` (optional): each local account's UPN, which events carry so your
+     SIEM can tie an elevation to the person. On a Mac registered for Platform SSO, the
+     agent takes the UPN from the Entra ID account Platform SSO links to each Mac account,
+     so you can leave this out. It reads the link from the Mac's local directory: the
+     account Platform SSO signed in with, normally the person's UPN. An entry here wins over
+     the link, but only from MDM: a map set with `defaults write` is reported as tampering
+     and the link wins over it. Map an account here if you need certainty about its UPN:
+     an admin can change a Platform SSO link, and Altiward reports that only when it
+     happens while someone holds admin rights it records (see below).
+
    The example explains every other key. `HeartbeatInterval` is 5 minutes by default and at
    most 3600 seconds (a larger value counts as an hour), so a running agent checks in at
    least hourly. Two keys let the agent act, not only report: `ExpiryEnforcement`, for
@@ -195,8 +205,17 @@ Create these in your MDM and scope them to a pilot group first.
 
    Deliver the profile through MDM rather than `defaults write`: Altiward reports
    `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`,
-   `OutOfBandEnforcement`, `OutOfBandGraceMinutes` or `HookCodeRequirement` set outside MDM
-   as tampering (it doesn't check the other keys).
+   `OutOfBandEnforcement`, `OutOfBandGraceMinutes`, `UserPrincipalNames` or
+   `HookCodeRequirement` set outside MDM as tampering (it doesn't check the other keys).
+
+   **Where a UPN comes from.** An elevation keeps the UPN its user had when the grant
+   arrived, so changing a Platform SSO link during the elevation can't move it onto someone
+   else. A link added, changed or removed while someone holds admin rights is reported on
+   their session as a changed account (**Changed account jdoe** in the console,
+   `persistence.detected` in your SIEM), with the account's new link in `platform_sso`. A
+   person's UPN changing in Entra ID is the usual innocent cause: their Entra ID audit log
+   shows it. A change while nobody is elevated, which only a permanent admin or your MDM
+   can make, isn't reported.
 2. **Login items profile** (`altiward-login-items.mobileconfig`), so people can't turn
    the agent off and don't see a background-item notice.
 3. **SAP Privileges:** download `corp.sap.privileges.plist` from the **same agent release
@@ -1527,7 +1546,7 @@ Logs aren't included. If a maintainer asks for them:
 | `upgrade.sh` says a file doesn't match `SHA256SUMS` | The download is incomplete or was changed: download the release again |
 | A Mac shows **Not checking in** while it's on and online | Something between the Mac and the server answers or drops its key rotation request, so it holds its reports. `altiward-agent status` shows `key rotation:` and the last answer ([Key rotation](#key-rotation)) |
 | A Mac shows **Not checking in** | It has been off, offline or unable to reach the agent hostname for longer than the limit. Its events wait on the Mac and arrive when it reconnects. If laptops show this when they're away from the office, the agent hostname isn't reachable from the internet ([Two hostnames](#what-youre-installing)). |
-| **Needs attention** on a Mac | An integrity check failed, for example the agent's files changed, or `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`, `OutOfBandEnforcement`, `OutOfBandGraceMinutes` or `HookCodeRequirement` was set outside MDM. The Mac's details say which. |
+| **Needs attention** on a Mac | An integrity check failed, for example the agent's files changed, or `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`, `OutOfBandEnforcement`, `OutOfBandGraceMinutes`, `UserPrincipalNames` or `HookCodeRequirement` was set outside MDM. The Mac's details say which. |
 
 For anything else, run the [diagnostics report](#diagnostics-for-a-bug-report) and check its
 `problems` list.

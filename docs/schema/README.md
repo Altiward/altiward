@@ -16,6 +16,8 @@ The API checks the serial against the authenticated device credential. The first
 binds the session even if a revoke arrives before its grant. An accountless activity event
 binds the Mac first; a later event can fill its previously unknown account, which then
 stays fixed. UPN is mapping data and can change while the local account stays the same.
+Agents from 1.2 send the same UPN on every event of a session: the one the user had when
+the session began.
 
 An event that conflicts with an existing owner causes HTTP `409` for the whole batch.
 No events, derived device/session state or SIEM obligations from that batch are stored,
@@ -200,7 +202,7 @@ while the daemon wasn't running still gets its changes, with a wide `since`.
 | `launch_agent` | As above, and `user` for one in a home folder | A plist in /Library/LaunchAgents or a user's ~/Library/LaunchAgents |
 | `sudoers` | `path`, `added_lines` | /etc/sudoers or a file in /etc/sudoers.d. Only rule lines new since the last snapshot, up to 16; a file that only lost lines isn't reported |
 | `ssh_authorized_key` | `path`, `user`, `key_type`, `fingerprint` | A key in root's or a user's ~/.ssh/authorized_keys (or authorized_keys2). The OpenSSH SHA-256 fingerprint, never the key or its comment |
-| `local_account` | `name`, `uid`, `admin` | A new account in the directory, system accounts included. `admin` is whether it was in the `admin` group when found; may be absent |
+| `local_account` | `name`, `uid`, `admin`, `platform_sso` | A new account in the directory, system accounts included, or (`modified`) one whose uid or Platform SSO link changed: added, changed to another account, or removed. `admin` is whether it was in the `admin` group when found; may be absent. `platform_sso` is the account Platform SSO links it to now; absent when there is none |
 | `remote_access` | `service` | `remote_login` or `screen_sharing` switched on |
 
 ## Versioning

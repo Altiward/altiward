@@ -72,6 +72,9 @@ struct SystemIntegrityTests {
             #expect(integrity(local: [key]).run()[.settingsManaged] == .failed("set outside MDM: \(key)"))
             #expect(integrity(forced: [key]).run()[.settingsManaged] == .ok)
         }
+        // A map set outside MDM would decide whose name a session carries.
+        #expect(
+            integrity(local: ["UserPrincipalNames"]).run()[.settingsManaged] == .failed("set outside MDM: UserPrincipalNames"))
         // Keys that aren't policy don't count.
         #expect(integrity(local: ["FlushInterval"]).run()[.settingsManaged] == .ok)
     }

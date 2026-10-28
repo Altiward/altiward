@@ -206,6 +206,6 @@ extension ElevationTracker {
     {
         AltiwardEvent(
             type: .adminPermanentUse, sessionID: nil, timestamp: now, device: device,
-            user: UserInfo(localName: user, upn: env.config.upn(for: user)), elevation: nil, detail: detail)
+            user: UserInfo(localName: user, upn: upn(for: user)), elevation: nil, detail: detail)
     }
 }
