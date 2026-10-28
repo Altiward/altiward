@@ -25,6 +25,9 @@ export const UpdateGlyph = () => <svg {...base}><path d="M7 12V3M3 6l4-4 4 4" />
 /** Needs attention soon, such as a release that fixes a security problem. */
 export const AttentionGlyph = () => <svg {...base}><path d="M7 2v6M7 11v1" /></svg>;
 
+/** A section that folds away: points right while closed, down while open (styles.css). */
+export const DisclosureGlyph = () => <svg {...base}><path d="M5 3l4 4-4 4" /></svg>;
+
 export const OverviewIcon = () => <svg {...base}><path d="M2 2h4v4H2zM8 2h4v4H8zM2 8h4v4H2zM8 8h4v4H8z" /></svg>;
 export const SessionsIcon = () => <svg {...base}><path d="M2 3h10M2 7h10M2 11h6" /></svg>;
 export const FleetIcon = () => <svg {...base}><path d="M2 3h10v6H2zM0 12h14" /></svg>;

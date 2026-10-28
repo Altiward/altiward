@@ -288,6 +288,15 @@ tr[aria-selected="true"] .gauge .ceiling { background: var(--ink); }
 .role-note { color: var(--muted); font-size: 12px; line-height: 18px; margin: var(--space-3) 0 var(--space-1); }
 .group { margin-top: var(--space-6); }
 .group h3 { font-size: 13px; line-height: 18px; font-weight: 600; color: var(--muted); margin: 0 0 var(--space-2); }
+/* A group that folds away (Section): title and chevron on the left, a summary on the right
+   while closed. */
+.section > summary { display: flex; align-items: center; gap: var(--space-2); list-style: none; cursor: pointer; border-radius: var(--radius-sm); }
+.section > summary::-webkit-details-marker { display: none; }
+.section > summary svg { flex: none; color: var(--muted); transition: transform 120ms ease-out; }
+.section[open] > summary svg { transform: rotate(90deg); }
+.section > summary h3 { flex: 1; margin: 0; }
+.section[open] > summary { margin-bottom: var(--space-2); }
+.section-summary { color: var(--muted); font-size: 13px; line-height: 18px; text-align: right; min-width: 0; overflow-wrap: anywhere; }
 .box { background: var(--surface-100); border: 1px solid var(--hairline); border-radius: var(--radius-md); padding: 0 var(--space-3); }
 /* The label takes its full width when there is room and wraps between words when there
    isn't; the value keeps room for a short word, such as "Passing", whole. */
@@ -300,6 +309,7 @@ tr[aria-selected="true"] .gauge .ceiling { background: var(--ink); }
 .box .entries li { display: grid; grid-template-columns: 1fr auto; column-gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--hairline); }
 .box .entries li:last-child { border-bottom: none; }
 .box .entries .detail { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.box > .more { border-top: 1px solid var(--hairline); padding: var(--space-2) 0; }
 .timeline { list-style: none; margin: 0; padding: 0; font-size: 13px; line-height: 18px; }
 .timeline li { display: grid; grid-template-columns: 14px 1fr; gap: var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--hairline); }
 .timeline li:last-child { border-bottom: none; }
