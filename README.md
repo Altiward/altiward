@@ -49,20 +49,26 @@ and the console shows it:
   recorded until Apple grants the Endpoint Security entitlement, as macOS keeps no log
   line for them ([what is recorded](docs/data-handling.md)).
 - **Tamper and health.** Alerts when the agent's LaunchDaemon or signature is changed, its
-  server, permanent admins, expiry enforcement, out-of-band enforcement or hook requirement
-  settings are set outside MDM, or it is downgraded; when Privileges' own protection is off
-  or Altiward's hook isn't set in Privileges, someone stops Privileges' timer while holding
-  rights it granted, or Privileges blocks an attempt to remove or unload it; and when a Mac
-  stops checking in.
+  server, permanent admins, expiry enforcement, out-of-band enforcement, UPN, Platform SSO
+  or hook requirement settings are set outside MDM, or it is downgraded; when a Mac
+  account's Platform SSO link is added, removed or changed; when Privileges' own protection
+  is off or Altiward's hook isn't set in Privileges, someone stops Privileges' timer while
+  holding rights it granted, or Privileges blocks an attempt to remove or unload it; and
+  when a Mac stops checking in (within hours, with Intune connected, if Intune still hears
+  from it).
 - **What changed while someone was admin:** launch items, sudoers, SSH keys, local
   accounts and remote access.
 - **Your SIEM gets every event** as OCSF, along with every console action. Events wait
   in Postgres until the SIEM accepts them, so an outage delays them without losing any.
 - **Single sign-on** with OpenID Connect and three roles (viewer, operator, admin), and an
   audit trail of every console change.
+- **Intune, if you use it,** read-only through Microsoft Graph: each Mac that enrols a new
+  key is checked against Intune's record of it, and the console shows each Mac's primary
+  user and the Macs Intune manages that never reported to Altiward.
 
 You run the server. The agent talks only to your server, and the server talks only to
-your database, your SIEM and your identity provider: no telemetry, no registration, and
+your database, your SIEM, your identity provider and, if you connect it, Microsoft Intune
+through Microsoft Graph: no telemetry, no registration, and
 no update checks from the server. The console tells admins when a newer release is out:
 their browser asks GitHub's API for the release list, sending nothing about your fleet,
 and `ALTIWARD_UPDATE_CHECK=false` turns it off. [Data handling](docs/data-handling.md)
@@ -72,18 +78,20 @@ lists what is collected, stored and sent, for your security review.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/architecture-dark.svg">
-  <img src="docs/images/architecture-light.svg" width="1000" alt="On each Mac, SAP Privileges grants admin rights and runs Altiward's hook on each change. The hook runs as the logged-in user, so it is untrusted; it passes its claim over XPC to the Altiward agent, which runs as root, checks each claim, reads and removes members of the real admin group, and queues events until they are sent. The agent sends signed events over HTTPS on port 443 to Altiward on your server and picks up revoke commands from it. Altiward, the API and web console, checks each Mac's signature, works out sessions from events, stores them in Postgres and sends events to your SIEM (Splunk, Microsoft Sentinel or syslog) as OCSF or CEF over HTTPS or TLS. IT staff open the console in a browser and sign in through Entra ID or Okta.">
+  <img src="docs/images/architecture-light.svg" width="1000" alt="On each Mac, SAP Privileges grants admin rights and runs Altiward's hook on each change. The hook runs as the logged-in user, so it is untrusted; it passes its claim over XPC to the Altiward agent, which runs as root, checks each claim, reads and removes members of the real admin group, and queues events until they are sent. The agent sends signed events over HTTPS on port 443 to Altiward on your server and picks up revoke commands from it. Altiward, the API and web console, checks each Mac's signature, works out sessions from events, stores them in Postgres and sends events to your SIEM (Splunk, Microsoft Sentinel or syslog) as OCSF or CEF over HTTPS or TLS. IT staff open the console in a browser and sign in through Entra ID or Okta. If you connect Microsoft Intune, Altiward also reads the Macs it manages, read-only, through Microsoft Graph.">
 </picture>
 
 Privileges runs the hook as the logged-in user, who can call it with anything, so it is
 untrusted: the agent, running as root, verifies everything it says against the `admin`
-group and takes its own timestamps. Each Mac enrolls with its own key and signs what it
+group and takes its own timestamps. Each Mac enrols with its own key and signs what it
 sends, so nothing can send as an enrolled Mac without its key. A new key for a Mac that is
 already enrolled waits for your approval by default, while its current key keeps reporting.
 Turning **Approve Macs that enrol again** off lets anyone with the enrolment token replace
 an enrolled Mac's identity by naming its serial and hardware UUID, neither of which is a
 secret. The shared token cannot establish that a serial enrolling for the first time
-belongs to the caller: check new enrolments against your device inventory. The agent
+belongs to the caller: check new enrolments against your device inventory. With Intune
+connected, each new key shows what Intune says about the Mac, which helps but isn't proof
+([Settings worth reviewing](docs/install.md#6-settings-worth-reviewing)). The agent
 replaces its own key from time to time, so a key copied from a Mac's backup goes stale: if
 both the Mac and the copy use one, the server revokes the key and raises an alert, and the
 Mac enrols again ([a rotated key was used](docs/install.md#a-rotated-key-was-used)).
@@ -113,8 +121,10 @@ See [settings](docs/install.md#6-settings-worth-reviewing) and the agent's
   identity ([the agent's design notes](agent/README.md#design-notes)).
 - Each person's UPN comes from the `UserPrincipalNames` preference or from Platform SSO on
   the Mac (tested with Entra ID; Okta waits for a test org).
-- No settings editor in the console, and no Jamf Pro, Intune, Entra ID or Okta
-  integrations beyond single sign-on. Settings come from the `com.altiward.agent` profile.
+- No editor for the agent's settings in the console: they come from the
+  `com.altiward.agent` profile. Altiward only reads Intune, never changes it, and has no
+  Jamf Pro, Entra ID or Okta integration beyond single sign-on and the UPNs Platform SSO
+  gives the Mac.
 - Altiward doesn't have Apple's Endpoint Security entitlement, so it shows what changed
   during an elevation rather than every process that ran; your EDR covers that. The
   process behind admin rights nobody granted comes from Privileges' own system extension,
@@ -149,8 +159,8 @@ See [settings](docs/install.md#6-settings-worth-reviewing) and the agent's
   both). Macs report over port 443 from wherever they are, and Caddy also needs port 80
   to get certificates unless you bring your own.
 - **The agent and server from the same release.**
-- **Optional:** single sign-on through OpenID Connect (Entra ID or Okta), and a SIEM
-  (Splunk, Microsoft Sentinel or syslog).
+- **Optional:** single sign-on through OpenID Connect (Entra ID or Okta), a SIEM
+  (Splunk, Microsoft Sentinel or syslog), and read access to Microsoft Intune.
 
 [Before you start](docs/install.md#before-you-start) in the install guide has the details.
 
@@ -214,7 +224,7 @@ to a pilot group first:
 4. The signed and notarized package, `Altiward-1.1.0.pkg`. It installs silently and the
    agent starts at once.
 
-Each Mac enrolls on first contact and shows up in the console's Fleet view.
+Each Mac enrols on first contact and shows up in the console's Fleet view.
 
 ## Works with SAP Privileges
 
@@ -285,7 +295,10 @@ altiward/
 ├── dev/                    Local Postgres Compose file and demo seed
 ├── deploy/
 │   ├── compose/            Production server, Postgres, TLS and upgrades
+│   ├── azure/              Deploy to Azure template for Azure Container Apps
+│   ├── caddy/              The patched Caddy proxy build
 │   ├── mdm/                Mac configuration-profile templates
+│   ├── intune/             Intune read access and the profile upload script
 │   └── sentinel/           Azure resource provisioning and its tests
 ├── scripts/                Release, notices and brand-generation tools
 └── docs/                   Architecture, operations and shared contracts

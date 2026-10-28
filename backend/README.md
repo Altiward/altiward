@@ -18,6 +18,9 @@ refuses them.
 | `internal/admingroup` | Decides the `agent.admin_group` events (`changed` and `snapshot`) from a health reading and the group last sent for the Mac |
 | `internal/monitor` | Raises `agent.silent` for a Mac that stops checking in (early, with Intune connected, when Intune still hears from it), and the daily `agent.admin_group` snapshots, the first an hour after the server starts, after the one-off backfill of the admin group from readings stored before the upgrade. A retired Mac gets no new silence alert and no snapshot |
 | `internal/retention` | Removes audit entries past `ALTIWARD_AUDIT_RETENTION_DAYS`, daily. `History` removes events, ended sessions, commands and quiet Macs past each organisation's `history_days`, daily, and never what a SIEM still waits for ([data handling](../docs/data-handling.md#how-long-history-is-kept)) |
+| `internal/report` | Works out the console's Overview from session and device state, never raw events |
+| `internal/mdm` | The read-only MDM connection: syncs a copy of the Macs Intune manages every 15 minutes, and checks an enrolling Mac's `MDMDeviceID` against Intune (`mdm_check`) |
+| `internal/intune` | The Microsoft Graph client `internal/mdm` uses; it only reads managed devices |
 | `internal/diagnose` | The `altiward-api diagnose` support report |
 | `internal/release` | `OldestSupportedAgent` and the agent version check |
 | `internal/sso` | Console single sign-on: OIDC with PKCE through go-oidc, groups to roles. `sso/ssotest` is a fake identity provider for tests |
@@ -47,10 +50,12 @@ they do not replace those checks.
 `internal/api/api.go` constructs the server and registers routes. Handlers are grouped by
 responsibility: `auth.go` for console sign-in, `ingest.go` for incoming agent events,
 `sessions.go` for elevation sessions, `devices.go` for fleet and enrollment, and
-`settings.go` for tenant policy. Commands, audit, exports and overview have their own
-files. Console-session administration is in `console_sessions.go` and static console
-serving in `console.go`. All belong to the same package; moving between files does not
-change an endpoint or its authorisation.
+`settings.go` for tenant policy. Commands, audit, exports, overview, the Intune
+connection (`mdm.go`), the history period (`retention.go`), key rotation (`rotate.go`) and
+console token sign-ins (`token_use.go`) have their own files. Console-session
+administration is in `console_sessions.go` and static console serving in `console.go`.
+All belong to the same package; moving between files does not change an endpoint or its
+authorisation.
 
 ## API
 
@@ -142,13 +147,14 @@ out-of-band session).
 | `ALTIWARD_OIDC_ADMIN_GROUPS`, `_OPERATOR_GROUPS`, `_VIEWER_GROUPS` | None | Comma-separated group IDs or names, as the groups claim carries them. At least one; admin groups are required when there is no console token. |
 | `ALTIWARD_OIDC_GROUPS_CLAIM` | `groups` | The claim holding groups; `roles` for Entra app roles |
 | `ALTIWARD_OIDC_SCOPES` | `openid email profile` | Okta needs `groups` added |
-| `ALTIWARD_OIDC_PROVIDER_SIGN_OUT` | `false` | `true` makes signing out of the console also sign the person out of Entra ID, through the provider's `end_session_endpoint`. Register `<ALTIWARD_CONSOLE_URL>/signed-out` as a redirect URI in the app registration. Refused unless the issuer is `login.microsoftonline.com`, until 1.2.0. |
+| `ALTIWARD_OIDC_PROVIDER_SIGN_OUT` | `false` | `true` makes signing out of the console also sign the person out of Entra ID, through the provider's `end_session_endpoint`. Register `<ALTIWARD_CONSOLE_URL>/signed-out` as a redirect URI in the app registration. Refused unless the issuer is `login.microsoftonline.com`. |
 | `ALTIWARD_OIDC_TENANT` | the only tenant | The Altiward tenant people who sign in belong to. Required when the tokens name more than one. |
 | `ALTIWARD_SPLUNK_HEC_URL`, `_HEC_TOKEN`, `_INDEX` | None | Enables the Splunk sink |
-| `ALTIWARD_SENTINEL_ENDPOINT`, `_DCR_ID`, `_STREAM`, `_TENANT_ID`, `_CLIENT_ID`, `_CLIENT_SECRET` | stream `Custom-AltiwardOCSF` | Enables the Sentinel sink |
+| `ALTIWARD_SENTINEL_ENDPOINT`, `_DCR_ID`, `_STREAM`, `_AUTH`, `_TENANT_ID`, `_CLIENT_ID`, `_CLIENT_SECRET`, `_CERTIFICATE_FILE` | stream `Custom-AltiwardOCSF`, auth `secret` | Enables the Sentinel sink. `_AUTH` is `secret`, `certificate` (with `_CERTIFICATE_FILE`, a PEM file with the certificate and private key) or `managed-identity` (no tenant ID or secret; `_CLIENT_ID` picks a user-assigned identity) |
 | `ALTIWARD_INTUNE_AUTH` | None | Turns on the read-only Microsoft Graph connection to Intune: `secret`, `certificate` or `managed-identity`. Setting any other `ALTIWARD_INTUNE_*` without it stops the server. Needs a server whose tokens name one tenant. Not an export sink. |
 | `ALTIWARD_INTUNE_TENANT_ID`, `_CLIENT_ID`, `_CLIENT_SECRET`, `_CERTIFICATE_FILE` | None | The app registration for `secret` (tenant, client ID and secret) or `certificate` (tenant, client ID and a PEM file with the certificate and private key). `managed-identity` needs none; `_CLIENT_ID` picks a user-assigned identity. |
 | `ALTIWARD_SYSLOG_ADDR`, `_TLS`, `_CA_FILE`, `_FORMAT`, `_FRAMING` | TLS, `cef`, `octet` | Enables the syslog sink; see [integrations/syslog](../integrations/syslog/README.md) |
+| `ALTIWARD_TRUSTED_CAS_FILE` | None | PEM certificates trusted alongside the system's roots for the SIEMs, the identity provider and Intune, such as an internal CA's |
 
 Each sink gets every exportable agent event and every console action from the audit log
 (event type `console.<action>`: OCSF Authentication for `sign_in` and `sign_out`, API
@@ -175,11 +181,11 @@ make image           # production image: the API serving the console (Dockerfile
 
 Releases come from a `server-vX.Y.Z` tag (`.github/workflows/release-server.yml`): a signed
 multi-arch image on `ghcr.io`, the same image saved per platform, the deployment bundle
-(`scripts/server-bundle.sh`), the notes from `CHANGELOG.md` (`scripts/release-notes.sh`)
-and signed `SHA256SUMS`. See [docs/releasing.md](../docs/releasing.md).
-Admins deploy it with [deploy/compose](../deploy/compose/); see the
-[install guide](../docs/install.md). The binary has subcommands besides running the
-server: `health` (exit 0 if the local server answers `/healthz`, for container health
+(`scripts/server-bundle.sh`), the notes from `CHANGELOG.md` (`scripts/release-notes.sh`),
+signed `SHA256SUMS` and signed build provenance (`provenance.intoto.jsonl`). See
+[docs/releasing.md](../docs/releasing.md). Admins deploy it with
+[deploy/compose](../deploy/compose/); see the [install guide](../docs/install.md). The
+binary has subcommands besides running the server: `health` (exit 0 if the local server answers `/healthz`, for container health
 checks), `diagnose` (a support report as JSON, secrets hidden, database read without
 migrating), `drop-exports SINK` (drop the export queue and coverage date of a sink no
 longer configured; it refuses a configured one), `replay-exports SINK SINCE` (queue what was

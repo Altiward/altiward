@@ -115,9 +115,10 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
 - **Runs revokes from the console** (below), removing the user from `admin` itself.
   Permanent admins are never removed.
 - **Runs tamper checks** each heartbeat and sends `agent.tamper` when one changes: the
-  LaunchDaemon plist, the app's code signature, seven settings set outside MDM
+  LaunchDaemon plist, the app's code signature, nine settings set outside MDM
   (`ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`,
-  `OutOfBandEnforcement`, `OutOfBandGraceMinutes`, `HookCodeRequirement`), a downgrade, and, with Privileges installed, its tamper protection, its hook setting, its timer
+  `OutOfBandEnforcement`, `OutOfBandGraceMinutes`, `UserPrincipalNames`,
+  `PlatformSSOIdentity`, `HookCodeRequirement`), a downgrade, and, with Privileges installed, its tamper protection, its hook setting, its timer
   stopped while someone holds rights it granted, and the Privileges settings Altiward relies
   on (an expiry cap, renewals off while `ExpiryEnforcement` is `enforce`, the hook run on
   give-backs, and revoke exclusion lists that name every permanent admin). With either enforcement setting on `enforce`
@@ -379,9 +380,11 @@ enrolled. While the genuine Mac is offline, a copy that rotated holds the only w
 key, and the server learns of two holders only when the Mac next connects; if the copy
 is the only user, because the Mac was wiped or never comes back, there is no second
 holder to notice. A server rolled back to before rotation raises no alert for any of
-this while it runs. Closing these gaps takes MDM device-ID binding
-([#134](https://github.com/Altiward/altiward/issues/134)) or Apple attestation. Until then,
-check new enrolments against your device inventory, as the
+this while it runs. With Intune connected, the server checks the MDM device ID a Mac sends
+as it enrols against Intune's serial for it
+([#134](https://github.com/Altiward/altiward/issues/134)), but neither is a secret, so a
+match never approves a key and doesn't close these gaps: that takes Apple attestation.
+Until then, check new enrolments against your device inventory, as the
 [install guide](../docs/install.md#2-deploy-the-agent) says.
 
 **Privileges stays at the edge.** Altiward depends on a project it doesn't control, and

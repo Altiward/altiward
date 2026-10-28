@@ -78,7 +78,8 @@ You need:
   in `deploy/compose/`, this guide, the SIEM guides and the Sentinel and Intune setup scripts and the Intune
   profile script in `integrations/`, and the agent's example Mac profiles in `profiles/`), the server image
   as a file for your platform (`altiward-api-<version>-linux-amd64.tar.gz` or `…-arm64`),
-  `RELEASE_NOTES.md`, `SHA256SUMS` and its signature, `SHA256SUMS.sigstore.json`. An
+  `RELEASE_NOTES.md`, `SHA256SUMS` and its signature, `SHA256SUMS.sigstore.json`, and,
+  from 1.2.0, signed build provenance, `provenance.intoto.jsonl`. An
   agent release is the signed package
   (`Altiward-<version>.pkg`), the SAP Privileges keys pinned to that package's hook
   (`corp.sap.privileges.plist`, and the same keys as a ready-made profile,
@@ -345,7 +346,9 @@ not prevent that replacement.
 
 Approval protects existing serials; the shared token does not verify that a serial enrolling
 for the first time belongs to the caller. Check new enrolments against your device inventory,
-or turn on **Approve every new Mac** so each Mac's first key waits for approval too.
+or turn on **Approve every new Mac** so each Mac's first key waits for approval too. With
+Intune connected, each new key shows what Intune says about the device ID the Mac sent
+([Settings worth reviewing](#6-settings-worth-reviewing)), which helps but isn't proof.
 Stronger first-enrolment assurance needs per-device bootstrap credentials or independently
 verified inventory.
 
@@ -611,7 +614,7 @@ registration, then set `ALTIWARD_OIDC_PROVIDER_SIGN_OUT=true`. After **Sign out*
 browser goes to Entra ID, which may ask which account to sign out of, and then returns
 to the console's signed-out page. The next sign-in shows the account picker, as it does
 after any **Sign out**. The server refuses this setting unless the issuer is
-Entra ID's, because Okta and other providers are not supported until 1.2.0. If the
+Entra ID's: signing out of Okta and other providers isn't supported yet. If the
 provider doesn't offer a sign-out address, the server logs a warning and signs out of
 Altiward only.
 
@@ -1546,8 +1549,9 @@ docker compose exec altiward /usr/local/bin/altiward-api diagnose > altiward-dia
 
 It's JSON, so read it before you send it. It holds the version, your
 settings with every secret hidden (the database URL keeps only its host and database name), the tokens by
-fingerprint, never their values, the database's migrations and counts, and whether each
-SIEM endpoint and the identity provider accept a connection. It holds no events, user names or Mac details, and
+fingerprint, never their values, the database's migrations and counts, whether each
+SIEM endpoint, the identity provider and Microsoft Graph accept a connection, and the
+Intune sync's status. It holds no events, user names or Mac details, and
 it sends nothing anywhere itself. Its `problems` list is a good first place to look when
 something is wrong.
 

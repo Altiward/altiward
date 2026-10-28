@@ -19,7 +19,7 @@ and CI run, rather than rely on a floating badge or a local percentage.
 | `contribution_requirements` | Evidence | [Contribution rules](../CONTRIBUTING.md) and [coding standards](testing.md#coding-standards). |
 | `dco` | Evidence | DCO sign-off is documented and is a required main-branch check. |
 | `governance` | Evidence | [Governance](../GOVERNANCE.md) describes how decisions are made. |
-| `code_of_conduct` | Evidence | The [organization policy](https://github.com/Altiward/.github/blob/main/CODE_OF_CONDUCT.md) applies to this repository and names a reporting contact. |
+| `code_of_conduct` | Evidence | The [organisation policy](https://github.com/Altiward/.github/blob/main/CODE_OF_CONDUCT.md) applies to this repository and names a reporting contact. |
 | `roles_responsibilities` | Evidence | Governance names the active maintainer and separates contributor, reviewer, release and recovery responsibilities. |
 | `access_continuity` | Verify | The maintainer confirms a trusted person has access. Verify release approval, Apple credentials, domain/registry recovery, authority and a one-week recovery exercise; keep details private. |
 | `bus_factor` | Open | There is one active software maintainer. Administrative recovery access does not prove that another person can maintain the software. |
@@ -30,7 +30,7 @@ and CI run, rather than rely on a floating badge or a local percentage.
 | `documentation_current` | Verify | Verify release versions and instructions against the next published releases; document known defects in the issue tracker. |
 | `documentation_achievements` | Evidence | README links CI, REUSE, the Passing badge and Scorecard. Update displayed achievements when new ones are awarded. |
 | `accessibility_best_practices` | Verify | Contrast, words with glyphs, focus and keyboard behaviour are contribution requirements. Record a keyboard/screen-reader assessment of current console and project sites. |
-| `internationalization` | Open | The console currently uses English strings. A localization approach and implementation have not been established; an English-only UI is not N/A. |
+| `internationalization` | Open | The console currently uses English strings. A localisation approach and implementation have not been established; an English-only UI is not N/A. |
 | `sites_password_security` | Verify | The app delegates SSO to an identity provider and uses console tokens. Confirm the complete project-site scope, including externally hosted services, before choosing N/A or claiming password-storage compliance. |
 | `maintenance_or_update` | Evidence | [Release policy](releasing.md#versions) and the install guide provide supported-version and upgrade paths. |
 | `report_tracker` | Evidence | Public GitHub issues track individual reports and proposals. |
@@ -59,7 +59,7 @@ and CI run, rather than rely on a floating badge or a local percentage.
 | `test_statement_coverage80` | Open | [CI run 40669218895](https://github.com/Altiward/altiward/actions/runs/40669218895) confirms 82.79% backend and 85.28% integrations statement coverage; the console measures 90.47% (293 tests) and enforces 80%. The agent report contains 27 of 31 production Swift files and measures 84.71% regions/88.36% lines in that subset. It omits `XPCInterface.swift`, the daemon and hook entry points, so it does not establish whole-agent or project-wide statement coverage. |
 | `test_policy_mandated` | Evidence | The contribution test policy requires automated tests with new functionality and fixes. |
 | `tests_documented_added` | Evidence | CONTRIBUTING and the PR template include test policy and validation evidence. |
-| `warnings_strict` | Verify | Go vet, TypeScript checks and Swift concurrency checking run in CI. Review warnings-as-errors and analyzer options for all production languages before claiming maximal practical strictness. |
+| `warnings_strict` | Verify | Go vet, TypeScript checks and Swift concurrency checking run in CI. Review warnings-as-errors and analyser options for all production languages before claiming maximal practical strictness. |
 
 ## Security and analysis
 
@@ -78,12 +78,12 @@ and CI run, rather than rely on a floating badge or a local percentage.
 | `input_validation` | Evidence | Strict schema decoding, role/CSRF checks, signature checks and fuzz/regression tests; see the assurance argument. |
 | `hardening` | Verify | Assess enabled compiler/runtime and deployment hardening with evidence for each shipped component and platform. |
 | `assurance_case` | Evidence | [Security assurance](security-assurance.md) records threats, boundaries, enforcement arguments, tests and practical limits. |
-| `static_analysis_common_vulnerabilities` | Evidence | GitHub CodeQL analyzes the project's languages; CI also runs Go vet, TypeScript checks and vulnerability scans. |
+| `static_analysis_common_vulnerabilities` | Evidence | GitHub CodeQL analyses the project's languages; CI also runs Go vet, TypeScript checks and vulnerability scans. |
 | `dynamic_analysis_unsafe` | Verify | First-party code uses Swift, Go and TypeScript, but review unsafe/FFI and shipped native dependencies before choosing N/A; Go fuzzing alone is not a C/C++ memory-safety analysis. |
 
 ## Completing the assessment
 
-Prioritize the mandatory gaps: complete the recovery exercise, enforce language styles,
+Prioritise the mandatory gaps: complete the recovery exercise, enforce language styles,
 measure production coverage on CI, audit native build/install conventions and establish
 repeatable build evidence. Review the security configuration requirements and historical
 regression-test ratio with their actual evidence. Record explanations for unmet SHOULD

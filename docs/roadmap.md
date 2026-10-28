@@ -11,12 +11,10 @@ or evidence.
 - Keep the agent's verified view of the Mac's admin group, signed event delivery, key
   rotation and revocation reliable. Preserve upgrade compatibility and improve tests
   around these trust boundaries.
-- Improve enrollment and inventory checks with Intune, including
-  [inventory-backed approval](https://github.com/Altiward/altiward/issues/184) and
-  [detecting Macs seen by Intune but silent in Altiward](https://github.com/Altiward/altiward/issues/30).
-- Extend identity mapping and sign-out integration with Entra ID and Okta where the
-  required tenants are available. Track the designs in
-  [Entra identity](https://github.com/Altiward/altiward/issues/31) and
+- Extend identity mapping and sign-out integration to Okta, as Entra ID has, once a test
+  org is available. Track the designs in
+  [Platform SSO with Okta](https://github.com/Altiward/altiward/issues/181),
+  [Okta user identity](https://github.com/Altiward/altiward/issues/182) and
   [Okta sign-out](https://github.com/Altiward/altiward/issues/183).
 - Evaluate Jamf Pro and Kandji inventory and deployment integration when there are
   accounts to test against; see [inventory checks](https://github.com/Altiward/altiward/issues/178)
@@ -33,7 +31,7 @@ Privileges. It remains self-hosted, with data collection and transfer described 
 [data handling](data-handling.md). Changes to that promise require documentation and
 release notes in the same change.
 
-Multi-organization hosting, Kubernetes packaging and broader persistence monitoring
+Multi-organisation hosting, Kubernetes packaging and broader persistence monitoring
 remain demand-driven proposals rather than committed work. Recording `sudo`, `su` and
 SSH file copies depends on Apple's Endpoint Security entitlement. Neither this roadmap
 nor a badge claims those capabilities are available today.

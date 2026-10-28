@@ -24,7 +24,7 @@ procedure. Main requires pull requests, DCO and passing CI against an up-to-date
 Human approval is encouraged but is not a merge requirement while there is only one
 active software maintainer.
 
-The organization's [code of conduct](https://github.com/Altiward/.github/blob/main/CODE_OF_CONDUCT.md)
+The organisation's [code of conduct](https://github.com/Altiward/.github/blob/main/CODE_OF_CONDUCT.md)
 applies to this project. Conduct reports go to the contact listed there. Vulnerabilities
 follow the [security policy](https://github.com/Altiward/.github/blob/main/SECURITY.md).
 
@@ -37,7 +37,7 @@ accept changes and release software within a week after the maintainer's unavail
 is confirmed.
 
 Administrative access alone does not establish release capability. The maintainer and
-recovery contact must verify that the contact can access the organization and repositories,
+recovery contact must verify that the contact can access the organisation and repositories,
 approve release environments, recover registry and domain administration, and recover or
 replace the Apple Developer ID and notarization credentials. The private record should
 also cover required account recovery and authority to operate the project. Record the

@@ -10,11 +10,11 @@ held right now".
 | Overview | The first page: admins now by source and what needs a look, elevations over 7, 30 or 90 days, time held against time allowed, who elevates most, agent versions and SIEM delivery. Each term has a help tag, and each tile links to the filtered list behind it | `GET /v1/overview?days=` |
 | Admins now | Everyone who holds admin rights, rights without a grant and overdue first | `GET /v1/sessions?open=true` |
 | Sessions | Every elevation session, with its timeline and a revoke action | `GET /v1/sessions[/{id}]`, `POST /v1/sessions/{id}/revoke` |
-| Fleet | Each Mac's versions, admin group, integrity checks and last check-in; revoke one user or everyone but permanent admins | `GET /v1/devices`, `POST /v1/devices/{serial}/revoke` |
-| Enrollments | Device keys; approve or reject re-enrollments | `/v1/enrollments` |
+| Fleet | Each Mac's versions, admin group, integrity checks and last check-in, in details that fold into sections; revoke one user or everyone but permanent admins. Retired Macs show under **Show › Retired**, with when their history is removed. With Intune connected, each Mac's primary user and last Intune check-in, and the Macs Intune manages that never reported | `GET /v1/devices`, `POST /v1/devices/{serial}/revoke`, `GET /v1/retention`, `GET /v1/mdm[/devices]` |
+| Enrollments | Device keys; approve or reject keys waiting for approval, and revoke a key, which retires a Mac whose only key it is. With Intune connected, each key's Intune check, and **Not in Intune** on a Mac Intune doesn't list | `/v1/enrollments`, `GET /v1/mdm[/devices]` |
 | Commands | Revokes sent to Macs and what each Mac did | `GET /v1/commands` |
-| Activity | Every change made in the console, and every sign-in | `GET /v1/audit` |
-| Settings | Re-enrollment approval, the alert for Macs that stop checking in, each SIEM's queue with a test event and retry, who is signed in, and newer releases | `/v1/settings`, `/v1/exports`, `/v1/console-sessions` |
+| Activity | Every change made in the console, every sign-in, and what the server does by itself, such as removing old history | `GET /v1/audit` |
+| Settings | **General**: enrolment approval, the alert for Macs that stop checking in, how long history is kept, and this browser's theme. **SIEM export**: each SIEM's queue with a test event and retry. **MDM**: the Intune connection and **Require an Intune match**. **Sign-ins** and **Updates** (admins): who is signed in, and newer releases | `/v1/settings`, `GET /v1/retention`, `/v1/exports`, `GET /v1/mdm`, `/v1/console-sessions`, `GET /v1/about` |
 
 ## Run it
 

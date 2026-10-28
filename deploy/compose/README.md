@@ -11,7 +11,7 @@ release on [GitHub Releases](https://github.com/Altiward/altiward/releases). The
 | `Caddyfile` | Two sites: the agent hostname passes only `/v1/agent/*`; the console hostname only answers the networks in `ALTIWARD_CONSOLE_ALLOW`. |
 | `env.example` | Every setting, to copy to `.env` |
 | `upgrade.sh` | Upgrades to a new release, by version or from its files: downloads, checks, backs up, loads, restarts |
-| `certs/` | Your own TLS certificates for Caddy, or a CA file for the syslog receiver |
+| `certs/` | Your own TLS certificates for Caddy, an internal CA to trust (`ALTIWARD_TRUSTED_CAS_FILE` or the syslog receiver's), or the certificate Sentinel or Intune signs in with |
 | `.altiward/` | The files as the release shipped them, so `upgrade.sh` can tell which you changed |
 
 The project is named `altiward-server`, so it doesn't collide with the repository's
