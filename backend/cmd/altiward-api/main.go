@@ -1,7 +1,8 @@
 // altiward-api serves agent ingestion and the console read API, and, with
 // ALTIWARD_CONSOLE_DIR set, the console itself. It runs the SIEM export workers and the
 // monitor that notices Macs that stop checking in, keeps a copy of the Macs Intune manages
-// when connected to it, and, with a retention period set, removes old audit entries.
+// when connected to it, removes each organisation's history past the period it keeps, and,
+// with a retention period set, removes old audit entries.
 // Configuration: ALTIWARD_* environment variables (see backend/internal/config and
 // backend/README.md).
 //
@@ -149,7 +150,7 @@ func dropExports(ctx context.Context, sink string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Dropped %d queued exports for %s. The events stay in the database.\n", n, sink)
+	fmt.Printf("Dropped %d queued exports for %s, and its coverage date. The events stay in the database.\n", n, sink)
 	return nil
 }
 
@@ -269,6 +270,13 @@ func run(log *slog.Logger) error {
 	}
 	defer st.Close()
 
+	// Notes when each configured SIEM was connected, by the database's clock and an hour on,
+	// so history expiry never removes what a SIEM added to an old database was not sent. A
+	// sink already noted keeps its time, unless the last start didn't have it.
+	if err := st.RecordSinks(ctx, cfg.SinkNames()); err != nil {
+		return err
+	}
+
 	// Shared by the SIEMs, the identity provider and Intune.
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 	trusted, err := cfg.TrustedRoots()
@@ -326,10 +334,20 @@ func run(log *slog.Logger) error {
 	silence := &monitor.Silence{Store: st, Log: log, Now: time.Now}
 	go silence.Run(ctx, time.Minute)
 
+	// The first sweep waits an hour: during an update, an older revision still running
+	// beside this one would mark the snapshots exported without sending them. Before it,
+	// the admin group is sent from readings stored before this version, once.
+	groups := &monitor.AdminGroups{Store: st, Log: log, Now: time.Now}
+	go groups.Run(ctx, time.Hour, time.Hour)
+
 	if days := cfg.AuditRetentionDays; days > 0 {
 		purge := &retention.Audit{Store: st, After: time.Duration(days) * 24 * time.Hour, Log: log, Now: time.Now}
 		go purge.Run(ctx, 24*time.Hour)
 	}
+	// Removes history past each organisation's period, once the backfill above has finished,
+	// and never what a SIEM hasn't had.
+	history := &retention.History{Store: st, Sinks: cfg.SinkNames(), Log: log, Now: time.Now}
+	go history.Run(ctx, 24*time.Hour)
 
 	// Closed when shutdown starts, releasing requests held for agents' next commands.
 	stopping := make(chan struct{})

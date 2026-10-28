@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router";
-import type { ConsoleSignIn, ExportSink, Settings } from "../api";
+import type { ConsoleSignIn, ExportSink, HistoryPolicy, Settings } from "../api";
 import { Banner, RoleNote, Segmented, Toolbar } from "../components/Chrome";
 import { StateBadge } from "../components/StateBadge";
+import { ConfirmSheet } from "../components/Sheet";
 import { Command, UpdatesGroup } from "../components/Updates";
 import { useApi, useCan } from "../context";
-import { dateTime, sinkName } from "../format";
+import { dateOnly, dateTime, sinkName } from "../format";
 import { type SiemGuide, type Where, siemGuides, siemSnippet } from "../siemSetup";
 import { appearances, setLook, themes, useLook } from "../theme";
 import { useLoad } from "../useLoad";
@@ -13,6 +14,41 @@ import { useLoad } from "../useLoad";
 /** The server's default when silent_after_hours is 0 (store.DefaultSilentAfterHours). */
 const DEFAULT_SILENT_HOURS = 72;
 const MAX_SILENT_HOURS = 720;
+
+/** The server's bounds and default for history_days (store.MinHistoryDays and the others). */
+const MIN_HISTORY_DAYS = 90;
+const MAX_HISTORY_DAYS = 3650;
+const DEFAULT_HISTORY_DAYS = 365;
+const KEPT_FOR_GOOD = -1;
+
+type HistoryChoice = "default" | "days" | "good";
+
+/** The days in the stored history_days, as the choice and the number shown for it. */
+function choiceOf(historyDays: number | undefined): { choice: HistoryChoice; days: string } {
+  if (historyDays === KEPT_FOR_GOOD) return { choice: "good", days: String(DEFAULT_HISTORY_DAYS) };
+  if (historyDays) return { choice: "days", days: String(historyDays) };
+  return { choice: "default", days: String(DEFAULT_HISTORY_DAYS) };
+}
+
+/** The policy in force, in words. */
+function policySentence(p: HistoryPolicy): string {
+  switch (p.reason) {
+    case "default_siem": return "1 year, the default with a SIEM connected";
+    case "default_no_siem": return "Kept for good: no SIEM is connected";
+    case "kept_for_good": return "Kept for good";
+    default: return p.days === 1 ? "1 day" : `${p.days} days`;
+  }
+}
+
+/** What a period set by hand does to the history the default holds back for the SIEM. */
+function heldWarning(heldBefore: string): string {
+  return `A period you set also removes history from before ${dateOnly(heldBefore)}, which your SIEM may not have.`;
+}
+
+/** Days of history kept; Infinity when nothing is removed. */
+function keptDays(p: HistoryPolicy): number {
+  return p.kept_for_good || p.days <= 0 ? Infinity : p.days;
+}
 
 /** Settings' tabs, as in a Mac app's Settings window. Each has its own address under
  *  /settings, so the install guide and other pages can link to one. Sign-ins and Updates are
@@ -57,19 +93,40 @@ function GeneralSettings() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [hours, setHours] = useState("");
+  const policy = useLoad(() => api.retention().then((r) => r.history), []);
+  // Whether a SIEM is connected decides what the default period would be; null when unknown.
+  const sinks = useLoad(() => api.exports().catch(() => null), []);
+  const [historyChoice, setHistoryChoice] = useState<HistoryChoice>("default");
+  const [historyDays, setHistoryDays] = useState(String(DEFAULT_HISTORY_DAYS));
+  const [removing, setRemoving] = useState<{ value: number; days: number; heldBefore: string | null } | null>(null);
 
   useEffect(() => {
     if (data) setHours(String(data.silent_after_hours || DEFAULT_SILENT_HOURS));
   }, [data]);
 
-  // PUT replaces every setting, so each change sends the rest as loaded.
+  // The history choice follows the stored period, and only that: a choice not saved yet stays
+  // when another setting saves and the settings load again.
+  const storedHistory = data?.history_days;
+  const loaded = !!data;
+  useEffect(() => {
+    if (!loaded) return;
+    const c = choiceOf(storedHistory);
+    setHistoryChoice(c.choice);
+    setHistoryDays(c.days);
+  }, [loaded, storedHistory]);
+
+  // PUT replaces every setting, so each change sends the rest as loaded, apart from the
+  // history period: the server keeps the stored one when it is left out, so only a change to
+  // it sends it, and a stale page can't put back a period changed elsewhere.
   async function save(change: Partial<Settings>) {
     if (!data) return;
     setSaving(true);
     try {
-      await api.putSettings({ ...data, ...change });
+      const { history_days: _stored, ...rest } = data;
+      await api.putSettings({ ...rest, ...change });
       setSaveError(null);
       await reload();
+      await policy.reload();
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -82,10 +139,41 @@ function GeneralSettings() {
   const hoursValid = /^\d+$/.test(hours) && parsed >= 1 && parsed <= MAX_SILENT_HOURS;
   const hoursChanged = !!data && hoursValid && parsed !== (data.silent_after_hours || DEFAULT_SILENT_HOURS);
 
+  const parsedDays = Number(historyDays);
+  const historyValid = historyChoice !== "days"
+    || (/^\d+$/.test(historyDays) && parsedDays >= MIN_HISTORY_DAYS && parsedDays <= MAX_HISTORY_DAYS);
+  const newHistory = historyChoice === "good" ? KEPT_FOR_GOOD : historyChoice === "days" ? parsedDays : 0;
+  const historyChanged = !!data && historyValid && newHistory !== (data.history_days ?? 0);
+  // How many days the choice would keep: Infinity for good. The default depends on the SIEM; when
+  // that is unknown, count it as a year so a possible removal is confirmed.
+  const siem = sinks.data ? sinks.data.length > 0 : null;
+  const newDays = historyChoice === "good" ? Infinity
+    : historyChoice === "days" ? parsedDays
+    : siem === false ? Infinity : DEFAULT_HISTORY_DAYS;
+  // Without the policy in force, any finite period might remove history, so it asks.
+  const shortens = newDays < (policy.data ? keptDays(policy.data) : Infinity);
+  // While the default holds back history from before the SIEM was connected, a number of days
+  // releases it whatever the number, so that asks too. Keeping for good removes nothing.
+  const heldBefore = policy.data?.held_before ?? null;
+  const releasesHold = !!heldBefore && historyChoice === "days";
+
+  function saveHistory() {
+    if (!historyChanged) return;
+    if (shortens || releasesHold) setRemoving({ value: newHistory, days: newDays, heldBefore: releasesHold ? heldBefore : null });
+    else void save({ history_days: newHistory });
+  }
+
   return (
     <>
-      {(error || saveError) && <Banner>{saveError ?? error}</Banner>}
+      {(error || saveError || policy.error) && <Banner>{saveError ?? error ?? policy.error}</Banner>}
       {!canChange && <RoleNote>Changing settings needs the admin role.</RoleNote>}
+      {removing && (
+        <ConfirmSheet title="Remove older history?" confirm="Remove" destructive busy={saving}
+          message={`History older than ${removing.days} days will be removed at the next daily run. Your SIEM keeps what it was sent.`
+            + (removing.heldBefore ? ` ${heldWarning(removing.heldBefore)}` : "")}
+          onConfirm={() => { const value = removing.value; setRemoving(null); void save({ history_days: value }); }}
+          onCancel={() => setRemoving(null)} />
+      )}
       <div className="group" style={{ marginTop: 0 }}>
         <h3>Enrollment</h3>
         <div className="box">
@@ -152,6 +240,57 @@ function GeneralSettings() {
             </span>
           </form>
           {!hoursValid && <p className="hint" role="alert">Enter a whole number of hours from 1 to {MAX_SILENT_HOURS}.</p>}
+        </div>
+      </div>
+      <div className="group">
+        <h3>History</h3>
+        <div className="box">
+          <form className="row" onSubmit={(e) => { e.preventDefault(); saveHistory(); }}>
+            <div>
+              <label htmlFor="history-choice">Keep history for</label>
+              {policy.data && (
+                <>
+                  <p className="hint">{policySentence(policy.data)}</p>
+                  {policy.data.held_before && (
+                    <>
+                      <p className="hint">
+                        History from before {dateOnly(policy.data.held_before)}, when your SIEM was connected, is kept until you
+                        replay it to the SIEM.
+                      </p>
+                      <p className="hint">{heldWarning(policy.data.held_before)}</p>
+                    </>
+                  )}
+                  {policy.data.waiting_for_backfill && (
+                    <p className="hint">Nothing is removed until the admin group has been sent to your SIEM.</p>
+                  )}
+                </>
+              )}
+              <p className="hint">
+                A shorter period removes older history at the next daily run. Your SIEM keeps what it was sent.
+              </p>
+            </div>
+            <span className="inline-field">
+              <select id="history-choice" disabled={!data || saving || !canChange} value={historyChoice}
+                onChange={(e) => setHistoryChoice(e.target.value as HistoryChoice)}>
+                <option value="default">Default</option>
+                <option value="days">Days</option>
+                <option value="good">Keep for good</option>
+              </select>
+              {historyChoice === "days" && (
+                <>
+                  <input type="number" inputMode="numeric" min={MIN_HISTORY_DAYS} max={MAX_HISTORY_DAYS}
+                    aria-label="Days of history" disabled={!data || saving || !canChange} value={historyDays}
+                    aria-invalid={!historyValid} onChange={(e) => setHistoryDays(e.target.value)} />
+                  <span className="secondary">days</span>
+                </>
+              )}
+              <button type="submit" className="button" aria-label="Save history period"
+                disabled={!historyChanged || saving || !canChange}>Save</button>
+            </span>
+          </form>
+          {!historyValid && (
+            <p className="hint" role="alert">Enter a whole number of days from {MIN_HISTORY_DAYS} to {MAX_HISTORY_DAYS}.</p>
+          )}
         </div>
       </div>
       <AppearanceGroup />

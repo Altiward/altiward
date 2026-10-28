@@ -64,6 +64,19 @@ export interface Device {
   recent_permanent_uses?: PermanentUse[] | null;
   /** The newest agent.silent the server raised for this Mac; missing or null if none. */
   silence?: Silence | null;
+  /** When an admin revoked the Mac's only key and none is waiting for approval; missing while the Mac is in use.
+   *  A new key for the serial un-retires it. */
+  retired_at?: string;
+}
+
+/** How long the server keeps history, from GET /v1/retention. `days` is 0 when nothing is removed. */
+export interface HistoryPolicy {
+  days: number;
+  kept_for_good: boolean;
+  reason: "default_siem" | "default_no_siem" | "set" | "kept_for_good";
+  /** History before this is held back, as the SIEM hasn't had it yet; null when nothing is held. */
+  held_before: string | null;
+  waiting_for_backfill: boolean;
 }
 
 /** The server noticing a Mac stopped checking in (silent), or that it came back (resumed). */
@@ -161,6 +174,8 @@ export interface Settings {
   /** Hours without a check-in before the server raises agent.silent; 0 means the default, 72. */
   silent_after_hours: number;
   silent_alerts_off: boolean;
+  /** How long history is kept: 0 the default, -1 for good, otherwise 90 to 3650 days. Left out, the stored value stays. */
+  history_days?: number;
 }
 
 /** One console action from the audit log. */
@@ -168,10 +183,11 @@ export interface AuditEntry {
   id: string;
   tenant_id: string;
   at: string;
-  /** The person's email with single sign-on; otherwise "token:" or "break-glass:" and a console token's fingerprint. */
+  /** The person's email with single sign-on; otherwise "token:" or "break-glass:" and a console token's fingerprint.
+   *  "altiward:server" for what the server did itself, such as removing a Mac or old history. */
   actor: string;
   action: "revoke_session" | "revoke_device" | "approve_enrollment" | "revoke_enrollment" | "change_settings"
-    | "test_export" | "retry_exports" | "end_console_session" | string;
+    | "test_export" | "retry_exports" | "end_console_session" | "remove_device" | "expire_history" | string;
   target: string;
   detail: Record<string, unknown>;
   /** Orders entries recorded in the same instant; with `at`, the cursor for the next page. */
@@ -358,6 +374,7 @@ export function createApi(credentials: Credentials, { fetch: fetchImpl = (u, i) 
     commands: (q: { serial?: string; status?: string } = {}) =>
       call<{ commands: Command[] }>("GET", "/v1/commands", q).then((r) => r.commands),
     about: () => call<About>("GET", "/v1/about"),
+    retention: () => call<{ history: HistoryPolicy }>("GET", "/v1/retention"),
     audit: (q: { before?: string; before_seq?: number; limit?: number } = {}) =>
       call<{ entries: AuditEntry[] }>("GET", "/v1/audit", q).then((r) => r.entries),
     exports: () => call<{ sinks: ExportSink[] }>("GET", "/v1/exports").then((r) => r.sinks),

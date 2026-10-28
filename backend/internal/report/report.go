@@ -37,7 +37,7 @@ type Input struct {
 	Days int
 	// Sessions holds every session that is open or started in the period (Store.ReportSessions).
 	Sessions []session.Session
-	Devices  []session.Device
+	Devices  []store.Device
 	Sinks    []store.ExportBacklog // each configured SIEM's export status
 }
 
@@ -152,6 +152,9 @@ func now(in Input) Now {
 		}
 	}
 	for _, d := range in.Devices {
+		if d.RetiredAt != nil {
+			continue // out of service: not a Mac to chase
+		}
 		if slices.Contains(slices.Collect(maps.Values(d.Integrity)), false) {
 			n.MacsFailingChecks++
 		}
@@ -263,9 +266,13 @@ func median(xs []float64) *float64 {
 }
 
 func health(in Input) Health {
-	h := Health{Macs: len(in.Devices), AgentVersions: []AgentVersion{}, Sinks: []Sink{}}
+	h := Health{AgentVersions: []AgentVersion{}, Sinks: []Sink{}}
 	byVersion := map[string]int{}
 	for _, d := range in.Devices {
+		if d.RetiredAt != nil {
+			continue // out of service: it isn't a Mac to update
+		}
+		h.Macs++
 		byVersion[d.AgentVersion]++
 	}
 	for v, n := range byVersion {

@@ -271,6 +271,30 @@ func TestSignInRefusals(t *testing.T) {
 		b := env.browser(t)
 		refused(t, b, callback(t, b, env.idp.Authorize(start(t, b), person("g-other"))), "no_role")
 	})
+	t.Run("named like the server or a token", func(t *testing.T) {
+		// Activity would show the person as the server itself, or as a token.
+		for _, name := range []string{store.ServerActor, "Altiward:server", "token:3f2a9c1b", "break-glass:3f2a9c1b"} {
+			b := env.browser(t)
+			claims := person("g-admin")
+			claims["email"] = name
+			refused(t, b, callback(t, b, env.idp.Authorize(start(t, b), claims)), "failed")
+		}
+		// Without an email, the actor falls back to the preferred username.
+		b := env.browser(t)
+		claims := person("g-admin")
+		delete(claims, "email")
+		claims["preferred_username"] = store.ServerActor
+		refused(t, b, callback(t, b, env.idp.Authorize(start(t, b), claims)), "failed")
+		entries, err := env.store.ListAudit(context.Background(), "acme", store.AuditFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range entries {
+			if a.Action == store.AuditSignIn {
+				t.Fatalf("recorded a sign-in as %q", a.Actor)
+			}
+		}
+	})
 	t.Run("too many groups for the claim", func(t *testing.T) {
 		b := env.browser(t)
 		claims := person()

@@ -19,10 +19,20 @@ var ErrNotFound = errors.New("not found")
 var ErrSessionOwnerConflict = session.ErrOwnerConflict
 
 // IngestResult lists event IDs by outcome. Duplicates are events already stored,
-// typically an agent retrying after a lost response; they are not re-applied.
+// typically an agent retrying after a lost response; they are not re-applied. Accepted and
+// Duplicate answer the agent, so they list only the events it sent, never those the
+// server raised while storing them.
 type IngestResult struct {
 	Accepted  []string
 	Duplicate []string
+	// RaisedIDTaken lists the IDs of events the server raised but didn't store, because an
+	// event of another type or for another Mac already had the ID. The IDs derive from the
+	// installation's secret, so only tampering does this. Never sent to the agent.
+	RaisedIDTaken []string
+	// RaisedInvalid lists the IDs of events the server raised but didn't store, because the
+	// event failed event.Validate. The Mac's events are stored all the same; this is a bug
+	// in the server, never the Mac's doing. Never sent to the agent.
+	RaisedInvalid []string
 }
 
 // StoredEvent is an event as received.
@@ -52,6 +62,7 @@ type ExportItem struct {
 type Store interface {
 	Credentials
 	Installations
+	Coverage
 	Commands
 	Audit
 	ConsoleSessions
@@ -68,10 +79,89 @@ type Store interface {
 	ReportSessions(ctx context.Context, tenantID string, since time.Time) ([]session.Session, error)
 	// GetSession returns the session and its events oldest first.
 	GetSession(ctx context.Context, tenantID, sessionID string) (session.Session, []StoredEvent, error)
-	ListDevices(ctx context.Context, tenantID string) ([]session.Device, error)
+	ListDevices(ctx context.Context, tenantID string) ([]Device, error)
 	// SilenceCandidates returns devices across all tenants that were last seen at or
 	// before seenBefore, or that have an agent.silent alert open.
-	SilenceCandidates(ctx context.Context, seenBefore time.Time) ([]session.Device, error)
+	SilenceCandidates(ctx context.Context, seenBefore time.Time) ([]Device, error)
+
+	// AdminGroupSnapshotCandidates returns the Macs, across all tenants, that are due a daily
+	// snapshot of their admin group: not retired, with a group reported, and checked in
+	// since the given time.
+	AdminGroupSnapshotCandidates(ctx context.Context, since time.Time) ([]DeviceRef, error)
+	// RaiseAdminGroupSnapshot stores the day's agent.admin_group snapshot of the group last
+	// reported for the Mac, and queues it for every sink, unless it is stored already. It
+	// reads the Mac's row under the tenant's ingest lock, so a change can't slip in between,
+	// and takes the day from the database's clock, so a server with a fast clock can't take
+	// tomorrow's ID. now is the event's time; the Mac must have checked in within 24 hours
+	// of it. It returns false when nothing was stored: the Mac is unknown, retired or
+	// quiet, has no group reported, or has today's snapshot already.
+	RaiseAdminGroupSnapshot(ctx context.Context, tenantID, serial string, now time.Time) (bool, error)
+
+	// BackfillAdminGroups raises, once, the agent.admin_group events that the health
+	// readings stored before Installation().AdminGroupStartedAt would have raised, and
+	// returns how many it stored. It walks each Mac's readings in arrival order (received
+	// time, then event ID) with the rules ingest uses, so it stores what ingest would have.
+	// Each event's ID derives from its reading, so one already stored (a repeat, or a Mac
+	// that ingest has covered since) is left alone and not counted. It never changes the
+	// admin group a Mac last reported, which ingest owns. What it stores is queued for every
+	// sink but not due until BackfillHold after now: an older revision still running during
+	// an update claims only due items, and would mark these sent without sending them. It
+	// records now as Installation().AdminGroupBackfilledAt once every Mac is done, and
+	// returns 0 at once when that is set. After an error nothing is recorded, so a later
+	// call walks again.
+	BackfillAdminGroups(ctx context.Context, now time.Time) (raised int, err error)
+
+	// Tenants lists every tenant with a device or settings, in name order.
+	Tenants(ctx context.Context) ([]string, error)
+	// ExpireHistory removes up to limit each of the tenant's ended sessions (with all their
+	// events), events and commands that c allows, oldest first, and says how many of each
+	// it removed; the caller calls it again until every count is 0. A session goes once it
+	// ended and last changed before c.Before, and only with every one of its events
+	// removable. An event is removable when it was received before c.Before and, with
+	// c.NotBefore, not before it, and no sink is still waiting for it; one in a session goes
+	// only with its session. A command goes once created before c.Before. Whatever c says,
+	// nothing younger than 90 days by the database's clock is removed (the floor of
+	// migration 0008), and Macs themselves stay. On an error the counts say what was
+	// removed before it.
+	//
+	// Nothing remembers what was removed. An event the agent sends again afterwards is
+	// stored and exported as new, and a lone elevation.granted then makes a session that
+	// looks open. That takes an acknowledgement lost for longer than the period, at least
+	// 90 days, while the Mac kept checking in, so it is accepted rather than keeping a
+	// record of every removed event.
+	ExpireHistory(ctx context.Context, tenantID string, c HistoryCutoff, limit int) (ExpiryCounts, error)
+	// RemovalCandidates lists, in serial order, the tenant's Macs whose last check-in
+	// (session.Device.CheckedInAt) is before before, for RemoveDevice to decide on.
+	RemovalCandidates(ctx context.Context, tenantID string, before time.Time) ([]string, error)
+	// RemoveDevice removes a Mac that has stopped checking in, unless anything says it is
+	// still in use. Under the Mac's lock and then the tenant's ingest lock, the order the
+	// stale-key contest takes them in, it reads the Mac again and keeps it, saying why in
+	// Skipped, when:
+	//
+	//   - only the Mac's own clock says when it last checked in (SkippedOwnClock);
+	//   - it checked in, or any event for it was received, the server's own included, at or
+	//     after the cutoff (SkippedRecentEvent);
+	//   - any of its events is still waiting for a sink, or was received before c.NotBefore
+	//     (SkippedNotSent);
+	//   - it has an open session: someone may still hold admin rights there (SkippedOpenSession);
+	//   - any key for it was created, or approved, at or after the cutoff: it is trying to
+	//     come back, or an admin has just let it (SkippedRecentKey).
+	//
+	// The cutoff is c.Before, or 90 days ago by the database's clock if that is earlier, so
+	// nothing younger than the floor of migration 0008 is touched. Otherwise, in one
+	// transaction, it revokes the Mac's active and pending keys, so that a Mac back after
+	// this long enrols again and waits for approval like any re-enrolment (the keys' records
+	// stay: they are what makes it a re-enrolment); deletes its sessions, events, commands
+	// created before the cutoff, and the Mac itself; and records, under ServerActor at now,
+	// a revoke_enrollment entry for each key it revoked and a remove_device entry for the
+	// Mac, queued for every sink. A Mac already gone, as when another replica removed it
+	// first, changes and records nothing.
+	//
+	// A batch whose request was authenticated just before the removal, with a key it then
+	// revokes, waits for the locks and is stored after it: it makes the Mac's row again,
+	// not retired and with no live key. That heals itself: the Mac's next request is
+	// refused, and it enrols again like any Mac removed this way.
+	RemoveDevice(ctx context.Context, tenantID, serial string, c HistoryCutoff, now time.Time) (RemovedDevice, error)
 
 	// ClaimExports leases up to limit due items for sink so concurrent workers don't double-send.
 	ClaimExports(ctx context.Context, sink string, limit int, lease time.Duration, now time.Time) ([]ExportItem, error)
@@ -88,6 +178,57 @@ type Store interface {
 	RetryExportsNow(ctx context.Context, tenantID, sink string, now time.Time, a AuditEntry) (int64, error)
 
 	Close()
+}
+
+// HistoryCutoff says what history expiry may remove: what is older than Before, but, when
+// NotBefore is set, no event received before it. Under the default period with a SIEM,
+// NotBefore is when the SIEM's coverage starts (Coverage.SinkCoverage), so nothing it
+// wasn't sent is removed.
+type HistoryCutoff struct {
+	Before    time.Time
+	NotBefore *time.Time
+}
+
+// ExpiryCounts says how much history was removed.
+type ExpiryCounts struct {
+	Events   int64 `json:"events"`
+	Sessions int64 `json:"sessions"`
+	Commands int64 `json:"commands"`
+	Macs     int64 `json:"macs"`
+}
+
+// Add adds o to c.
+func (c *ExpiryCounts) Add(o ExpiryCounts) {
+	c.Events += o.Events
+	c.Sessions += o.Sessions
+	c.Commands += o.Commands
+	c.Macs += o.Macs
+}
+
+// RemovedDevice says what RemoveDevice did with a Mac.
+type RemovedDevice struct {
+	Removed bool
+	// Skipped is why the Mac was kept (one of the Skipped reasons), or "" when it was
+	// removed or was already gone.
+	Skipped string
+	// RevokedKeys are the device IDs of the keys revoked with the Mac, in order.
+	RevokedKeys []string
+	// Counts is what went with the Mac, and the Mac itself (Macs is 1).
+	Counts ExpiryCounts
+}
+
+// Why RemoveDevice kept a Mac (RemovedDevice.Skipped).
+const (
+	SkippedOwnClock    = "own_clock"
+	SkippedRecentEvent = "recent_event"
+	SkippedNotSent     = "not_sent"
+	SkippedOpenSession = "open_session"
+	SkippedRecentKey   = "recent_key"
+)
+
+// DeviceRef names a Mac.
+type DeviceRef struct {
+	TenantID, Serial string
 }
 
 // MaxSessionPage caps ListSessions.

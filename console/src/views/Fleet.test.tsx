@@ -276,4 +276,106 @@ describe("Fleet", () => {
     expect(api.revokeDevice).toHaveBeenCalledWith("C02ZM1BBMD6T", "asmith");
     expect(await screen.findByText("Admin rights removed from asmith on C02ZM1BBMD6T.")).toBeInTheDocument();
   });
+
+  describe("retired Macs", () => {
+    const retired: Device = {
+      ...mac, serial: "C02RETIRED01", retired_at: "2026-10-20T10:00:00Z", last_seen_at: "2026-10-01T12:00:00Z",
+      last_health_at: "2026-10-01T12:00:00Z", last_received_at: "2026-10-01T12:00:00Z",
+      silence: { event_id: "s1", at: "2026-10-04T12:00:00Z", state: "silent", last_seen_at: "2026-10-01T12:00:00Z" },
+    };
+    const renderFleet = (api: ReturnType<typeof fakeApi>) =>
+      render(<ApiContext.Provider value={api}><MemoryRouter><FleetView /></MemoryRouter></ApiContext.Provider>);
+
+    it("leaves a retired Mac out of the default list and the counts", async () => {
+      renderFleet(fakeApi({ devices: vi.fn(async () => [mac, retired]) }));
+      expect(await screen.findByText("C02ZM1BBMD6T")).toBeInTheDocument();
+      expect(screen.queryByText("C02RETIRED01")).toBeNull();
+      expect(screen.getByText("1 Mac")).toBeInTheDocument();
+      expect(screen.queryByText(/not checking in/)).toBeNull();
+    });
+
+    it("lists it under Retired with a Retired tag, not Late or Not checking in", async () => {
+      renderFleet(fakeApi({ devices: vi.fn(async () => [mac, retired]) }));
+      await screen.findByText("C02ZM1BBMD6T");
+      const show = screen.getByRole("group", { name: "Show" });
+      expect(within(show).getByRole("button", { name: "In use" })).toHaveAttribute("aria-pressed", "true");
+      await userEvent.click(within(show).getByRole("button", { name: "Retired" }));
+      expect(screen.queryByText("C02ZM1BBMD6T")).toBeNull();
+      const row = screen.getByText("C02RETIRED01").closest("tr")!;
+      expect(within(row).getByText("Retired")).toBeInTheDocument();
+      expect(within(row).queryByText("Late")).toBeNull();
+      expect(within(row).queryByText("Not checking in")).toBeNull();
+      expect(screen.getByText("1 retired Mac")).toBeInTheDocument();
+    });
+
+    it("still shows a retired Mac's failing check and admin rights", async () => {
+      const worrying: Device = { ...retired, silence: null, integrity: { code_signature: false }, admin_members: ["asmith", "itadmin"] };
+      renderFleet(fakeApi({ devices: vi.fn(async () => [worrying]) }));
+      await userEvent.click(await screen.findByRole("button", { name: "Retired" }));
+      const row = (await screen.findByText("C02RETIRED01")).closest("tr")!;
+      expect(within(row).getByText("Retired")).toBeInTheDocument();
+      expect(within(row).getByText("Needs attention")).toBeInTheDocument();
+      expect(within(row).queryByText("Late")).toBeNull();
+      await userEvent.click(row);
+      const inspector = screen.getByRole("complementary", { name: "Mac details" });
+      expect(within(inspector).getByText("Elevated")).toBeInTheDocument();
+      expect(within(inspector).queryByRole("button", { name: /Revoke/ })).toBeNull();
+    });
+
+    it("says when no Mac is retired", async () => {
+      renderFleet(fakeApi({ devices: vi.fn(async () => [mac]) }));
+      await screen.findByText("C02ZM1BBMD6T");
+      await userEvent.click(screen.getByRole("button", { name: "Retired" }));
+      expect(screen.getByText("No retired Macs")).toBeInTheDocument();
+      expect(screen.getByText("A Mac is retired when you revoke its key in Enrollments.")).toBeInTheDocument();
+    });
+
+    it("says when history is removed: the last check-in plus the period", async () => {
+      renderFleet(fakeApi({ devices: vi.fn(async () => [retired]) }));
+      await userEvent.click(await screen.findByRole("button", { name: "Retired" }));
+      await userEvent.click(await screen.findByText("C02RETIRED01"));
+      const inspector = screen.getByRole("complementary", { name: "Mac details" });
+      expect(inspector).toHaveTextContent(/Retired.*2026/);
+      expect(await within(inspector).findByText(/History is removed .*2027/)).toBeInTheDocument();
+      // Nothing to revoke on a Mac that can no longer be reached.
+      expect(within(inspector).queryByRole("button", { name: /Revoke/ })).toBeNull();
+    });
+
+    it.each([
+      [{ held_before: "2026-10-01T00:00:00Z" }],
+      [{ waiting_for_backfill: true }],
+    ])("says history goes no earlier than the date while expiry is held back (%j)", async (over) => {
+      const api = fakeApi({
+        devices: vi.fn(async () => [retired]),
+        retention: vi.fn(async () => ({
+          history: { days: 365, kept_for_good: false, reason: "default_siem" as const, held_before: null, waiting_for_backfill: false, ...over },
+        })),
+      });
+      renderFleet(api);
+      await userEvent.click(await screen.findByRole("button", { name: "Retired" }));
+      await userEvent.click(await screen.findByText("C02RETIRED01"));
+      const inspector = screen.getByRole("complementary", { name: "Mac details" });
+      expect(await within(inspector).findByText(/History is removed no earlier than .*2027\./)).toBeInTheDocument();
+    });
+
+    it("says when history is kept for good", async () => {
+      const api = fakeApi({
+        devices: vi.fn(async () => [retired]),
+        retention: vi.fn(async () => ({
+          history: { days: 0, kept_for_good: true, reason: "kept_for_good" as const, held_before: null, waiting_for_backfill: false },
+        })),
+      });
+      renderFleet(api);
+      await userEvent.click(await screen.findByRole("button", { name: "Retired" }));
+      await userEvent.click(await screen.findByText("C02RETIRED01"));
+      expect(await screen.findByText("History is kept for good.")).toBeInTheDocument();
+    });
+
+    it("doesn't ask for the history period for a Mac in use", async () => {
+      const api = fakeApi({ devices: vi.fn(async () => [mac]) });
+      renderFleet(api);
+      await userEvent.click(await screen.findByText("C02ZM1BBMD6T"));
+      expect(api.retention).not.toHaveBeenCalled();
+    });
+  });
 });

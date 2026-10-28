@@ -97,3 +97,15 @@ func TestApproveEveryNewMacHoldsTheFirstKey(t *testing.T) {
 		t.Fatalf("events = %+v, want one pending enrolment with no previous key", got)
 	}
 }
+
+// Settings stored before history_days existed read as the default period.
+func TestSettingsHistoryDaysDefaultsToZero(t *testing.T) {
+	h := newServer(t)
+	if rec, out := do(t, h, "GET", "/v1/settings", consoleToken, nil); rec.Code != http.StatusOK || out["history_days"] != float64(0) {
+		t.Fatalf("default settings: %d %s", rec.Code, rec.Body)
+	}
+	// A body that names other settings only leaves it at the default.
+	if rec, out := do(t, h, "PUT", "/v1/settings", consoleToken, map[string]any{"silent_after_hours": 24}); rec.Code != http.StatusOK || out["history_days"] != float64(0) {
+		t.Fatalf("put without history_days: %d %s", rec.Code, rec.Body)
+	}
+}

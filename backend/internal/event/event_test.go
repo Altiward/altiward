@@ -2,6 +2,7 @@ package event_test
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -99,6 +100,29 @@ func TestValidate(t *testing.T) {
 			"agent.enrollment requires detail.state (enrolled, pending, replaced, rotated or rotated_key_used) and detail.device_id"},
 		{"enrollment with an empty device id", "agent-enrollment-pending", func(e *event.Event) { e.Detail["device_id"] = "" },
 			"agent.enrollment requires detail.state (enrolled, pending, replaced, rotated or rotated_key_used) and detail.device_id"},
+		{"admin group changed", "agent-admin-group-changed", func(e *event.Event) {}, ""},
+		{"admin group snapshot", "agent-admin-group-snapshot", func(e *event.Event) {}, ""},
+		{"admin group changed without added", "agent-admin-group-changed", func(e *event.Event) { delete(e.Detail, "added") }, "detail.added"},
+		{"admin group changed without removed", "agent-admin-group-changed", func(e *event.Event) { delete(e.Detail, "removed") }, "detail.removed"},
+		{"admin group with another state", "agent-admin-group-snapshot", func(e *event.Event) { e.Detail["state"] = "other" }, "detail.state changed or snapshot"},
+		{"admin group without members", "agent-admin-group-snapshot", func(e *event.Event) { delete(e.Detail, "members") }, "detail.members"},
+		{"admin group with too many members", "agent-admin-group-snapshot", func(e *event.Event) {
+			m := make([]any, event.MaxAdminGroupPeople+1)
+			for i := range m {
+				m[i] = fmt.Sprintf("user%d", i)
+			}
+			e.Detail["members"] = m
+		}, "at most 200"},
+		{"admin group with the most members", "agent-admin-group-snapshot", func(e *event.Event) {
+			m := make([]any, event.MaxAdminGroupPeople)
+			for i := range m {
+				m[i] = fmt.Sprintf("user%d", i)
+			}
+			e.Detail["members"] = m
+		}, ""},
+		{"admin group with a bad reading id", "agent-admin-group-snapshot", func(e *event.Event) { e.Detail["health_event_id"] = "X" }, "detail.health_event_id"},
+		{"admin group with a bad as_of", "agent-admin-group-snapshot", func(e *event.Event) { e.Detail["as_of"] = "yesterday" }, "detail.as_of"},
+		{"admin group with a user", "agent-admin-group-snapshot", func(e *event.Event) { e.User = &event.User{LocalName: "jdoe"} }, "no session_id or user"},
 		{"nil detail defaults", "agent-health", func(e *event.Event) { e.Detail = nil }, ""},
 		{"persistence", "persistence-detected", func(e *event.Event) {}, ""},
 		{"persistence without session", "persistence-detected", func(e *event.Event) { e.SessionID = nil }, "requires session_id"},
@@ -124,8 +148,9 @@ func TestValidate(t *testing.T) {
 }
 
 func TestServerRaised(t *testing.T) {
-	if !event.AgentSilent.IsServerRaised() || !event.AgentEnrollment.IsServerRaised() || event.AgentTamper.IsServerRaised() {
-		t.Fatal("only agent.silent and agent.enrollment are raised by the server")
+	if !event.AgentSilent.IsServerRaised() || !event.AgentEnrollment.IsServerRaised() || !event.AgentAdminGroup.IsServerRaised() ||
+		event.AgentTamper.IsServerRaised() {
+		t.Fatal("only agent.silent, agent.enrollment and agent.admin_group are raised by the server")
 	}
 }
 

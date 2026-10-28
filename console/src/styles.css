@@ -250,6 +250,7 @@ table.list { width: 100%; border-collapse: collapse; }
 .tag + .tag { margin-left: var(--space-2); }
 .tag.denied { color: var(--denied); }
 .tag.attention { color: var(--elevated-ink); }
+.tag.ended { color: var(--muted); }
 .badge {
   display: inline-flex; align-items: center; gap: var(--space-2); padding: 2px var(--space-2);
   border-radius: var(--radius-sm); border: 2px solid transparent;
@@ -334,6 +335,10 @@ dialog.sheet .buttons { display: flex; justify-content: flex-end; gap: var(--spa
 .form input[type="number"] {
   width: 72px; height: 28px; padding: 0 var(--space-2); border-radius: var(--radius-sm);
   border: 1px solid var(--line); background: var(--surface-100); font: 400 13px/20px var(--mono); text-align: right;
+}
+.form select {
+  height: 28px; padding: 0 var(--space-2); border-radius: var(--radius-sm);
+  border: 1px solid var(--line); background: var(--surface-100); font: 400 13px/20px var(--sans);
 }
 .form input[aria-invalid="true"] { border-color: var(--denied); }
 .form p.hint[role="alert"] { color: var(--denied); }

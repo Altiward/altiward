@@ -166,8 +166,9 @@ func TestSweepStoresTheAlertOnceAndQueuesItForExport(t *testing.T) {
 	if len(devices) != 1 || !devices[0].Silent() || !devices[0].LastSeenAt.Equal(seen) {
 		t.Fatalf("devices = %+v", devices)
 	}
+	// The reading, the admin group it raised, then the alert.
 	items, _ := st.ClaimExports(ctx, "splunk", 10, time.Minute, now)
-	if len(items) != 2 || items[1].Event.Type != event.AgentSilent {
+	if len(items) != 3 || items[2].Event.Type != event.AgentSilent {
 		t.Fatalf("exports = %+v", items)
 	}
 }
@@ -223,6 +224,7 @@ func TestSweepRaisesNoSilenceWhenAlertsAreOffButStillResumes(t *testing.T) {
 	}
 }
 
+// An admin revoking a Mac's last key retires it, and a retired Mac is expected to go quiet.
 func TestSweepSkipsRetiredMacs(t *testing.T) {
 	ctx := context.Background()
 	d, seen := quietDevice(t)
@@ -238,8 +240,55 @@ func TestSweepSkipsRetiredMacs(t *testing.T) {
 	if _, err := st.RevokeCredential(ctx, tenant, res.Credential.DeviceID, seen, audit(tenant)); err != nil {
 		t.Fatal(err)
 	}
+	devices, _ := st.ListDevices(ctx, tenant)
+	if len(devices) != 1 || devices[0].RetiredAt == nil {
+		t.Fatalf("devices = %+v: revoking the last key must retire the Mac", devices)
+	}
 	if raised, err := w.Sweep(ctx); raised != 0 || err != nil {
-		t.Fatalf("raised = %d, err = %v for a Mac whose credentials are all revoked", raised, err)
+		t.Fatalf("raised = %d, err = %v for a retired Mac", raised, err)
+	}
+}
+
+// A stale-key contest revokes the active key, so every key the Mac has is revoked, but no
+// admin retired it: it is probably still running and has gone quiet, so it is reported.
+func TestSweepReportsAContestedMac(t *testing.T) {
+	ctx := context.Background()
+	d, seen := quietDevice(t)
+	now := seen.Add(100 * time.Hour)
+	w, st := newWorker(t, now)
+	first, err := st.Enroll(ctx, store.DeviceCredential{
+		DeviceID: "5f0c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f", TenantID: tenant, Serial: d.Serial,
+		HardwareUUID: d.HardwareUUID, PublicKey: []byte("key"), CreatedAt: seen,
+	}, store.EnrollLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotatedAt := seen.Add(25 * time.Hour)
+	next, err := st.Rotate(ctx, store.RotateRequest{
+		TenantID: tenant, FromDeviceID: first.Credential.DeviceID,
+		DeviceID: "6a1d2e3f-4b5c-4d6e-8f7a-8b9c0d1e2f3a", PublicKey: []byte("key2"),
+		SignedAt: rotatedAt, Now: rotatedAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The old key is used again after the rotation: a contest, which revokes the new key.
+	contest, err := st.StaleKeyUsed(ctx, first.Credential.DeviceID, rotatedAt.Add(time.Hour), rotatedAt.Add(time.Hour), nil)
+	if err != nil || contest == nil || contest.Revoked == nil || contest.Revoked.DeviceID != next.Credential.DeviceID {
+		t.Fatalf("contest = %+v, err = %v", contest, err)
+	}
+	creds, _ := st.ListCredentials(ctx, tenant, store.CredentialFilter{Serial: d.Serial})
+	for _, c := range creds {
+		if c.Status != store.CredentialRevoked {
+			t.Fatalf("credential %s is %s, want every key revoked", c.DeviceID, c.Status)
+		}
+	}
+	devices, _ := st.ListDevices(ctx, tenant)
+	if len(devices) != 1 || devices[0].RetiredAt != nil {
+		t.Fatalf("devices = %+v: a contest must not retire the Mac", devices)
+	}
+	if raised, err := w.Sweep(ctx); raised != 1 || err != nil {
+		t.Fatalf("raised = %d, err = %v for a Mac a contest left without a key", raised, err)
 	}
 }
 

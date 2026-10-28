@@ -230,7 +230,7 @@
       <table>
         <search>
           <query>index="$index$" sourcetype="altiward:ocsf" host!="altiward" metadata.product.version=*
-  unmapped.altiward.event_type!="agent.enrollment" unmapped.altiward.event_type!="agent.silent"
+  unmapped.altiward.event_type!="agent.enrollment" unmapped.altiward.event_type!="agent.silent" unmapped.altiward.event_type!="agent.admin_group"
 | stats latest(metadata.product.version) as Version by host
 | stats count as Macs by Version
 | sort - Version</query>

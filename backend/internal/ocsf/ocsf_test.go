@@ -54,6 +54,19 @@ func get(m map[string]any, path string) any {
 	return v
 }
 
+// Known is what stops the export drain from completing an event type a newer server
+// raises and this one cannot map: every example type has to be in it.
+func TestKnownCoversEveryExampleType(t *testing.T) {
+	for _, name := range testfixture.Names {
+		if e := testfixture.Event(t, name); !ocsf.Known(e.Type) {
+			t.Errorf("%s: %q is not Known", name, e.Type)
+		}
+	}
+	if ocsf.Known("agent.future") {
+		t.Error("agent.future is Known")
+	}
+}
+
 func TestGrantMapsToAssignPrivileges(t *testing.T) {
 	r := mapJSON(t, stored(t, "elevation-granted"))
 	want := map[string]any{
@@ -831,5 +844,123 @@ func TestFirstPendingEnrollmentKeepsPreviousKeyUnknown(t *testing.T) {
 		if _, exists := detail[field]; exists {
 			t.Errorf("first pending enrolment invented %s = %v", field, detail[field])
 		}
+	}
+}
+
+// A changed admin group is one Add User record per person added, one Remove User per
+// person removed, then the Mac's: each with its own uid, and the first with the event's.
+func TestAdminGroupChangedRecords(t *testing.T) {
+	e := stored(t, "agent-admin-group-changed")
+	records := mapAllJSON(t, e)
+	if len(records) != 3 {
+		t.Fatalf("%d records, want 1 added + 1 removed + 1 for the Mac", len(records))
+	}
+	added, removed, mac := records[0], records[1], records[2]
+	uids := map[string]bool{}
+	for i, r := range records {
+		if get(r, "class_uid") != 3006.0 || get(r, "class_name") != "Group Management" || get(r, "category_uid") != 3.0 ||
+			get(r, "severity_id") != 1.0 || get(r, "group.name") != "admin" || get(r, "device.hw_info.serial_number") != "C02XK0AAJGH5" {
+			t.Errorf("record %d: %v", i, r)
+		}
+		uids[get(r, "metadata.uid").(string)] = true
+	}
+	if len(uids) != 3 || get(added, "metadata.uid") != e.EventID {
+		t.Errorf("uids = %v, want three distinct, the first the event's", uids)
+	}
+	if get(added, "activity_id") != 3.0 || get(added, "activity_name") != "Add User" || get(added, "type_uid") != 300603.0 ||
+		get(added, "user.name") != "jdoe" || get(added, "metadata.correlation_uid") != "7f3a9c2e-1d4b-4e8a-9b60-5c2d8e1f4a37" ||
+		get(added, "unmapped.altiward.source") != "privileges" {
+		t.Errorf("added = %v", added)
+	}
+	if get(removed, "activity_id") != 4.0 || get(removed, "activity_name") != "Remove User" || get(removed, "user.name") != "asmith" {
+		t.Errorf("removed = %v", removed)
+	}
+	if get(removed, "metadata").(map[string]any)["correlation_uid"] != nil {
+		t.Errorf("a removed person has no session: %v", removed["metadata"])
+	}
+	if get(mac, "activity_id") != 99.0 || get(mac, "activity_name") != "Admin group" || mac["user"] != nil {
+		t.Errorf("mac = %v", mac)
+	}
+	if got := get(mac, "unmapped.altiward.detail.members"); !reflect.DeepEqual(got, []any{"root", "itadmin", "jdoe"}) {
+		t.Errorf("mac members = %v", got)
+	}
+	for field, want := range map[string]float64{"member_count": 3, "permanent_admin_count": 1, "added_count": 1, "removed_count": 1} {
+		if got := get(mac, "unmapped.altiward."+field); got != want {
+			t.Errorf("mac %s = %v, want %v", field, got, want)
+		}
+	}
+	// A person's record names the person, not the group around them.
+	for _, r := range []map[string]any{added, removed} {
+		detail := get(r, "unmapped.altiward.detail").(map[string]any)
+		for _, field := range []string{"members", "permanent_admins", "added", "removed"} {
+			if _, ok := detail[field]; ok {
+				t.Errorf("%s carries %s: %v", get(r, "user.name"), field, detail)
+			}
+		}
+	}
+}
+
+func TestAdminGroupSnapshotRecords(t *testing.T) {
+	e := stored(t, "agent-admin-group-snapshot")
+	records := mapAllJSON(t, e)
+	if len(records) != 3 {
+		t.Fatalf("%d records, want 2 members + 1 for the Mac", len(records))
+	}
+	for i, want := range []struct {
+		name      string
+		permanent bool
+	}{{"root", false}, {"itadmin", true}} {
+		r := records[i]
+		if get(r, "class_uid") != 3006.0 || get(r, "activity_id") != 99.0 || get(r, "activity_name") != "Admin group member" ||
+			get(r, "user.name") != want.name || get(r, "group.name") != "admin" {
+			t.Errorf("member %s = %v", want.name, r)
+		}
+		if got, _ := get(r, "unmapped.altiward").(map[string]any)["permanent"].(bool); got != want.permanent {
+			t.Errorf("%s permanent = %v", want.name, got)
+		}
+		if _, ok := get(r, "unmapped.altiward.detail").(map[string]any)["members"]; ok {
+			t.Errorf("%s carries the whole group: %v", want.name, r["unmapped"])
+		}
+	}
+	mac := records[2]
+	if get(mac, "activity_name") != "Admin group" || get(mac, "unmapped.altiward.member_count") != 2.0 || mac["user"] != nil {
+		t.Errorf("mac = %v", mac)
+	}
+	if get(records[0], "metadata.uid") != e.EventID || get(records[1], "metadata.uid") == get(records[2], "metadata.uid") {
+		t.Errorf("uids = %v %v %v", get(records[0], "metadata.uid"), get(records[1], "metadata.uid"), get(records[2], "metadata.uid"))
+	}
+}
+
+// Nobody in the group is still a fact worth sending: the Mac's record goes even then.
+func TestAdminGroupSnapshotOfEmptyGroup(t *testing.T) {
+	e := stored(t, "agent-admin-group-snapshot")
+	e.Detail = maps.Clone(e.Detail)
+	e.Detail["members"], e.Detail["permanent_admins"] = []any{}, []any{}
+	records := mapAllJSON(t, e)
+	if len(records) != 1 {
+		t.Fatalf("%d records, want exactly the Mac's", len(records))
+	}
+	r := records[0]
+	if get(r, "activity_name") != "Admin group" || get(r, "metadata.uid") != e.EventID || get(r, "unmapped.altiward.member_count") != 0.0 {
+		t.Errorf("record = %v", r)
+	}
+}
+
+// A person listed twice is still one record, and no uid repeats.
+func TestAdminGroupRecordsHaveDistinctUIDs(t *testing.T) {
+	e := stored(t, "agent-admin-group-snapshot")
+	e.Detail = maps.Clone(e.Detail)
+	e.Detail["members"] = []any{"root", "root", "itadmin"}
+	records := mapAllJSON(t, e)
+	seen := map[any]bool{}
+	for _, r := range records {
+		uid := get(r, "metadata.uid")
+		if seen[uid] {
+			t.Errorf("uid %v repeats", uid)
+		}
+		seen[uid] = true
+	}
+	if len(records) != 3 {
+		t.Errorf("%d records, want 2 members + 1 for the Mac", len(records))
 	}
 }

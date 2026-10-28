@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import type { Command, Device, PermanentUse } from "../api";
-import { Banner, Details, Empty, Explain, Missing, RoleNote, SearchField, Toolbar } from "../components/Chrome";
+import { Banner, Details, Empty, Explain, Missing, RoleNote, SearchField, Segmented, Toolbar } from "../components/Chrome";
 import { ClaimedGlyph, CloseIcon, ElevatedGlyph, EndedGlyph, NotGrantedGlyph, VerifiedGlyph } from "../components/Icons";
 import { ConfirmSheet } from "../components/Sheet";
 import { StateBadge } from "../components/StateBadge";
@@ -9,7 +9,7 @@ import { Table } from "../components/Table";
 import { useApi, useCan } from "../context";
 import { checkTips, persistenceCheckTip } from "../explanations";
 import {
-  agentOutdated, dateTime, expiresAfter, integrityCheckLabel, lastCheckIn, permanentUseMethodLabel, relativeTime, revokeNotice, tamperStateLabel,
+  agentOutdated, dateOnly, dateTime, expiresAfter, hasFailingCheck, integrityCheckLabel, lastCheckIn, permanentUseMethodLabel, relativeTime, revokeNotice, tamperStateLabel,
 } from "../format";
 import { useCommandResult } from "../useCommandResult";
 import { useLoad } from "../useLoad";
@@ -20,7 +20,10 @@ const isStale = (d: Device, now = Date.now()) => now - new Date(lastCheckIn(d)).
 /** The server raised agent.silent and the Mac hasn't checked in since. */
 const silent = (d: Device) => d.silence?.state === "silent";
 /** A tamper check failing in the newest health reading. */
-const needsAttention = (d: Device) => Object.values(d.integrity ?? {}).some((passing) => !passing);
+const needsAttention = hasFailingCheck;
+/** An admin revoked the Mac's only key: it is out of use, and stays listed only under Retired. */
+const retired = (d: Device) => !!d.retired_at;
+type Lifecycle = "in_use" | "retired";
 /** Problems the overview links to (?show=), and how the banner names them. */
 const shows = {
   attention: "Macs failing an integrity check",
@@ -48,6 +51,7 @@ export function FleetView() {
   const [query, setQuery] = useState(params.get("q") ?? "");
   const show = (params.get("show") ?? "") in shows ? params.get("show") as Show : null;
   const [selected, setSelected] = useState<string | null>(null);
+  const [lifecycle, setLifecycle] = useState<Lifecycle>("in_use");
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -55,16 +59,21 @@ export function FleetView() {
       : show === "silent" ? silent(d)
       : show === "outdated" ? !!oldest && agentOutdated(d.agent_version, oldest)
       : true;
-    return (data ?? []).filter((d) => shown(d) && (!q || [d.serial, ...d.admin_members].some((v) => v.toLowerCase().includes(q))));
-  }, [data, query, show, oldest]);
+    return (data ?? []).filter((d) => (lifecycle === "retired") === retired(d) && shown(d) && (!q || [d.serial, ...d.admin_members].some((v) => v.toLowerCase().includes(q))));
+  }, [data, query, show, oldest, lifecycle]);
   const current = rows.find((d) => d.serial === selected) ?? null;
-  const stale = rows.filter((d) => isStale(d)).length;
+  const stale = lifecycle === "in_use" ? rows.filter((d) => isStale(d)).length : 0;
+  const anyRetired = (data ?? []).some(retired);
+  const noun = lifecycle === "retired" ? "retired Mac" : "Mac";
 
   return (
     <>
       <Toolbar title="Fleet"
-        subtitle={data ? `${rows.length} ${rows.length === 1 ? "Mac" : "Macs"}${stale ? `, ${stale} not checking in` : ""}` : undefined}
+        subtitle={data ? `${rows.length} ${rows.length === 1 ? noun : `${noun}s`}${stale ? `, ${stale} not checking in` : ""}` : undefined}
         onRefresh={reload}>
+        <Segmented label="Show" value={lifecycle} onChange={setLifecycle} options={[
+          { value: "in_use", title: "In use" }, { value: "retired", title: "Retired" },
+        ]} />
         <SearchField value={query} onChange={setQuery} placeholder="Search Macs or admins" />
       </Toolbar>
       <div className={`split${current ? " with-inspector" : ""}`}>
@@ -77,9 +86,15 @@ export function FleetView() {
             </Banner>
           )}
           {data && rows.length === 0 ? (
-            <Empty title={data.length ? "No matching Macs" : "No Macs yet"}>
-              {data.length ? "Try another search." : "Macs appear here after their agent first checks in."}
-            </Empty>
+            lifecycle === "retired" && !show && !query.trim() ? (
+              <Empty title="No retired Macs">A Mac is retired when you revoke its key in Enrollments.</Empty>
+            ) : data.length && !show && !query.trim() && anyRetired ? (
+              <Empty title="No Macs in use">Every Mac is retired. Choose Retired to see them.</Empty>
+            ) : (
+              <Empty title={data.length ? "No matching Macs" : "No Macs yet"}>
+                {data.length ? "Try another search." : "Macs appear here after their agent first checks in."}
+              </Empty>
+            )
           ) : (
             <Table label="Macs" rows={rows} rowKey={(d) => d.serial} selected={selected} onSelect={setSelected}
               initialSort={{ key: "mac" }}
@@ -87,7 +102,12 @@ export function FleetView() {
                 { key: "mac", title: "Mac", sort: (d) => d.serial, render: (d) => (
                   <>
                     <span className="data">{d.serial}</span>
-                    {silent(d) && (
+                    {retired(d) && (
+                      <span className="tag ended" style={{ marginLeft: 8 }} title="An admin revoked this Mac’s key, so it is out of use">
+                        <EndedGlyph /> Retired
+                      </span>
+                    )}
+                    {!retired(d) && silent(d) && (
                       <span className="tag denied" style={{ marginLeft: 8 }} title="Altiward raised an alert: this Mac stopped checking in">
                         <NotGrantedGlyph /> Not checking in
                       </span>
@@ -105,7 +125,7 @@ export function FleetView() {
                   </>
                 ) },
                 { key: "checkin", title: "Last check-in", sort: (d) => new Date(lastCheckIn(d)).getTime(), render: (d) => (
-                  <>{relativeTime(lastCheckIn(d))}{isStale(d) && <span className="tag attention" style={{ marginLeft: 8 }}>Late</span>}</>
+                  <>{relativeTime(lastCheckIn(d))}{!retired(d) && isStale(d) && <span className="tag attention" style={{ marginLeft: 8 }}>Late</span>}</>
                 ) },
                 { key: "admins", title: "Admins", sort: (d) => d.admin_members.length,
                   render: (d) => d.admin_members.length ? <AdminNames device={d} /> : <span className="secondary">None</span> },
@@ -158,6 +178,32 @@ function checkSeverity(check: string, severities: Record<string, string> | undef
   return severities[check] ?? "High";
 }
 
+/** When a retired Mac left use, and when its history goes: history goes once the Mac's last
+ *  check-in is older than the period, so that day is the last check-in plus the period. */
+function RetiredNote({ device: d }: { device: Device }) {
+  const api = useApi();
+  const { data } = useLoad(() => api.retention(), []);
+  const policy = data?.history;
+  const removal = policy && policy.days > 0 && !policy.kept_for_good
+    ? new Date(new Date(lastCheckIn(d)).getTime() + policy.days * 86_400_000).toISOString()
+    : null;
+  // While the SIEM's coverage or the admin group backfill holds expiry back, the Mac may be
+  // kept past that date, so it is the earliest, not the day.
+  const held = !!policy && (!!policy.held_before || policy.waiting_for_backfill);
+  return (
+    <>
+      <p className="lede" title={dateTime(d.retired_at)}><span className="tag ended"><EndedGlyph /> Retired</span> {dateOnly(d.retired_at)}</p>
+      {policy && (
+        <p className="lede">
+          {!removal ? "History is kept for good."
+            : held ? `History is removed no earlier than ${dateOnly(removal)}.`
+            : `History is removed ${dateOnly(removal)}.`}
+        </p>
+      )}
+    </>
+  );
+}
+
 function DeviceInspector({ device: d, severities, onClose }: {
   device: Device;
   severities: Record<string, string> | undefined;
@@ -173,9 +219,11 @@ function DeviceInspector({ device: d, severities, onClose }: {
     setNotice(revokeNotice(c, c.user ?? undefined));
   });
   const p = d.privileges ?? {};
+  const isRetired = retired(d);
   const permanent = new Set(d.permanent_admins ?? []);
 
-  const canRevoke = useCan("operator");
+  // A retired Mac has no key, so a revoke could never reach it.
+  const canRevoke = useCan("operator") && !isRetired;
   async function revoke() {
     setBusy(true);
     try {
@@ -195,7 +243,8 @@ function DeviceInspector({ device: d, severities, onClose }: {
         <div style={{ flex: 1 }}>
           <h2 className="data" style={{ fontSize: 18, lineHeight: "24px" }}>{d.serial}</h2>
           <p className="lede">macOS {d.os_version}. Last check-in {relativeTime(lastCheckIn(d)).toLowerCase()}.</p>
-          {silent(d) && (
+          {isRetired && <RetiredNote device={d} />}
+          {!isRetired && silent(d) && (
             <p className="lede" title={dateTime(d.silence!.at)}>
               <span className="tag denied"><NotGrantedGlyph /> Not checking in</span>{" "}
               Alert raised {relativeTime(d.silence!.at).toLowerCase()}. The agent may have been removed, the Mac is off, or it can’t reach the agent hostname from where it is.
@@ -207,7 +256,7 @@ function DeviceInspector({ device: d, severities, onClose }: {
         </div>
         <button type="button" className="button icon-button" aria-label="Close details" onClick={onClose}><CloseIcon /></button>
       </div>
-      {d.admin_members.some((u) => !permanent.has(u)) && (canRevoke ? (
+      {!isRetired && d.admin_members.some((u) => !permanent.has(u)) && (canRevoke ? (
         <div className="actions">
           <button type="button" className="button destructive" onClick={() => setTarget(null)}>Revoke all admin rights…</button>
         </div>

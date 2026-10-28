@@ -31,12 +31,13 @@ const (
 	AgentSilent              Type = "agent.silent"
 	AdminPermanentUse        Type = "admin.permanent_use"
 	AgentEnrollment          Type = "agent.enrollment"
+	AgentAdminGroup          Type = "agent.admin_group"
 )
 
 var knownTypes = map[Type]bool{
 	ElevationGranted: true, ElevationRevoked: true, ElevationExpiredEnforced: true, ElevationOverdue: true,
 	AdminOutOfBand: true, AdminOutOfBandRemoved: true, Activity: true, PersistenceDetected: true, AgentHealth: true,
-	AgentTamper: true, AgentSilent: true, AdminPermanentUse: true, AgentEnrollment: true,
+	AgentTamper: true, AgentSilent: true, AdminPermanentUse: true, AgentEnrollment: true, AgentAdminGroup: true,
 }
 
 // Silence states for agent.silent.
@@ -63,6 +64,18 @@ const (
 	EnrollmentStateRotated        = "rotated"
 	EnrollmentStateRotatedKeyUsed = "rotated_key_used"
 )
+
+// States of the admin group the server sends to the SIEM (agent.admin_group): the people
+// added to and removed from it since the last report, or the whole group, once a day.
+const (
+	AdminGroupChanged  = "changed"
+	AdminGroupSnapshot = "snapshot"
+)
+
+// MaxAdminGroupPeople is the most names one list of an agent.admin_group event carries
+// (members, permanent_admins, added or removed). Raising it leaves the rest out and counts
+// them in detail.truncated.
+const MaxAdminGroupPeople = 200
 
 // Event is one record from the agent. Field names and nullability follow the JSON schema.
 type Event struct {
@@ -116,7 +129,9 @@ func (t Type) IsSessionEvent() bool {
 
 // IsServerRaised reports whether the backend raises events of this type itself. Agents may
 // not send them, and they say nothing about when the Mac was last seen.
-func (t Type) IsServerRaised() bool { return t == AgentSilent || t == AgentEnrollment }
+func (t Type) IsServerRaised() bool {
+	return t == AgentSilent || t == AgentEnrollment || t == AgentAdminGroup
+}
 
 // raisedNamespace scopes the name-based UUIDs of raised events.
 var raisedNamespace = [16]byte{0x6b, 0x1e, 0x2f, 0x9a, 0x3c, 0x4d, 0x4e, 0x8f, 0x9a, 0x0b, 0x1c, 0x2d, 0x3e, 0x4f, 0x50, 0x61}
@@ -272,12 +287,52 @@ func (e *Event) Validate(now time.Time) error {
 		if !knownState || id == "" {
 			return fmt.Errorf("%s requires detail.state (enrolled, pending, replaced, rotated or rotated_key_used) and detail.device_id", e.Type)
 		}
+	case AgentAdminGroup:
+		if err := e.validateAdminGroup(); err != nil {
+			return err
+		}
 	}
 	if e.Detail == nil {
 		e.Detail = map[string]any{}
 	}
 	if b, err := json.Marshal(e.Detail); err != nil || len(b) > MaxDetailBytes {
 		return errors.New("detail is not serialisable or exceeds 64 KiB")
+	}
+	return nil
+}
+
+// validateAdminGroup checks the detail of an agent.admin_group event.
+func (e *Event) validateAdminGroup() error {
+	st, _ := e.Detail["state"].(string)
+	if st != AdminGroupChanged && st != AdminGroupSnapshot {
+		return fmt.Errorf("%s requires detail.state changed or snapshot", e.Type)
+	}
+	if e.SessionID != nil || e.User != nil {
+		return fmt.Errorf("%s has no session_id or user", e.Type)
+	}
+	if id, _ := e.Detail["health_event_id"].(string); !uuidPattern.MatchString(id) {
+		return fmt.Errorf("%s requires detail.health_event_id, a lower-case UUID", e.Type)
+	}
+	if s, _ := e.Detail["as_of"].(string); s == "" {
+		return fmt.Errorf("%s requires detail.as_of", e.Type)
+	} else if _, err := time.Parse(time.RFC3339, s); err != nil {
+		return fmt.Errorf("%s requires detail.as_of as an RFC 3339 time", e.Type)
+	}
+	if n, ok := e.Detail["truncated"].(float64); !ok || n < 0 || n != float64(int(n)) {
+		return fmt.Errorf("%s requires detail.truncated, a count of people left out", e.Type)
+	}
+	lists := []string{"members", "permanent_admins"}
+	if st == AdminGroupChanged {
+		lists = append(lists, "added", "removed")
+	}
+	for _, key := range lists {
+		l, ok := e.Detail[key].([]any)
+		if !ok {
+			return fmt.Errorf("%s requires detail.%s, a list", e.Type, key)
+		}
+		if len(l) > MaxAdminGroupPeople {
+			return fmt.Errorf("%s has at most %d people in detail.%s", e.Type, MaxAdminGroupPeople, key)
+		}
 	}
 	return nil
 }
