@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	"golang.org/x/oauth2"
 
@@ -220,9 +221,8 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Some identity providers let people choose their names, and one like a console
-	// token's would pass for the token in the audit log. The SIEM's rules match the prefix
-	// in any case.
-	if name := strings.ToLower(strings.TrimSpace(id.Email)); strings.HasPrefix(name, "token:") || strings.HasPrefix(name, "break-glass:") {
+	// token's would pass for the token in the audit log and the SIEM.
+	if looksLikeToken(id.Email) {
 		s.log.Warn("sign-in refused: the name looks like a console token", "actor", id.Email)
 		signInFailed(w, r, "failed")
 		return
@@ -254,6 +254,16 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	s.log.Info("signed in", "tenant", sess.TenantID, "actor", sess.Actor, "role", role)
 	s.setCookie(w, "altiward_session", token, 0)
 	http.Redirect(w, r, st.Next, http.StatusFound)
+}
+
+// looksLikeToken reports whether a single sign-on name could be read as a console token's:
+// one that starts with token: or break-glass: in any case, as the SIEM's rules match them,
+// or that has a colon (no email or UPN has one, and every token's name does) or a control
+// or format character, which can hide in a name (a zero-width space, a byte order mark).
+func looksLikeToken(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	return strings.HasPrefix(n, "token:") || strings.HasPrefix(n, "break-glass:") || strings.Contains(name, ":") ||
+		strings.ContainsFunc(name, func(r rune) bool { return unicode.Is(unicode.Cc, r) || unicode.Is(unicode.Cf, r) })
 }
 
 // signInFailed sends the browser back to the console's sign-in page with a reason it can

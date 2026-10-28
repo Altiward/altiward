@@ -125,7 +125,7 @@ out-of-band session).
 | `ALTIWARD_LISTEN_ADDR` | `:8080` | |
 | `ALTIWARD_DATABASE_URL` | None | Postgres URL. Unset means the in-memory store (development only). Migrations run on start. |
 | `ALTIWARD_AGENT_TOKENS` | None | Enrollment tokens, `tenant=token,tenant=token` (tokens ≥ 16 chars). They only enroll. |
-| `ALTIWARD_CONSOLE_TOKENS` | None | Same format. Admin tokens for the console and its API; break-glass logins with single sign-on. Optional once single sign-on with `ALTIWARD_OIDC_ADMIN_GROUPS` works: start fails with no console token and no single sign-on, or no console token and no admin groups. `,` alone counts as none. |
+| `ALTIWARD_CONSOLE_TOKENS` | None | Same format. Admin tokens for the console and its API; break-glass logins with single sign-on. Optional once single sign-on with `ALTIWARD_OIDC_ADMIN_GROUPS` works: start fails when a tenant has no console token and no single sign-on serving it (`ALTIWARD_OIDC_TENANT`), or no console token and single sign-on without admin groups. `,` alone counts as none. |
 | `ALTIWARD_EXPORT_INTERVAL` | `10s` | How often export workers poll |
 | `ALTIWARD_AUDIT_RETENTION_DAYS` | None | Remove audit entries older than this, daily; at least 365. Unset or `0` keeps them forever. Entries still waiting for export stay until sent, and the database refuses to delete any younger than 365 days. |
 | `ALTIWARD_ENROLL_NEW_MACS_PER_HOUR` | `1000` | How many serials new to a tenant may enrol in an hour. More are refused with 429 until the hour has passed. `0` turns the limit off. |

@@ -520,8 +520,8 @@ your identity provider applies at once.
 The console token keeps working as a **break-glass** login, with the admin role, for
 when your identity provider is down or misconfigured. Each hour it's used shows in
 Activity and your SIEM as a sign-in by `break-glass:` and the token's fingerprint, and
-each change it makes is recorded as anyone's is, so alert on `break-glass:`. Once single
-sign-on works with admin groups, you can turn the token off.
+each change it makes is recorded as anyone's is, so alert on `break-glass:` in the
+console's records. Once single sign-on works with admin groups, you can turn the token off.
 [Console token and break-glass](#console-token-and-break-glass) covers keeping it,
 changing it, a leaked token and turning it off.
 
@@ -1116,11 +1116,13 @@ The [diagnostics report](#diagnostics-for-a-bug-report) lists the fingerprint of
 token the server accepts, under `tokens`.
 
 **Who can see it.** The running server keeps only each token's SHA-256 digest, but the
-token itself is in `.env`, and in the container's environment, which `docker inspect`
-shows to anyone who can run Docker on the server. On Azure it is in the key vault, for
-whoever can read its secrets, and in the app's containers, for whoever can run commands in
-them (`az containerapp exec`). Anyone with that access can sign in as an admin, so keep it
-to a few people. The SIEM alert below is how you notice a use.
+token itself is in `.env`, in every copy of `.env` you keep (with your
+[backups](#backups), and those `upgrade.sh` makes in `backups/`), and in the container's
+environment, which `docker inspect` shows to anyone who can run Docker on the server. On
+Azure it is in the key vault, for whoever can read its secrets, and in the app's
+containers, for whoever can run commands in them (`az containerapp exec`). Anyone with
+that access can sign in as an admin, so keep it to a few people. The SIEM alert below is
+how you notice a use.
 
 **Creating one.** Make a token with `openssl rand -hex 32` and list it as
 `yourcompany=<token>` (a token needs at least 16 characters), with the same organisation
@@ -1153,15 +1155,20 @@ a shared document.
   that happens as you sign in, the console says it couldn't sign you in just now: the
   token wasn't rejected, so try again shortly. Later in a session, the page shows an error
   and you stay signed in.
-- Single sign-on refuses anyone whose name starts with `token:` or `break-glass:`, in any
-  case, so those names in Activity are always tokens.
+- Single sign-on refuses anyone whose name looks like a console token's: one that starts
+  with `token:` or `break-glass:` in any case, or has a colon or an invisible character
+  in it. So those names in Activity are always tokens.
 
 Your SIEM gets each sign-in as an OCSF Authentication record with the fingerprint in
 `user.name`, at Low severity for `break-glass:` and Informational for `token:`, and each
 change as API Activity with the fingerprint in `actor.user.name`. In CEF both are in
-`suser`, and in Sentinel in `UserName`. Alert on `break-glass:` with the altiward-siem
-break-glass rule. It alerts on sign-ins from altiward-siem 1.2.0; earlier versions alert
-only on changes.
+`suser`, and in Sentinel in `UserName`. Alert on `break-glass:` in the console's records,
+whose event type (the signature in CEF) starts with `console.`, as the altiward-siem
+break-glass rule does. Not on the name alone: a Mac's serial is the name in some of its
+own records, and whoever enrols a Mac chooses it. The rule alerts on sign-ins from
+altiward-siem 1.2.0, earlier versions only on changes. From 1.2.0 it also alerts on
+records that arrive up to 7 days late, such as while the server can't reach your SIEM, as
+long as the server's clock is right.
 
 **Changing a token without a gap:**
 
@@ -1173,8 +1180,9 @@ only on changes.
 3. Remove the old token, and run `docker compose up -d` again.
 
 On Azure each step is a new version of the `console-tokens` secret and a restart, and
-afterwards you disable the old versions, so the old token can't be read from the vault or
-brought back ([The console token](../deploy/azure/README.md#the-console-token) on Azure).
+afterwards you disable the old versions, so the old token can't be read from the vault
+unless someone who can manage its secrets enables it again
+([The console token](../deploy/azure/README.md#the-console-token) on Azure).
 
 **Revoking a token, or after a leak:**
 
@@ -1195,30 +1203,33 @@ brought back ([The console token](../deploy/azure/README.md#the-console-token) o
 2. **Find what it did**, by its fingerprint. Activity has no filter by who did something:
    it shows the newest 500 entries, which you can sort by **By**. To look further back:
 
-   - **In your SIEM.** A sign-in has the fingerprint in `user.name` and a change has it in
-     `actor.user.name` (`suser` in CEF), so search both, or search for the fingerprint as
-     text. Splunk and Sentinel search the last 24 hours unless you say otherwise, so set
-     the time range back to when the token may have leaked, as these searches do for 90
-     days. In Splunk,
-     `sourcetype=altiward:ocsf host=altiward earliest=-90d "break-glass:3f2a9c1b"`; in
-     Sentinel,
-     `AltiwardOCSF_CL | where TimeGenerated > ago(90d) and UserName == "break-glass:3f2a9c1b"`.
+   - **In your SIEM.** Search for both of the token's names: `token:` and the fingerprint
+     for what it did before single sign-on was set up, and `break-glass:` and the
+     fingerprint after. A sign-in has the name in `user.name` and a change has it in
+     `actor.user.name` (`suser` in CEF), so search both, or search for the names as text.
+     Splunk and Sentinel search the last 24 hours unless you say otherwise, so set the time
+     range back to when the token may have leaked, as these searches do for 90 days. In
+     Splunk,
+     `sourcetype=altiward:ocsf host=altiward earliest=-90d ("token:3f2a9c1b" OR "break-glass:3f2a9c1b")`;
+     in Sentinel,
+     `AltiwardOCSF_CL | where TimeGenerated > ago(90d) and UserName in ("token:3f2a9c1b", "break-glass:3f2a9c1b")`.
    - **From the API**, from an allowed network, with a token you're keeping (which records
      a sign-in of its own). This covers the newest 500 entries:
 
      ```sh
      read -rs t    # paste a token you're keeping, then press Enter
-     curl -fsS -H "Authorization: Bearer $t" \
+     printf 'Authorization: Bearer %s\n' "$t" | curl -fsS -H @- \
        "https://<console hostname>/v1/audit?limit=500" |
-       jq '.entries[] | select(.actor == "break-glass:3f2a9c1b")'
+       jq '.entries[] | select(.actor == "token:3f2a9c1b" or .actor == "break-glass:3f2a9c1b")'
      unset t
      ```
 
    - **In the bundled Postgres**, which holds every entry:
 
      ```sh
-     docker compose exec -T postgres psql -U altiward -d altiward -c "SELECT at, action,
-       target, detail FROM audit_log WHERE actor = 'break-glass:3f2a9c1b' ORDER BY at"
+     docker compose exec -T postgres psql -U altiward -d altiward -c "SELECT at, actor,
+       action, target, detail FROM audit_log
+       WHERE actor IN ('token:3f2a9c1b', 'break-glass:3f2a9c1b') ORDER BY at"
      ```
 
 3. **Undo what it changed**, entry by entry:
@@ -1270,6 +1281,10 @@ With no console token, and single sign-on without admin groups:
 ```
 set ALTIWARD_OIDC_ADMIN_GROUPS, or keep a console token in ALTIWARD_CONSOLE_TOKENS: without either, nobody can approve Macs or change settings
 ```
+
+A server with several organisations checks each one: each needs a console token of its
+own, or single sign-on serving it (`ALTIWARD_OIDC_TENANT`) with admin groups, and the
+message names the first organisation without one.
 
 ### Your own certificates or load balancer
 

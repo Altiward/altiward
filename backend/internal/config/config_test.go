@@ -31,7 +31,7 @@ func TestDefaults(t *testing.T) {
 // tenant kept from a connection that has been turned off.
 func TestTenants(t *testing.T) {
 	c, err := config.Load(env(map[string]string{
-		"ALTIWARD_AGENT_TOKENS": "acme=x, globex=y", "ALTIWARD_CONSOLE_TOKENS": "acme=z,initech=w",
+		"ALTIWARD_AGENT_TOKENS": "acme=x, globex=y", "ALTIWARD_CONSOLE_TOKENS": "acme=z,initech=w,globex=v",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func TestOIDC(t *testing.T) {
 			t.Errorf("%s: no error", name)
 		}
 	}
-	m := with("ALTIWARD_CONSOLE_TOKENS", "other=y")
+	m := with("ALTIWARD_CONSOLE_TOKENS", "other=y,acme=z")
 	m["ALTIWARD_OIDC_TENANT"] = "other"
 	if c, err := config.Load(env(m)); err != nil || c.OIDC.Tenant != "other" {
 		t.Errorf("explicit tenant: %v", err)
@@ -361,7 +361,7 @@ func TestIntune(t *testing.T) {
 		"no tenant":      {"ALTIWARD_INTUNE_TENANT_ID", "", "ALTIWARD_INTUNE_AUTH=certificate needs ALTIWARD_INTUNE_TENANT_ID, CLIENT_ID and CERTIFICATE_FILE"},
 		"no client":      {"ALTIWARD_INTUNE_CLIENT_ID", "", "ALTIWARD_INTUNE_AUTH=certificate needs ALTIWARD_INTUNE_TENANT_ID, CLIENT_ID and CERTIFICATE_FILE"},
 		"a secret too":   {"ALTIWARD_INTUNE_CLIENT_SECRET", "s", "ALTIWARD_INTUNE_CLIENT_SECRET isn't used with ALTIWARD_INTUNE_AUTH=certificate: remove it"},
-		"two tenants":    {"ALTIWARD_AGENT_TOKENS", "acme=x,beta=z", "ALTIWARD_INTUNE_* needs a server with one tenant: the tokens name more than one"},
+		"two tenants":    {"ALTIWARD_CONSOLE_TOKENS", "acme=y,beta=z", "ALTIWARD_INTUNE_* needs a server with one tenant: the tokens name more than one"},
 		"another auth":   {"ALTIWARD_INTUNE_AUTH", "secret", "ALTIWARD_INTUNE_CERTIFICATE_FILE is only used with ALTIWARD_INTUNE_AUTH=certificate"},
 		"managed + file": {"ALTIWARD_INTUNE_AUTH", "managed-identity", "ALTIWARD_INTUNE_CERTIFICATE_FILE is only used with ALTIWARD_INTUNE_AUTH=certificate"},
 	} {
@@ -501,6 +501,7 @@ func TestConsoleNeedsAnAdminWayIn(t *testing.T) {
 		"ALTIWARD_OIDC_ISSUER": "https://login.example.com/t/v2.0", "ALTIWARD_OIDC_CLIENT_ID": "app",
 		"ALTIWARD_CONSOLE_URL": "https://altiward.example.com",
 	}
+	twoOrgs := map[string]string{"ALTIWARD_AGENT_TOKENS": "a=agent-token-0000000001,b=agent-token-0000000002"}
 	with := func(extra ...map[string]string) map[string]string {
 		m := map[string]string{"ALTIWARD_AGENT_TOKENS": "acme=agent-token-0000000001"}
 		for _, e := range extra {
@@ -523,6 +524,25 @@ func TestConsoleNeedsAnAdminWayIn(t *testing.T) {
 		{"console token, no single sign-on", with(map[string]string{"ALTIWARD_CONSOLE_TOKENS": "acme=console-token-0000000001"}), ""},
 		{"console token, single sign-on with viewer groups only", with(sso, map[string]string{
 			"ALTIWARD_CONSOLE_TOKENS": "acme=console-token-0000000001", "ALTIWARD_OIDC_VIEWER_GROUPS": "g1"}), ""},
+		// A token that isn't tenant=token is auth.Parse's to explain.
+		{"a console token without an organisation", with(map[string]string{"ALTIWARD_CONSOLE_TOKENS": "console-token-0000000001"}), ""},
+
+		// Each organisation needs a way in of its own: single sign-on serves only one.
+		{"two organisations, single sign-on and a console token for one", with(sso, twoOrgs, map[string]string{
+			"ALTIWARD_OIDC_TENANT": "a", "ALTIWARD_OIDC_ADMIN_GROUPS": "g1", "ALTIWARD_CONSOLE_TOKENS": "a=console-token-0000000001"}),
+			"organisation b: set ALTIWARD_CONSOLE_TOKENS for it, or single sign-on with ALTIWARD_OIDC_ISSUER and ALTIWARD_OIDC_TENANT=b: " +
+				"without either, nobody can sign in to its console"},
+		{"two organisations, single sign-on for one and a console token for the other", with(sso, twoOrgs, map[string]string{
+			"ALTIWARD_OIDC_TENANT": "a", "ALTIWARD_OIDC_ADMIN_GROUPS": "g1", "ALTIWARD_CONSOLE_TOKENS": "a=console-token-0000000001,b=console-token-0000000002"}), ""},
+		{"two organisations, a console token for each", with(twoOrgs, map[string]string{
+			"ALTIWARD_CONSOLE_TOKENS": "a=console-token-0000000001,b=console-token-0000000002"}), ""},
+		{"two organisations, single sign-on without admin groups for one", with(sso, twoOrgs, map[string]string{
+			"ALTIWARD_OIDC_TENANT": "b", "ALTIWARD_OIDC_VIEWER_GROUPS": "g1", "ALTIWARD_CONSOLE_TOKENS": "a=console-token-0000000001"}),
+			"organisation b: set ALTIWARD_OIDC_ADMIN_GROUPS, or keep a console token for it in ALTIWARD_CONSOLE_TOKENS: " +
+				"without either, nobody can approve its Macs or change its settings"},
+		{"two organisations, no console tokens", with(twoOrgs),
+			"organisation a: set ALTIWARD_CONSOLE_TOKENS for it, or single sign-on with ALTIWARD_OIDC_ISSUER and ALTIWARD_OIDC_TENANT=a: " +
+				"without either, nobody can sign in to its console"},
 	} {
 		_, err := config.Load(env(tc.env))
 		switch {

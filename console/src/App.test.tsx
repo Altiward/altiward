@@ -72,11 +72,10 @@ describe("signing in", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("The server rejected that token");
   });
 
-  it("forgets the token when the server forbids it", async () => {
-    serve({ tokenStatus: 403 });
+  it.each([401, 403])("forgets a stored token when the server answers %i on reload", async (status) => {
+    sessionStorage.setItem("altiward.consoleToken", "console-token-000000001");
+    serve({ tokenStatus: status });
     render(<App />);
-    await userEvent.type(await screen.findByLabelText("Console token"), "console-token-000000001");
-    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("The server rejected that token");
     expect(sessionStorage.getItem("altiward.consoleToken")).toBeNull();
   });
@@ -101,6 +100,24 @@ describe("signing in", () => {
     expect(sessionStorage.getItem("altiward.consoleToken")).toBe("console-token-000000001");
     expect(screen.getByLabelText("Break-glass token")).toHaveValue("console-token-000000001");
   });
+
+  // Otherwise the load on return from the identity provider would prefer the token, and
+  // sign the person in as break-glass.
+  it.each(["Sign in with single sign-on", "Use a different account"])(
+    "forgets a kept token when %s is chosen", async (name) => {
+      sessionStorage.setItem("altiward.consoleToken", "console-token-000000001");
+      serve({ sso: true, tokenStatus: 500 });
+      render(<App />);
+      expect(await screen.findByRole("alert")).toHaveTextContent("Your token wasn’t rejected");
+      const stay = (e: MouseEvent) => e.preventDefault(); // jsdom can't follow the link
+      document.addEventListener("click", stay);
+      try {
+        await userEvent.click(screen.getByRole("link", { name }));
+      } finally {
+        document.removeEventListener("click", stay);
+      }
+      expect(sessionStorage.getItem("altiward.consoleToken")).toBeNull();
+    });
 
   it("offers single sign-on, with a break-glass token behind a link", async () => {
     window.history.replaceState(null, "", "/fleet");

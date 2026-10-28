@@ -229,11 +229,17 @@ function SignIn({ sso, problem, initialToken, onToken }: { sso: boolean; problem
         {sso && (
           <>
             <p>Sign in with your organisation’s account.</p>
+            {/* Choosing single sign-on forgets a token kept after a server error: otherwise the
+                page would sign in with it, as break-glass, on the way back. */}
             <div className="buttons">
-              <a className="button primary" href={`/v1/auth/login?next=${encodeURIComponent(next)}`}>Sign in with single sign-on</a>
+              <a className="button primary" href={`/v1/auth/login?next=${encodeURIComponent(next)}`} onClick={() => forgetToken()}>
+                Sign in with single sign-on
+              </a>
             </div>
             <p className="alternative">
-              <a className="link" href={`/v1/auth/login?select_account=1&next=${encodeURIComponent(next)}`}>Use a different account</a>
+              <a className="link" href={`/v1/auth/login?select_account=1&next=${encodeURIComponent(next)}`} onClick={() => forgetToken()}>
+                Use a different account
+              </a>
             </p>
             {!showToken && (
               <p className="alternative">

@@ -320,8 +320,12 @@ func TestSignInRefusals(t *testing.T) {
 // break-glass alert.
 func TestSingleSignOnRefusesTokenLikeNames(t *testing.T) {
 	env := newSSOServer(t)
-	// The SIEM's rules match the prefix in any case.
-	names := []string{"break-glass:3f2a9c1b", "token:3f2a9c1b", "Break-Glass:3f2a9c1b", "TOKEN:3f2a9c1b", " break-glass:3f2a9c1b"}
+	// The SIEM's rules match the prefix in any case. A name with a colon is refused too, as
+	// no email or UPN has one and every token's name does (so is one with a lookalike
+	// hyphen), and so is a name with a control or format character, such as a zero-width
+	// space or a byte order mark.
+	names := []string{"break-glass:3f2a9c1b", "token:3f2a9c1b", "Break-Glass:3f2a9c1b", "TOKEN:3f2a9c1b", " break-glass:3f2a9c1b",
+		"break\u2010glass:3f2a9c1b", "\u200bbreak-glass:3f2a9c1b", "\ufefftoken:3f2a9c1b", "jane:doe@example.com"}
 	for _, name := range names {
 		b := env.browser(t)
 		rec, _ := b.do("GET", "/v1/auth/login", nil)

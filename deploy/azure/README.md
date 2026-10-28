@@ -265,13 +265,14 @@ what the console token is for, what's recorded and what to do after a leak. Here
 tokens are the key vault's `console-tokens` secret, which the app reads as its own secret
 of the same name and gives the `altiward` container as `ALTIWARD_CONSOLE_TOKENS`. The app
 reads the secret's newest version, so each change is a new version holding every console
-token you keep, comma separated. This adds one without the tokens showing on screen or in
-your shell history, then restarts the app so it uses the new version at once rather than
-within 30 minutes:
+token you keep, comma separated. This adds one without the tokens showing on screen, in
+your shell history or in the list of running processes, then restarts the app so it uses
+the new version at once rather than within 30 minutes:
 
 ```sh
 read -rs v    # paste yourcompany=<token>, or several comma separated, then press Enter
-az keyvault secret set --vault-name <vaultName> --name console-tokens --value "$v" -o none
+printf %s "$v" | az keyvault secret set --vault-name <vaultName> --name console-tokens \
+  --file /dev/stdin --encoding utf-8 -o none
 unset v
 az containerapp revision restart --name <appName> --resource-group <group> \
   --revision "$(az containerapp show --name <appName> --resource-group <group> --query properties.latestRevisionName -o tsv)"
@@ -283,8 +284,7 @@ az containerapp revision restart --name <appName> --resource-group <group> \
    `yourcompany=<old>,yourcompany=<new>`, and restart.
 2. Sign in with the new token.
 3. Add a version holding only the new one, and restart again.
-4. Disable every older version, so the old token can't be read from the vault or brought
-   back:
+4. Disable every older version, so the old token can't be read from the vault:
 
    ```sh
    for id in $(az keyvault secret list-versions --vault-name <vaultName> \
@@ -296,7 +296,9 @@ az containerapp revision restart --name <appName> --resource-group <group> \
 
    This keeps the newest version, the one the app reads, enabled. Never disable that one
    while the app uses it: the app could no longer read its tokens, and its next restart
-   would fail.
+   would fail. A disabled version can still be enabled again, and then read, by anyone who
+   can manage the vault's secrets, such as with the Key Vault Secrets Officer role that
+   whoever deployed it has, so keep that to the few people who may hold a console token.
 
 **Revoking one token** is steps 3 and 4, with a version that leaves it out (and a new
 token in its place if it was your only way in). `az keyvault secret show`, as in
@@ -315,8 +317,9 @@ az containerapp update --name <appName> --resource-group <group> --container-nam
 
 The server refuses to start without single sign-on and admin groups, and its log says so.
 Once the new revision is running and you can sign in through single sign-on, remove the
-app's secret and disable every version in the key vault, so that nobody who can read the
-vault can use the token, and putting the reference back can't revive it:
+app's secret and disable every version in the key vault, so that nobody who can only read
+the vault can use the token, and putting the reference back can't revive it (someone who
+can manage its secrets could still enable a version again):
 
 ```sh
 az containerapp secret remove --name <appName> --resource-group <group> \
@@ -327,6 +330,11 @@ for id in $(az keyvault secret list-versions --vault-name <vaultName> \
 done
 ```
 
+Then check that `tokens` in the diagnostics report ([Running it](#running-it)) lists no
+token with the role `console`. If the report fails, or still lists one, the new revision
+isn't running and the old one is still serving with the token: its log says why. The
+token is off only once this check passes.
+
 Running the template again over the install brings a token back: it generates a new one
 and sets the secret and the setting again.
 
@@ -335,7 +343,8 @@ version again: its token may have been read while it was in use.
 
 ```sh
 read -rs v    # paste yourcompany=<new token>, then press Enter
-az keyvault secret set --vault-name <vaultName> --name console-tokens --value "$v" -o none
+printf %s "$v" | az keyvault secret set --vault-name <vaultName> --name console-tokens \
+  --file /dev/stdin --encoding utf-8 -o none
 unset v
 identity=$(az identity show --name <appName>-identity --resource-group <group> --query id -o tsv)
 az containerapp secret set --name <appName> --resource-group <group> --secrets \

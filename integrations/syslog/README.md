@@ -104,5 +104,7 @@ records, with the event types `console.sign_in` and `console.sign_out`.
   `duser` is the account and `msg` says how it was used. For an admin prompt on another
   user's session, `suser` is that user.
 - **Settings changes:** signature `console.change_settings`.
-- **Break-glass token use:** `suser` starting `break-glass:`, on sign-ins (Authentication
-  records) as well as changes.
+- **Break-glass token use:** signature starting `console.` and `suser` starting
+  `break-glass:`, on sign-ins (`console.sign_in`, Authentication records) as well as
+  changes. Not `suser` alone: on a key rotation it is the serial the Mac enrolled with,
+  which whoever enrols it chooses.

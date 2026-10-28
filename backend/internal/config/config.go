@@ -271,15 +271,8 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 		c.OIDC = o
 	}
-	// A server nobody can sign in to, or where nobody can approve a Mac or change a setting,
-	// is a mistake: refuse to start rather than run with a console no admin can use.
-	if len(list(c.ConsoleTokens)) == 0 {
-		if c.OIDC == nil {
-			return c, errors.New("set ALTIWARD_CONSOLE_TOKENS, or single sign-on with ALTIWARD_OIDC_ISSUER: without either, nobody can sign in to the console")
-		}
-		if len(c.OIDC.AdminGroups) == 0 {
-			return c, errors.New("set ALTIWARD_OIDC_ADMIN_GROUPS, or keep a console token in ALTIWARD_CONSOLE_TOKENS: without either, nobody can approve Macs or change settings")
-		}
+	if err := checkAdminWayIn(c); err != nil {
+		return c, err
 	}
 	i, err := loadIntune(getenv, c.AgentTokens, c.ConsoleTokens)
 	if err != nil {
@@ -287,6 +280,47 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	c.Intune = i
 	return c, nil
+}
+
+// checkAdminWayIn refuses a console nobody can sign in to, or where nobody can approve a
+// Mac or change a setting: that is a mistake, so the server doesn't start with it. Each
+// organisation needs a console token of its own, or single sign-on serving it
+// (ALTIWARD_OIDC_TENANT) with admin groups, as single sign-on serves only one.
+func checkAdminWayIn(c Config) error {
+	withToken := map[string]bool{}
+	for _, entry := range list(c.ConsoleTokens) {
+		tenant, _, ok := strings.Cut(entry, "=")
+		if !ok || tenant == "" {
+			return nil // auth.Parse refuses the entry, and says why
+		}
+		withToken[tenant] = true
+	}
+	tenants := c.Tenants()
+	if c.OIDC != nil && !slices.Contains(tenants, c.OIDC.Tenant) {
+		tenants = append(tenants, c.OIDC.Tenant)
+	}
+	if len(tenants) == 0 {
+		tenants = []string{""} // the tokens name none, so nobody can sign in
+	}
+	one := len(tenants) == 1
+	for _, t := range tenants {
+		switch {
+		case withToken[t]:
+		case c.OIDC == nil || c.OIDC.Tenant != t:
+			if one {
+				return errors.New("set ALTIWARD_CONSOLE_TOKENS, or single sign-on with ALTIWARD_OIDC_ISSUER: without either, nobody can sign in to the console")
+			}
+			return fmt.Errorf("organisation %s: set ALTIWARD_CONSOLE_TOKENS for it, or single sign-on with ALTIWARD_OIDC_ISSUER and "+
+				"ALTIWARD_OIDC_TENANT=%s: without either, nobody can sign in to its console", t, t)
+		case len(c.OIDC.AdminGroups) == 0:
+			if one {
+				return errors.New("set ALTIWARD_OIDC_ADMIN_GROUPS, or keep a console token in ALTIWARD_CONSOLE_TOKENS: without either, nobody can approve Macs or change settings")
+			}
+			return fmt.Errorf("organisation %s: set ALTIWARD_OIDC_ADMIN_GROUPS, or keep a console token for it in "+
+				"ALTIWARD_CONSOLE_TOKENS: without either, nobody can approve its Macs or change its settings", t)
+		}
+	}
+	return nil
 }
 
 // loadIntune reads the ALTIWARD_INTUNE_* settings. Setting any of them without AUTH is an

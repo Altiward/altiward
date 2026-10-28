@@ -7,5 +7,6 @@
   token is never used unrecorded, and the console says it couldn't sign you in rather than
   that the token is wrong. The altiward-siem break-glass rule alerts on these sign-ins
   from altiward-siem 1.2.0.
-- Single sign-on refuses anyone whose name starts with `token:` or `break-glass:`, in any
-  case, so nobody can pass for a console token in Activity or the SIEM.
+- Single sign-on refuses names that look like a console token's: any that starts with
+  `token:` or `break-glass:`, in any case, or has a colon, or a control or format
+  character such as a zero-width space.
