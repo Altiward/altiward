@@ -135,7 +135,8 @@ Privileges ──$1 $2 $3──▶ altiward-hook ──XPC──▶ altiward-age
   Platform SSO links to each Mac account (`PlatformSSO:` in the account's
   `AltSecurityIdentities`, read through OpenDirectory). A session keeps the UPN its user
   had when the grant arrived, and the persistence snapshot includes each account's link,
-  so a link changed while someone is admin is reported on their session.
+  so a link changed while someone is admin is reported on their session. A
+  `PlatformSSOIdentity` of `false` from MDM turns the read off.
 
 Every setting is read when the daemon starts. It checks for changes every 15 seconds and,
 when one has changed, logs which and exits for launchd to start it again with them, so a

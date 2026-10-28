@@ -98,7 +98,8 @@ public struct PersistenceSources: Sendable {
         self.platformSSOLinks = platformSSOLinks
     }
 
-    public static func live() -> PersistenceSources {
+    /// The real system. With `platformSSO` off, no account's link is read.
+    public static func live(platformSSO: Bool = true) -> PersistenceSources {
         PersistenceSources(
             root: URL(fileURLWithPath: "/"),
             accounts: {
@@ -110,7 +111,7 @@ public struct PersistenceSources: Sendable {
                 }
             },
             remoteAccess: { Self.launchdRemoteAccess() },
-            platformSSOLinks: { PlatformSSO.allLinks() })
+            platformSSOLinks: { platformSSO ? PlatformSSO.allLinks() : [:] })
     }
 
     /// Caps that keep one finding small: a launch item's arguments and a sudoers file's

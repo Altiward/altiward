@@ -8,3 +8,7 @@
   reported on their session as a changed account, with the new link in `platform_sso`.
   The agent's store gains a column for this; a session open during the upgrade reads the
   UPN for each event as before, and may report a changed account once if its Mac has a link.
+- `PlatformSSOIdentity`, on by default, turns the Platform SSO read off when MDM sets it to
+  `false`, for sites that allow only UPNs they supply. The agent then reads no links, for
+  UPNs or the persistence snapshot. A value set outside MDM is ignored and fails the
+  settings check.

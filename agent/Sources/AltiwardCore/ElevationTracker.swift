@@ -134,7 +134,7 @@ public struct AgentEnvironment: Sendable {
     /// The real system.
     public static func live(config: AgentConfiguration) -> AgentEnvironment {
         let system = SystemIntegrity.live(config: config)
-        let sources = PersistenceSources.live()
+        let sources = PersistenceSources.live(platformSSO: config.platformSSOIdentity)
         return AgentEnvironment(
             device: { DeviceIdentity.current() },
             privileges: { PrivilegesSettings.current() },

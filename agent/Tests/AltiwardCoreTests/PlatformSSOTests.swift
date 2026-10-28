@@ -90,6 +90,34 @@ struct PlatformSSOTests {
                 .userPrincipalNamesForced == true)
     }
 
+    @Test func onlyMDMCanTurnTheReadOff() {
+        let off: [String: Any] = ["PlatformSSOIdentity": false]
+        #expect(AgentConfiguration.load(environment: [:], preferences: Preferences(values: [:])).platformSSOIdentity)
+        #expect(
+            !AgentConfiguration.load(environment: [:], preferences: Preferences(values: off, forced: ["PlatformSSOIdentity"]))
+                .platformSSOIdentity)
+        // Written with defaults by someone elevated: ignored.
+        #expect(AgentConfiguration.load(environment: [:], preferences: Preferences(values: off)).platformSSOIdentity)
+    }
+
+    @Test func turnedOffNoLinkIsRead() throws {
+        let reads = OSAllocatedUnfairLock(initialState: 0)
+        let store = try makeStore()
+        let env = makeEnvironment(
+            admins: admins, clock: clock,
+            config: AgentConfiguration(
+                userPrincipalNames: ["asmith": "a.smith@example.com"], platformSSOIdentity: false),
+            platformSSO: { _ in
+                reads.withLock { $0 += 1 }
+                return .linked("jane.doe@example.com")
+            })
+        let tracker = ElevationTracker(store: store, environment: env)
+        admins.set(["jdoe"])
+        #expect(try tracker.record(claim()).user?.upn == nil)
+        #expect(tracker.upn(for: "asmith") == "a.smith@example.com")
+        #expect(reads.withLock { $0 } == 0)
+    }
+
     @Test func platformSSOFillsAMissingEntry() throws {
         let (tracker, _) = try tracker()
         admins.set(["jdoe"])

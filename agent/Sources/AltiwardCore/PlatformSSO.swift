@@ -92,6 +92,7 @@ extension ElevationTracker {
     /// transactions.
     func upn(for user: String) -> String? {
         env.config.upn(for: user) { user in
+            guard env.config.platformSSOIdentity else { return nil }
             let lookup = env.platformSSO(user)
             if case .unreadable(let why) = lookup {
                 log.error("can't read \(user, privacy: .public)'s Platform SSO account: \(why, privacy: .public)")
