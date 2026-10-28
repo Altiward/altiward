@@ -187,8 +187,8 @@ public struct AgentConfiguration: Sendable, Equatable {
     public var permanentAdmins: Set<String>
     /// Short name → corporate UPN. Typically filled from an MDM variable.
     public var userPrincipalNames: [String: String]
-    /// Whether MDM forces `UserPrincipalNames`. Only a forced map wins over Platform SSO: a
-    /// local admin can write one to /Library/Preferences.
+    /// Whether MDM forces `UserPrincipalNames`. Only a forced map counts: a local admin can
+    /// write one to /Library/Preferences.
     public var userPrincipalNamesForced: Bool
     /// Whether the agent reads the account Platform SSO links to each Mac account
     /// (`PlatformSSOIdentity`). Only MDM can turn it off: a user elevated through Privileges
@@ -320,11 +320,12 @@ public struct AgentConfiguration: Sendable, Equatable {
         return c
     }
 
-    /// A person's UPN: from a `UserPrincipalNames` MDM forces, then the account Platform SSO
-    /// links to their Mac account (`platformSSO`), then a map set outside MDM.
+    /// A person's UPN: from a `UserPrincipalNames` MDM forces, or else the account Platform
+    /// SSO links to their Mac account (`platformSSO`). A map set outside MDM is ignored: anyone
+    /// elevated could write one, and it fails the settings check instead.
     public func upn(for user: String, platformSSO: (String) -> String? = { _ in nil }) -> String? {
         if userPrincipalNamesForced, let upn = userPrincipalNames[user] { return upn }
-        return platformSSO(user) ?? userPrincipalNames[user]
+        return platformSSO(user)
     }
 }
 

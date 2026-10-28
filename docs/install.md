@@ -191,8 +191,8 @@ Create these in your MDM and scope them to a pilot group first.
      agent takes the UPN from the Entra ID account Platform SSO links to each Mac account,
      so you can leave this out. It reads the link from the Mac's local directory: the
      account Platform SSO signed in with, normally the person's UPN. An entry here wins over
-     the link, but only from MDM: a map set with `defaults write` is reported as tampering
-     and the link wins over it. Map an account here if you need certainty about its UPN:
+     the link, but only from MDM: a map set with `defaults write` is ignored and reported as
+     tampering. Map an account here if you need certainty about its UPN:
      an admin can change a Platform SSO link (see below).
    - `PlatformSSOIdentity` (optional): set it to `false` if your data protection rules allow
      only UPNs you supply. The agent then reads no Platform SSO links: UPNs come only from
@@ -217,9 +217,13 @@ Create these in your MDM and scope them to a pilot group first.
    Mac. It reads the links when it starts, on every heartbeat and after each grant and
    give-back, and reports every change to them, whenever it happens, as tampering:
    **Platform SSO link changed** (High) when an account moves from one person's account to
-   another's, and **Platform SSO link added or removed** (Medium) otherwise. A person
-   registering for Platform SSO adds a link, once. A person's UPN changing in Entra ID is
-   the usual innocent cause of a changed link: their Entra ID audit log shows it. An
+   another's, and **Platform SSO link added or removed** (Medium) otherwise. A link added is
+   also High when the account was last linked to someone else (unlinked and linked again,
+   or deleted and made again), when another Mac account has the same link, or when someone
+   held admin rights at the time. A person registering for Platform SSO adds a link, once.
+   A person's UPN changing in Entra ID is the usual innocent cause of a changed link: their
+   Entra ID audit log shows it. Turning `PlatformSSOIdentity` off and on again reports every
+   link as added. An
    elevation keeps the UPN on record when its grant arrived, or none if there was none,
    so a link changed during the elevation can't move it onto someone else.
 2. **Login items profile** (`altiward-login-items.mobileconfig`), so people can't turn

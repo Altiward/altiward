@@ -172,6 +172,8 @@ public final class ElevationTracker: Sendable {
     let store: AgentStore
     let env: AgentEnvironment
     let persistenceLock = NSLock()
+    /// One Platform SSO link check at a time, so an older read never overwrites a newer record.
+    let platformSSOLock = NSLock()
     /// Admins with no open session, and when ``checkUntrackedAdmins()`` first saw them so.
     let untrackedSince = OSAllocatedUnfairLock<[String: Date]>(initialState: [:])
     /// When each caller's recent grant claims arrived, by uid (``submit(_:callerUID:)``).

@@ -56,27 +56,39 @@ public enum PlatformSSO {
     }
 }
 
+/// The agent's record of every account's Platform SSO link (``ElevationTracker/checkPlatformSSOLinks()``).
+struct PlatformSSORecord: Codable, Equatable {
+    /// Each account's link, by short name.
+    var links: [String: String] = [:]
+    /// The link each account last had, for accounts whose link was removed or that are gone,
+    /// so linking one again to someone else counts as a change.
+    var last: [String: String] = [:]
+}
+
 extension ElevationTracker {
     static let platformSSOLinksKey = "platform_sso_links"
     /// A link added or removed: Medium. Registering for Platform SSO adds one, once a user.
     static let platformSSOLinkCheck = "platform_sso_link"
-    /// A link moved from one account to another: High.
+    /// A link that may put an account on someone else's UPN: High. It moved to another
+    /// account, or was added after the account had another, while someone held admin rights,
+    /// or with an account another Mac account already has.
     static let platformSSOLinkChangedCheck = "platform_sso_link_changed"
 
     /// Reads every account's Platform SSO link, records it, and reports each change since the
     /// last read as `agent.tamper` (`detected`), whether or not anyone is elevated: so no
-    /// account gets another person's UPN unreported. The first read only records. An account
-    /// that is gone is forgotten. With `PlatformSSOIdentity` off, nothing is read and the
-    /// record is dropped.
+    /// account gets another person's UPN unreported. Only the very first read records without
+    /// reporting. An account that is gone is dropped from the links, but its last link is
+    /// kept. With `PlatformSSOIdentity` off nothing is read and an empty record is kept, so
+    /// every link is reported when it is turned on again; so is an unreadable record.
     ///
     /// Runs when the daemon starts, after anything that may have opened or closed a session,
     /// and on the heartbeat.
     @discardableResult
     public func checkPlatformSSOLinks() throws -> [AltiwardEvent] {
+        platformSSOLock.lock()
+        defer { platformSSOLock.unlock() }
         guard env.config.platformSSOIdentity else {
-            if try store.value(forKey: Self.platformSSOLinksKey) != nil {
-                try store.setValue(nil, forKey: Self.platformSSOLinksKey)
-            }
+            if try store.value(forKey: Self.platformSSOLinksKey) != nil { try saveRecord(PlatformSSORecord()) }
             return []
         }
         // Outside the transaction: a directory query. Unreadable, the record stands.
@@ -85,40 +97,67 @@ extension ElevationTracker {
         let device = env.device()
 
         return try store.transaction {
-            let recorded = try recordedLinks()
-            try store.setValue(
-                String(decoding: try JSONEncoder().encode(links), as: UTF8.self), forKey: Self.platformSSOLinksKey)
-            guard let recorded else { return [] }
-
-            var events: [AltiwardEvent] = []
-            for user in Set(recorded.keys).union(links.keys).sorted() {
-                let (before, after) = (recorded[user], links[user])
-                guard before != after else { continue }
-                if after == nil, !env.accountExists(user) { continue }
-                events.append(linkEvent(user, from: before, to: after, now: now, device: device))
+            guard let stored = try store.value(forKey: Self.platformSSOLinksKey) else {
+                try saveRecord(PlatformSSORecord(links: links))
+                return []
             }
+            let record = (try? JSONDecoder().decode(PlatformSSORecord.self, from: Data(stored.utf8))) ?? PlatformSSORecord()
+            let elevated = try !store.openSessions().isEmpty || !store.pendingClaims().isEmpty
+            var next = PlatformSSORecord(links: links, last: record.last)
+            var events: [AltiwardEvent] = []
+            for user in Set(record.links.keys).union(links.keys).sorted() {
+                let (before, after) = (record.links[user], links[user])
+                guard before != after else { continue }
+                guard let after else {
+                    next.last[user] = before
+                    // A gone account can't sign in or elevate; recreated, it is compared with
+                    // its last link.
+                    if env.accountExists(user) {
+                        events.append(
+                            linkEvent(
+                                user, Self.platformSSOLinkCheck, before: before,
+                                "\(user)'s Mac account is no longer linked to \(before ?? "-") in Platform SSO",
+                                after: nil, now: now, device: device))
+                    }
+                    continue
+                }
+                next.last[user] = nil
+                let last = before ?? record.last[user]
+                let sharedWith = links.filter { $0.key != user && $0.value.lowercased() == after.lowercased() }.keys.sorted()
+                let (check, problem): (String, String) =
+                    if let before {
+                        (Self.platformSSOLinkChangedCheck, "\(user)'s Mac account moved from \(before) to \(after) in Platform SSO")
+                    } else if let last, last != after {
+                        (
+                            Self.platformSSOLinkChangedCheck,
+                            "\(user)'s Mac account, last linked to \(last), is now linked to \(after) in Platform SSO"
+                        )
+                    } else if let other = sharedWith.first {
+                        (
+                            Self.platformSSOLinkChangedCheck,
+                            "\(user)'s Mac account is now linked to \(after) in Platform SSO, as \(other)'s already is"
+                        )
+                    } else if elevated {
+                        (
+                            Self.platformSSOLinkChangedCheck,
+                            "\(user)'s Mac account was linked to \(after) in Platform SSO while someone held admin rights"
+                        )
+                    } else {
+                        (Self.platformSSOLinkCheck, "\(user)'s Mac account is now linked to \(after) in Platform SSO")
+                    }
+                events.append(linkEvent(user, check, before: last, problem, after: after, now: now, device: device))
+            }
+            try saveRecord(next)
             for event in events { try store.enqueue(event, now: now) }
             return events
         }
     }
 
-    private func linkEvent(_ user: String, from before: String?, to after: String?, now: Date, device: DeviceInfo)
-        -> AltiwardEvent
-    {
-        let check: String
-        let problem: String
-        switch (before, after) {
-        case (let before?, let after?):
-            check = Self.platformSSOLinkChangedCheck
-            problem = "\(user)'s Mac account moved from \(before) to \(after) in Platform SSO"
-        case (nil, let after?):
-            check = Self.platformSSOLinkCheck
-            problem = "\(user)'s Mac account is now linked to \(after) in Platform SSO"
-        default:
-            check = Self.platformSSOLinkCheck
-            problem = "\(user)'s Mac account is no longer linked to \(before ?? "-") in Platform SSO"
-        }
-        return tamper(
+    private func linkEvent(
+        _ user: String, _ check: String, before: String?, _ problem: String, after: String?, now: Date,
+        device: DeviceInfo
+    ) -> AltiwardEvent {
+        tamper(
             check, .detected, problem: problem,
             extra: [
                 "user": .string(user), "previous_upn": before.map(JSONValue.string) ?? .null,
@@ -126,10 +165,14 @@ extension ElevationTracker {
             ], now: now, device: device)
     }
 
-    /// The links as last recorded; nil before the first read.
-    private func recordedLinks() throws -> [String: String]? {
+    private func saveRecord(_ record: PlatformSSORecord) throws {
+        try store.setValue(String(decoding: try JSONEncoder().encode(record), as: UTF8.self), forKey: Self.platformSSOLinksKey)
+    }
+
+    /// The links as last recorded; empty before the first read.
+    private func recordedLinks() throws -> [String: String] {
         try store.value(forKey: Self.platformSSOLinksKey)
-            .flatMap { try? JSONDecoder().decode([String: String].self, from: Data($0.utf8)) }
+            .flatMap { try? JSONDecoder().decode(PlatformSSORecord.self, from: Data($0.utf8)) }?.links ?? [:]
     }
 
     /// A person's UPN now (``AgentConfiguration/upn(for:platformSSO:)``), with the link as
@@ -138,7 +181,7 @@ extension ElevationTracker {
         env.config.upn(for: user) { user in
             guard env.config.platformSSOIdentity else { return nil }
             do {
-                return try recordedLinks()?[user]
+                return try recordedLinks()[user]
             } catch {
                 log.error("can't read the recorded Platform SSO links: \(String(describing: error), privacy: .public)")
                 return nil

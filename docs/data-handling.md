@@ -364,8 +364,8 @@ security records ([Backups](install.md#backups)).
 The agent keeps one database, `/Library/Application Support/Altiward/agent.sqlite`,
 readable only by root. It holds events waiting to send (removed once your server
 confirms them), the elevations open now with each one's UPN, every Mac account's Platform
-SSO link as last read (none with `PlatformSSOIdentity` off; an account's is removed when the
-account goes), the last persistence snapshot, the Mac's key (or the handle to it in the Secure
+SSO link as last read, and the last link of each account whose link was removed or that is
+gone (none with `PlatformSSOIdentity` off), the last persistence snapshot, the Mac's key (or the handle to it in the Secure
 Enclave) and its public key, the server's clock offset it last learnt, and revoke results
 (removed 30 days after they are reported). While the agent is replacing the Mac's key and
 doesn't yet know the server's answer, it also holds the replacement key (or its handle), a
@@ -384,7 +384,9 @@ Privileges' log it also holds:
 - when it first found Privileges' log available, and whether the extension has logged a
   grant the daemon's line confirmed.
 
-It logs to the Mac's unified log under `com.altiward.agent`.
+It logs to the Mac's unified log under `com.altiward.agent`, including each tamper finding's
+description, which for a Platform SSO link names the Mac account and the links before and
+after.
 
 ## Network and transport
 

@@ -92,10 +92,11 @@ struct PlatformSSOTests {
         #expect(config.upn(for: "asmith") { _ in "b@example.com" } == "b@example.com")
     }
 
-    @Test func aLinkBeatsAMapSetOutsideMDM() {
+    /// Anyone elevated could write a map to /Library/Preferences: it counts for nothing.
+    @Test func aMapSetOutsideMDMIsIgnored() {
         let config = AgentConfiguration(userPrincipalNames: ["jdoe": "a@example.com"], userPrincipalNamesForced: false)
         #expect(config.upn(for: "jdoe") { _ in "b@example.com" } == "b@example.com")
-        #expect(config.upn(for: "jdoe") { _ in nil } == "a@example.com")
+        #expect(config.upn(for: "jdoe") { _ in nil } == nil)
     }
 
     @Test func loadingSaysWhetherMDMForcesTheMap() {
@@ -128,8 +129,10 @@ struct PlatformSSOTests {
                 return ["jdoe": "jane.doe@example.com"]
             })
         let tracker = ElevationTracker(store: store, environment: env)
+        // Turned off, no link is kept: only an empty record, so turning it on reports them all.
         #expect(try tracker.checkPlatformSSOLinks().isEmpty)
-        #expect(try store.value(forKey: ElevationTracker.platformSSOLinksKey) == nil)
+        let kept = try #require(try store.value(forKey: ElevationTracker.platformSSOLinksKey))
+        #expect(try JSONDecoder().decode(PlatformSSORecord.self, from: Data(kept.utf8)) == PlatformSSORecord())
         admins.set(["jdoe"])
         #expect(try tracker.record(claim()).user?.upn == nil)
         #expect(tracker.upn(for: "asmith") == "a.smith@example.com")
@@ -182,8 +185,8 @@ struct PlatformSSOTests {
         #expect(tracker.upn(for: "jdoe") == nil)
     }
 
-    /// Deleting an account and making it again with another link is reported as a new link.
-    @Test func aGoneAccountIsForgottenAndARecreatedOneReported() throws {
+    /// Deleting an account and making it again with another link is a changed link.
+    @Test func aRecreatedAccountIsComparedWithItsLastLink() throws {
         let (tracker, _) = try recorded()
         accounts.withLock { _ = $0.remove("jdoe") }
         links.withLock { $0 = [:] }
@@ -191,7 +194,67 @@ struct PlatformSSOTests {
         accounts.withLock { _ = $0.insert("jdoe") }
         links.withLock { $0 = ["jdoe": "ceo@example.com"] }
         let event = try #require(try tracker.checkPlatformSSOLinks().first)
-        #expect(event.detail["check"] == "platform_sso_link")
+        #expect(event.detail["check"] == "platform_sso_link_changed")
+        #expect(event.detail["previous_upn"] == "jane.doe@example.com")
+        #expect(event.detail["upn"] == "ceo@example.com")
+    }
+
+    /// Unlinking and linking again to someone else, across two checks, is still a change.
+    @Test func unlinkingThenLinkingToAnotherIsAChange() throws {
+        let (tracker, _) = try recorded()
+        links.withLock { $0 = [:] }
+        #expect(try tracker.checkPlatformSSOLinks().first?.detail["check"] == "platform_sso_link")
+        links.withLock { $0 = ["jdoe": "ceo@example.com"] }
+        let event = try #require(try tracker.checkPlatformSSOLinks().first)
+        #expect(event.detail["check"] == "platform_sso_link_changed")
+        #expect(event.detail["previous_upn"] == "jane.doe@example.com")
+        // Linked again to the same account: a plain link.
+        links.withLock { $0 = [:] }
+        try tracker.checkPlatformSSOLinks()
+        links.withLock { $0 = ["jdoe": "ceo@example.com"] }
+        #expect(try tracker.checkPlatformSSOLinks().first?.detail["check"] == "platform_sso_link")
+    }
+
+    @Test func aLinkAnotherAccountHasIsAChange() throws {
+        let (tracker, _) = try recorded()
+        links.withLock { $0 = ["jdoe": "jane.doe@example.com", "asmith": "JANE.DOE@example.com"] }
+        let event = try #require(try tracker.checkPlatformSSOLinks().first)
+        #expect(event.detail["check"] == "platform_sso_link_changed")
+        #expect(event.detail["user"] == "asmith")
+    }
+
+    @Test func aLinkAddedWhileSomeoneIsElevatedIsAChange() throws {
+        let (tracker, _) = try recorded()
+        admins.set(["jdoe"])
+        try tracker.record(claim())
+        links.withLock { $0 = ["jdoe": "jane.doe@example.com", "asmith": "a.smith@example.com"] }
+        let event = try #require(try tracker.checkPlatformSSOLinks().first)
+        #expect(event.detail["check"] == "platform_sso_link_changed")
+        #expect(event.detail["user"] == "asmith")
+    }
+
+    /// Turning the read off and on again, or a record that can't be decoded, starts from an
+    /// empty record: every link is reported, none taken in silently.
+    @Test(arguments: [true, false])
+    func noRecordAfterOneExistedReportsEveryLink(viaSetting: Bool) throws {
+        let store = try makeStore()
+        let links = links
+        func tracker(_ on: Bool) -> ElevationTracker {
+            ElevationTracker(
+                store: store,
+                environment: makeEnvironment(
+                    admins: admins, clock: clock, config: AgentConfiguration(platformSSOIdentity: on),
+                    platformSSOLinks: { links.withLock { $0 } }))
+        }
+        #expect(try tracker(true).checkPlatformSSOLinks().isEmpty)
+        if viaSetting {
+            #expect(try tracker(false).checkPlatformSSOLinks().isEmpty)
+        } else {
+            try store.setValue("not json", forKey: ElevationTracker.platformSSOLinksKey)
+        }
+        links.withLock { $0 = ["jdoe": "ceo@example.com"] }
+        let event = try #require(try tracker(true).checkPlatformSSOLinks().first)
+        #expect(event.detail["user"] == "jdoe")
         #expect(event.detail["upn"] == "ceo@example.com")
     }
 
@@ -240,7 +303,7 @@ struct PlatformSSOTests {
         #expect(try store.openSession(user: "jdoe")?.upn == .read(nil))
 
         links.withLock { $0 = ["jdoe": "ceo@example.com"] }
-        #expect(try tracker.checkPlatformSSOLinks().first?.detail["check"] == "platform_sso_link")
+        #expect(try tracker.checkPlatformSSOLinks().first?.detail["check"] == "platform_sso_link_changed")
         admins.set([])
         clock.advance(60)
         let revoked = try #require(try tracker.heartbeat().first { $0.type == .elevationRevoked })
