@@ -370,6 +370,13 @@ type Credentials interface {
 	// from the active credential's, even if approval is off, and for the Intune checks
 	// holdsForApproval describes. There is no limit on the number of active Macs.
 	Enroll(ctx context.Context, c DeviceCredential, limits EnrollLimits) (EnrollResult, error)
+	// EnrollAllowed says what Enroll would refuse c, a new key, for limits alone: nil,
+	// ErrNewMacsLimited or ErrKeysPerMacLimited, counted as Enroll counts over the windows
+	// ending at c.CreatedAt (it reads TenantID, Serial and CreatedAt). It stores nothing
+	// and takes none of Enroll's locks. It lets the server refuse before it asks Intune, and
+	// is only advisory: Enroll still enforces the limits, and requests that race past this
+	// check each cost a lookup.
+	EnrollAllowed(ctx context.Context, c DeviceCredential, limits EnrollLimits) error
 	// Credential looks a credential up by device ID across tenants, for authentication.
 	Credential(ctx context.Context, deviceID string) (DeviceCredential, error)
 	// CredentialByKey looks the tenant's credential for a public key up, or ErrNotFound. An

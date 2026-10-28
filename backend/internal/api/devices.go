@@ -213,6 +213,20 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal
 		_, err := s.store.CredentialByKey(r.Context(), p.TenantID, spki)
 		switch {
 		case errors.Is(err, store.ErrNotFound):
+			// A key the limits will refuse isn't checked either, or the enrolment token could
+			// spend on refusals the lookups that genuine Macs need. Enroll still enforces the
+			// limits; requests that race past this check each cost a lookup. A key another
+			// tenant holds is refused here with 429 before Enroll's 409, which it gets once
+			// the window passes.
+			cred.CreatedAt = s.now()
+			if err := s.store.EnrollAllowed(r.Context(), cred, s.enrollLimits); errors.Is(err, store.ErrRateLimited) {
+				s.enrollRateLimited(w, p.TenantID, req.Serial, err)
+				return
+			} else if err != nil {
+				s.log.Error("enroll: enrolment limits", "tenant", p.TenantID, "serial", req.Serial, "err", err)
+				writeError(w, http.StatusServiceUnavailable, "could not enroll; retry later")
+				return
+			}
 			cred.MDMDeviceID = strings.TrimSpace(req.MDMDeviceID)
 			cred.MDMCheck = checker.Check(r.Context(), p.TenantID, req.MDMDeviceID, req.Serial, req.HardwareUUID)
 		case err != nil:
@@ -231,13 +245,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal
 		return
 	}
 	if errors.Is(err, store.ErrRateLimited) {
-		limit, window, msg := "keys_per_mac_per_day", store.KeysPerMacWindow, "too many keys have been enrolled for this Mac in the last 24 hours; try again later"
-		if errors.Is(err, store.ErrNewMacsLimited) {
-			limit, window, msg = "new_macs_per_hour", store.NewMacsWindow, "too many new Macs have been enrolled in the last hour; try again later"
-		}
-		s.logEnrollmentLimit(p.TenantID, req.Serial, limit, window)
-		w.Header().Set("Retry-After", enrollRetryAfter)
-		writeCodedError(w, http.StatusTooManyRequests, codeEnrollmentRateLimited, msg)
+		s.enrollRateLimited(w, p.TenantID, req.Serial, err)
 		return
 	}
 	if err != nil {
@@ -260,6 +268,18 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal
 			"state", e.Detail["state"], "key_storage", c.KeyStorage, "mdm_check", c.MDMCheck)
 	}
 	writeJSON(w, status, map[string]string{"device_id": c.DeviceID, "status": string(c.Status)})
+}
+
+// enrollRateLimited refuses an enrolment for err, one of the store's ErrRateLimited errors,
+// as the agent expects to back off on: 429 with the code and the seconds to wait.
+func (s *Server) enrollRateLimited(w http.ResponseWriter, tenantID, serial string, err error) {
+	limit, window, msg := "keys_per_mac_per_day", store.KeysPerMacWindow, "too many keys have been enrolled for this Mac in the last 24 hours; try again later"
+	if errors.Is(err, store.ErrNewMacsLimited) {
+		limit, window, msg = "new_macs_per_hour", store.NewMacsWindow, "too many new Macs have been enrolled in the last hour; try again later"
+	}
+	s.logEnrollmentLimit(tenantID, serial, limit, window)
+	w.Header().Set("Retry-After", enrollRetryAfter)
+	writeCodedError(w, http.StatusTooManyRequests, codeEnrollmentRateLimited, msg)
 }
 
 // serialKnown says whether Intune knows the serial of c, a key that has just enrolled, for

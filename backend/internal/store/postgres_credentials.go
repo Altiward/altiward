@@ -94,9 +94,9 @@ func lockTenantNewMacs(ctx context.Context, tx pgx.Tx, tenantID string) error {
 // c.CreatedAt, from the rows committed when it runs. It reads only the hour's credentials
 // and, for each, whether its serial has an older one, so its cost follows the hour's
 // enrolments, which the limits bound, not the tenant's whole history.
-func countNewMacs(ctx context.Context, tx pgx.Tx, c DeviceCredential) (int, error) {
+func countNewMacs(ctx context.Context, q querier, c DeviceCredential) (int, error) {
 	var n int
-	err := tx.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT count(DISTINCT d.serial) FROM device_credentials d
 		WHERE d.tenant_id = $1 AND d.created_at > $2 AND NOT EXISTS (
 			SELECT 1 FROM device_credentials e
@@ -105,27 +105,31 @@ func countNewMacs(ctx context.Context, tx pgx.Tx, c DeviceCredential) (int, erro
 	return n, err
 }
 
-// enforceEnrollLimits counts, in tx and under the serial's lock, what c would add to: the
-// tenant's serials whose first credential is under an hour old, if c is the first for its
-// serial, and the serial's credentials under 24 hours old.
-func enforceEnrollLimits(ctx context.Context, tx pgx.Tx, c DeviceCredential, enrolledBefore bool, limits EnrollLimits) error {
+// countMacKeys counts c's serial's credentials under 24 hours old at c.CreatedAt, leaving
+// out keys made by rotation.
+func countMacKeys(ctx context.Context, q querier, c DeviceCredential) (int, error) {
+	var n int
+	err := q.QueryRow(ctx, `SELECT count(*) FROM device_credentials WHERE tenant_id = $1 AND serial = $2 AND created_at > $3 AND rotated_from IS NULL`,
+		c.TenantID, c.Serial, c.CreatedAt.Add(-KeysPerMacWindow)).Scan(&n)
+	return n, err
+}
+
+// serialEnrolled reports whether the tenant has a credential of any status for serial.
+func serialEnrolled(ctx context.Context, q querier, tenantID, serial string) (bool, error) {
+	var ok bool
+	err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM device_credentials WHERE tenant_id = $1 AND serial = $2)`,
+		tenantID, serial).Scan(&ok)
+	return ok, err
+}
+
+// limitsRefuse counts, without taking any lock and from the rows committed when it runs,
+// what c would add to: the tenant's serials whose first credential is under an hour old, if
+// c is the first for its serial, and the serial's credentials under 24 hours old. Both
+// EnrollAllowed and enforceEnrollLimits's first pass use it, so they count alike.
+func limitsRefuse(ctx context.Context, q querier, c DeviceCredential, enrolledBefore bool, limits EnrollLimits) error {
 	if !enrolledBefore && limits.NewMacsPerHour > 0 {
-		// A refusal doesn't need the tenant's lock: the count sees committed rows only, and
-		// those stay, so a count already at the limit is exactly what the count under the
-		// lock would find, or less. Without the lock, a flood of serials over the limit is
-		// refused at once instead of queueing behind each other. Only a Mac with room takes
-		// the lock and counts again, so two can't both take the last place.
-		newMacs, err := countNewMacs(ctx, tx, c)
+		newMacs, err := countNewMacs(ctx, q, c)
 		if err != nil {
-			return err
-		}
-		if limits.refusesNewMac(newMacs) {
-			return ErrNewMacsLimited
-		}
-		if err := lockTenantNewMacs(ctx, tx, c.TenantID); err != nil {
-			return err
-		}
-		if newMacs, err = countNewMacs(ctx, tx, c); err != nil {
 			return err
 		}
 		if limits.refusesNewMac(newMacs) {
@@ -134,13 +138,40 @@ func enforceEnrollLimits(ctx context.Context, tx pgx.Tx, c DeviceCredential, enr
 	}
 	if enrolledBefore && limits.KeysPerMacPerDay > 0 {
 		// Keys made by rotation aren't enrolments, so they don't count.
-		var keys int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM device_credentials WHERE tenant_id = $1 AND serial = $2 AND created_at > $3 AND rotated_from IS NULL`,
-			c.TenantID, c.Serial, c.CreatedAt.Add(-KeysPerMacWindow)).Scan(&keys); err != nil {
+		keys, err := countMacKeys(ctx, q, c)
+		if err != nil {
 			return err
 		}
 		if limits.refusesKey(keys) {
 			return ErrKeysPerMacLimited
+		}
+	}
+	return nil
+}
+
+// enforceEnrollLimits counts, in tx and under the serial's lock, what c would add to: the
+// tenant's serials whose first credential is under an hour old, if c is the first for its
+// serial, and the serial's credentials under 24 hours old.
+func enforceEnrollLimits(ctx context.Context, tx pgx.Tx, c DeviceCredential, enrolledBefore bool, limits EnrollLimits) error {
+	// A refusal doesn't need the tenant's lock: the count sees committed rows only, and
+	// those stay, so a count already at the limit is exactly what the count under the
+	// lock would find, or less. Without the lock, a flood of serials over the limit is
+	// refused at once instead of queueing behind each other. Only a Mac with room takes
+	// the lock and counts again, so two can't both take the last place. The serial's own
+	// keys are counted under the serial's lock, which the caller holds.
+	if err := limitsRefuse(ctx, tx, c, enrolledBefore, limits); err != nil {
+		return err
+	}
+	if !enrolledBefore && limits.NewMacsPerHour > 0 {
+		if err := lockTenantNewMacs(ctx, tx, c.TenantID); err != nil {
+			return err
+		}
+		newMacs, err := countNewMacs(ctx, tx, c)
+		if err != nil {
+			return err
+		}
+		if limits.refusesNewMac(newMacs) {
+			return ErrNewMacsLimited
 		}
 	}
 	return nil
@@ -172,9 +203,8 @@ func (p *Postgres) Enroll(ctx context.Context, c DeviceCredential, limits Enroll
 			return err
 		}
 
-		var enrolledBefore bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM device_credentials WHERE tenant_id = $1 AND serial = $2)`,
-			c.TenantID, c.Serial).Scan(&enrolledBefore); err != nil {
+		enrolledBefore, err := serialEnrolled(ctx, tx, c.TenantID, c.Serial)
+		if err != nil {
 			return err
 		}
 		if err := enforceEnrollLimits(ctx, tx, c, enrolledBefore, limits); err != nil {
@@ -233,6 +263,19 @@ func (p *Postgres) Enroll(ctx context.Context, c DeviceCredential, limits Enroll
 		return nil
 	})
 	return res, err
+}
+
+// EnrollAllowed counts as enforceEnrollLimits's first pass does, outside a transaction and
+// without the locks: Enroll counts again under them.
+func (p *Postgres) EnrollAllowed(ctx context.Context, c DeviceCredential, limits EnrollLimits) error {
+	if limits == (EnrollLimits{}) {
+		return nil
+	}
+	known, err := serialEnrolled(ctx, p.pool, c.TenantID, c.Serial)
+	if err != nil {
+		return err
+	}
+	return limitsRefuse(ctx, p.pool, c, known, limits)
 }
 
 func (p *Postgres) Credential(ctx context.Context, deviceID string) (DeviceCredential, error) {

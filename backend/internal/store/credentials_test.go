@@ -712,6 +712,104 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 	})
 
+	// EnrollAllowed lets the server turn an enrolment the limits refuse away before it asks
+	// Intune about it, so it must answer as Enroll would, and change nothing.
+	allowed := func(t *testing.T, s Store, tenant, serial string, at time.Time, limits EnrollLimits) error {
+		t.Helper()
+		id, err := NewDeviceID()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s.EnrollAllowed(ctx, DeviceCredential{
+			DeviceID: id, TenantID: tenant, Serial: serial, HardwareUUID: "HW", PublicKey: newKey(t), CreatedAt: at,
+		}, limits)
+	}
+	credentials := func(t *testing.T, s Store, tenant string) string {
+		t.Helper()
+		creds, err := s.ListCredentials(ctx, tenant, CredentialFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return keyStates(creds)
+	}
+
+	t.Run("EnrollAllowed answers the key limit as Enroll does", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		limits := EnrollLimits{KeysPerMacPerDay: 2}
+		if err := allowed(t, s, tenant, serial, t0, limits); err != nil {
+			t.Fatalf("a Mac's first key: %v", err)
+		}
+		for i := range 2 {
+			if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0.Add(time.Duration(i)*time.Hour), limits); err != nil {
+				t.Fatalf("key %d: %v", i+1, err)
+			}
+		}
+		before := credentials(t, s, tenant)
+		err := allowed(t, s, tenant, serial, t0.Add(2*time.Hour), limits)
+		if !errors.Is(err, ErrKeysPerMacLimited) || !errors.Is(err, ErrRateLimited) {
+			t.Fatalf("a third key in the day: err = %v, want %v", err, ErrKeysPerMacLimited)
+		}
+		if err := allowed(t, s, tenant, serial, t0.Add(2*time.Hour), EnrollLimits{}); err != nil {
+			t.Fatalf("no limits: %v", err)
+		}
+		if after := credentials(t, s, tenant); after != before {
+			t.Fatalf("EnrollAllowed changed the credentials:\n%s\nwant\n%s", after, before)
+		}
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0.Add(2*time.Hour), limits); !errors.Is(err, ErrKeysPerMacLimited) {
+			t.Fatalf("Enroll of the third key: err = %v, want %v", err, ErrKeysPerMacLimited)
+		}
+		// The day rolls: the first key is 24 hours old, so only the second still counts.
+		if err := allowed(t, s, tenant, serial, t0.Add(24*time.Hour), limits); err != nil {
+			t.Fatalf("24 hours after the first key: %v", err)
+		}
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0.Add(24*time.Hour), limits); err != nil {
+			t.Fatalf("Enroll 24 hours after the first key: %v", err)
+		}
+	})
+
+	t.Run("EnrollAllowed answers the new-Mac limit as Enroll does", func(t *testing.T) {
+		s, tenant, known := setup(t)
+		limits := EnrollLimits{NewMacsPerHour: 2}
+		if _, err := enrollLimited(s, tenant, known, "HW", newKey(t), t0.Add(-3*time.Hour), limits); err != nil {
+			t.Fatal(err)
+		}
+		for i := range 2 {
+			sn := fmt.Sprintf("C02ALLOW%d%s", i, randomHex(t))
+			if err := allowed(t, s, tenant, sn, t0.Add(time.Duration(i)*10*time.Minute), limits); err != nil {
+				t.Fatalf("new Mac %d: %v", i+1, err)
+			}
+			if _, err := enrollLimited(s, tenant, sn, "HW", newKey(t), t0.Add(time.Duration(i)*10*time.Minute), limits); err != nil {
+				t.Fatalf("new Mac %d: %v", i+1, err)
+			}
+		}
+		before := credentials(t, s, tenant)
+		third := "C02ALLOW3" + randomHex(t)
+		err := allowed(t, s, tenant, third, t0.Add(20*time.Minute), limits)
+		if !errors.Is(err, ErrNewMacsLimited) || !errors.Is(err, ErrRateLimited) {
+			t.Fatalf("a third new Mac in the hour: err = %v, want %v", err, ErrNewMacsLimited)
+		}
+		// A Mac that enrolled before is not a new one, whatever the count.
+		if err := allowed(t, s, tenant, known, t0.Add(20*time.Minute), limits); err != nil {
+			t.Fatalf("a known Mac: %v", err)
+		}
+		if err := allowed(t, s, tenant, third, t0.Add(20*time.Minute), EnrollLimits{}); err != nil {
+			t.Fatalf("no limits: %v", err)
+		}
+		if after := credentials(t, s, tenant); after != before {
+			t.Fatalf("EnrollAllowed changed the credentials:\n%s\nwant\n%s", after, before)
+		}
+		if _, err := enrollLimited(s, tenant, third, "HW", newKey(t), t0.Add(20*time.Minute), limits); !errors.Is(err, ErrNewMacsLimited) {
+			t.Fatalf("Enroll of the third new Mac: err = %v, want %v", err, ErrNewMacsLimited)
+		}
+		// The hour rolls: the first new Mac is an hour old, so only the second still counts.
+		if err := allowed(t, s, tenant, third, t0.Add(time.Hour), limits); err != nil {
+			t.Fatalf("an hour after the first new Mac: %v", err)
+		}
+		if _, err := enrollLimited(s, tenant, third, "HW", newKey(t), t0.Add(time.Hour), limits); err != nil {
+			t.Fatalf("Enroll an hour after the first new Mac: %v", err)
+		}
+	})
+
 	// The limits are counted under the database's locks, so requests made at once can't
 	// all see room for one more.
 	t.Run("limits hold when Macs enrol at the same moment", func(t *testing.T) {
@@ -1522,6 +1620,90 @@ func credentialSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0.Add(49*time.Hour+3*time.Minute), limits); !errors.Is(err, ErrKeysPerMacLimited) {
 			t.Fatalf("a third enrolled key in the day: err = %v, want %v", err, ErrKeysPerMacLimited)
+		}
+	})
+
+	// EnrollAllowed counts what Enroll counts: not keys made by rotation, every enrolled key
+	// whatever its status, and only the tenant's own.
+	t.Run("EnrollAllowed doesn't count keys made by rotation", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		limits := EnrollLimits{KeysPerMacPerDay: 1}
+		a, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0, limits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := rotate(t, s, tenant, a.Credential.DeviceID, t0.Add(25*time.Hour))
+		rotate(t, s, tenant, b.DeviceID, t0.Add(49*time.Hour))
+		// The day's only keys were made by rotation.
+		at := t0.Add(49*time.Hour + time.Minute)
+		if err := allowed(t, s, tenant, serial, at, limits); err != nil {
+			t.Fatalf("after two rotations: %v", err)
+		}
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), at, limits); err != nil {
+			t.Fatalf("Enroll after two rotations: %v", err)
+		}
+		if err := allowed(t, s, tenant, serial, at.Add(time.Minute), limits); !errors.Is(err, ErrKeysPerMacLimited) {
+			t.Fatalf("a second enrolled key in the day: err = %v, want %v", err, ErrKeysPerMacLimited)
+		}
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), at.Add(time.Minute), limits); !errors.Is(err, ErrKeysPerMacLimited) {
+			t.Fatalf("Enroll of a second enrolled key in the day: err = %v, want %v", err, ErrKeysPerMacLimited)
+		}
+	})
+
+	t.Run("EnrollAllowed counts a Mac with only revoked and pending keys as known", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		first, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0, EnrollLimits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pending, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0.Add(time.Minute), EnrollLimits{}); err != nil || pending.Credential.Status != CredentialPending {
+			t.Fatalf("pending = %+v, %v", pending.Credential, err)
+		}
+		if _, err := s.RevokeCredential(ctx, tenant, first.Credential.DeviceID, t0.Add(2*time.Minute), auditFor(t, tenant, AuditRevokeEnrollment)); err != nil {
+			t.Fatal(err)
+		}
+		// The serial is the tenant's one new Mac in the hour. Were it new again, the new-Mac
+		// limit would refuse it; known, its two keys count.
+		at := t0.Add(3 * time.Minute)
+		refused := EnrollLimits{NewMacsPerHour: 1, KeysPerMacPerDay: 2}
+		if err := allowed(t, s, tenant, serial, at, refused); !errors.Is(err, ErrKeysPerMacLimited) {
+			t.Fatalf("at the key limit: err = %v, want %v", err, ErrKeysPerMacLimited)
+		}
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), at, refused); !errors.Is(err, ErrKeysPerMacLimited) {
+			t.Fatalf("Enroll at the key limit: err = %v, want %v", err, ErrKeysPerMacLimited)
+		}
+		room := EnrollLimits{NewMacsPerHour: 1, KeysPerMacPerDay: 3}
+		if err := allowed(t, s, tenant, serial, at, room); err != nil {
+			t.Fatalf("under the key limit: %v", err)
+		}
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), at, room); err != nil {
+			t.Fatalf("Enroll under the key limit: %v", err)
+		}
+	})
+
+	t.Run("EnrollAllowed doesn't count another tenant's keys", func(t *testing.T) {
+		s, tenant, serial := setup(t)
+		other := tenant + "-other"
+		for i := range 2 {
+			if _, err := enrollLimited(s, other, serial, "HW", newKey(t), t0.Add(time.Duration(i)*time.Minute), EnrollLimits{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// The other tenant's two keys for the serial are neither this tenant's new Mac nor
+		// its keys.
+		limits := EnrollLimits{NewMacsPerHour: 1, KeysPerMacPerDay: 1}
+		if err := allowed(t, s, tenant, serial, t0.Add(2*time.Minute), limits); err != nil {
+			t.Fatalf("a first key: %v", err)
+		}
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0.Add(2*time.Minute), limits); err != nil {
+			t.Fatalf("Enroll of a first key: %v", err)
+		}
+		limits = EnrollLimits{KeysPerMacPerDay: 2}
+		if err := allowed(t, s, tenant, serial, t0.Add(3*time.Minute), limits); err != nil {
+			t.Fatalf("a second key: %v", err)
+		}
+		if _, err := enrollLimited(s, tenant, serial, "HW", newKey(t), t0.Add(3*time.Minute), limits); err != nil {
+			t.Fatalf("Enroll of a second key: %v", err)
 		}
 	})
 }
