@@ -18,7 +18,7 @@ func env(m map[string]string) func(string) string {
 }
 
 func TestDefaults(t *testing.T) {
-	c, err := config.Load(env(map[string]string{"ALTIWARD_AGENT_TOKENS": "acme=x"}))
+	c, err := config.Load(env(map[string]string{"ALTIWARD_AGENT_TOKENS": "acme=x", "ALTIWARD_CONSOLE_TOKENS": "acme=y"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestTenants(t *testing.T) {
 
 func TestAuditRetention(t *testing.T) {
 	for v, want := range map[string]int{"": 0, "0": 0, "365": 365, "2555": 2555} {
-		c, err := config.Load(env(map[string]string{"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_AUDIT_RETENTION_DAYS": v}))
+		c, err := config.Load(env(map[string]string{"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_CONSOLE_TOKENS": "a=y", "ALTIWARD_AUDIT_RETENTION_DAYS": v}))
 		if err != nil || c.AuditRetentionDays != want {
 			t.Errorf("%q: %d, %v", v, c.AuditRetentionDays, err)
 		}
@@ -53,7 +53,7 @@ func TestAuditRetention(t *testing.T) {
 // The console's update check is on unless ALTIWARD_UPDATE_CHECK is false.
 func TestUpdateCheck(t *testing.T) {
 	for v, want := range map[string]bool{"": true, "true": true, "false": false} {
-		c, err := config.Load(env(map[string]string{"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_UPDATE_CHECK": v}))
+		c, err := config.Load(env(map[string]string{"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_CONSOLE_TOKENS": "a=y", "ALTIWARD_UPDATE_CHECK": v}))
 		if err != nil || c.UpdateCheck != want {
 			t.Errorf("%q: %v, %v", v, c.UpdateCheck, err)
 		}
@@ -64,7 +64,7 @@ func TestUpdateCheck(t *testing.T) {
 // 5 keys for one Mac a day. 0 turns a limit off.
 func TestEnrollLimits(t *testing.T) {
 	load := func(m map[string]string) (config.Config, error) {
-		m["ALTIWARD_AGENT_TOKENS"] = "a=x"
+		m["ALTIWARD_AGENT_TOKENS"], m["ALTIWARD_CONSOLE_TOKENS"] = "a=x", "a=y"
 		return config.Load(env(m))
 	}
 	for name, c := range map[string]struct {
@@ -197,6 +197,7 @@ func TestOIDCProviderSignOut(t *testing.T) {
 func TestSinks(t *testing.T) {
 	c, err := config.Load(env(map[string]string{
 		"ALTIWARD_AGENT_TOKENS":           "acme=x",
+		"ALTIWARD_CONSOLE_TOKENS":         "acme=y",
 		"ALTIWARD_SPLUNK_HEC_URL":         "https://splunk:8088",
 		"ALTIWARD_SPLUNK_HEC_TOKEN":       "hec",
 		"ALTIWARD_SENTINEL_ENDPOINT":      "https://dce",
@@ -223,6 +224,7 @@ func TestSinks(t *testing.T) {
 func TestSentinelManagedIdentity(t *testing.T) {
 	m := map[string]string{
 		"ALTIWARD_AGENT_TOKENS":      "acme=x",
+		"ALTIWARD_CONSOLE_TOKENS":    "acme=y",
 		"ALTIWARD_SENTINEL_ENDPOINT": "https://dce",
 		"ALTIWARD_SENTINEL_DCR_ID":   "dcr-1",
 		"ALTIWARD_SENTINEL_AUTH":     "managed-identity",
@@ -264,6 +266,7 @@ func TestSentinelManagedIdentity(t *testing.T) {
 func TestSentinelCertificate(t *testing.T) {
 	m := map[string]string{
 		"ALTIWARD_AGENT_TOKENS":              "acme=x",
+		"ALTIWARD_CONSOLE_TOKENS":            "acme=y",
 		"ALTIWARD_SENTINEL_ENDPOINT":         "https://dce",
 		"ALTIWARD_SENTINEL_DCR_ID":           "dcr-1",
 		"ALTIWARD_SENTINEL_AUTH":             "certificate",
@@ -319,6 +322,7 @@ func TestIntune(t *testing.T) {
 
 	secret := map[string]string{
 		"ALTIWARD_AGENT_TOKENS":         "acme=x",
+		"ALTIWARD_CONSOLE_TOKENS":       "acme=y",
 		"ALTIWARD_INTUNE_AUTH":          "secret",
 		"ALTIWARD_INTUNE_TENANT_ID":     "t",
 		"ALTIWARD_INTUNE_CLIENT_ID":     "c",
@@ -330,8 +334,9 @@ func TestIntune(t *testing.T) {
 
 	// A managed identity needs no tenant, and the platform's settings come with it.
 	mi := map[string]string{
-		"ALTIWARD_AGENT_TOKENS": "acme=x",
-		"ALTIWARD_INTUNE_AUTH":  "managed-identity",
+		"ALTIWARD_AGENT_TOKENS":   "acme=x",
+		"ALTIWARD_CONSOLE_TOKENS": "acme=y",
+		"ALTIWARD_INTUNE_AUTH":    "managed-identity",
 	}
 	if c, err = config.Load(env(mi)); err != nil || c.Intune.Auth != config.AuthManagedIdentity || c.Intune.Tenant != "acme" ||
 		c.Intune.TenantID != "" || c.Intune.IdentityEndpoint != "" {
@@ -345,7 +350,7 @@ func TestIntune(t *testing.T) {
 	}
 
 	// Off unless AUTH is set.
-	if c, err = config.Load(env(map[string]string{"ALTIWARD_AGENT_TOKENS": "acme=x"})); err != nil || c.Intune != nil {
+	if c, err = config.Load(env(map[string]string{"ALTIWARD_AGENT_TOKENS": "acme=x", "ALTIWARD_CONSOLE_TOKENS": "acme=y"})); err != nil || c.Intune != nil {
 		t.Fatalf("off = %+v, %v", c.Intune, err)
 	}
 
@@ -383,7 +388,7 @@ func TestIntune(t *testing.T) {
 		"a tenant without auth": {map[string]string{"ALTIWARD_INTUNE_TENANT_ID": "t"},
 			"set ALTIWARD_INTUNE_AUTH to turn Intune on (secret, certificate or managed-identity)"},
 	} {
-		bad := map[string]string{"ALTIWARD_AGENT_TOKENS": "acme=x"}
+		bad := map[string]string{"ALTIWARD_AGENT_TOKENS": "acme=x", "ALTIWARD_CONSOLE_TOKENS": "acme=y"}
 		for k, v := range tc.set {
 			bad[k] = v
 		}
@@ -396,17 +401,17 @@ func TestIntune(t *testing.T) {
 func TestErrors(t *testing.T) {
 	cases := map[string]map[string]string{
 		"no tokens":        {},
-		"bad interval":     {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_EXPORT_INTERVAL": "soon"},
-		"splunk no token":  {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_SPLUNK_HEC_URL": "https://s"},
-		"sentinel partial": {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_SENTINEL_ENDPOINT": "https://dce"},
-		"syslog no port":   {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_SYSLOG_ADDR": "siem"},
-		"syslog format":    {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_SYSLOG_ADDR": "s:1", "ALTIWARD_SYSLOG_FORMAT": "leef"},
-		"syslog framing":   {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_SYSLOG_ADDR": "s:1", "ALTIWARD_SYSLOG_FRAMING": "nul"},
-		"syslog tls":       {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_SYSLOG_ADDR": "s:1", "ALTIWARD_SYSLOG_TLS": "maybe"},
-		"update check":     {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_UPDATE_CHECK": "no"},
-		"retention short":  {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_AUDIT_RETENTION_DAYS": "90"},
-		"retention words":  {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_AUDIT_RETENTION_DAYS": "a year"},
-		"syslog ca no tls": {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_SYSLOG_ADDR": "s:1", "ALTIWARD_SYSLOG_TLS": "false",
+		"bad interval":     {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_CONSOLE_TOKENS": "a=y", "ALTIWARD_EXPORT_INTERVAL": "soon"},
+		"splunk no token":  {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_CONSOLE_TOKENS": "a=y", "ALTIWARD_SPLUNK_HEC_URL": "https://s"},
+		"sentinel partial": {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_CONSOLE_TOKENS": "a=y", "ALTIWARD_SENTINEL_ENDPOINT": "https://dce"},
+		"syslog no port":   {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_CONSOLE_TOKENS": "a=y", "ALTIWARD_SYSLOG_ADDR": "siem"},
+		"syslog format":    {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_CONSOLE_TOKENS": "a=y", "ALTIWARD_SYSLOG_ADDR": "s:1", "ALTIWARD_SYSLOG_FORMAT": "leef"},
+		"syslog framing":   {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_CONSOLE_TOKENS": "a=y", "ALTIWARD_SYSLOG_ADDR": "s:1", "ALTIWARD_SYSLOG_FRAMING": "nul"},
+		"syslog tls":       {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_CONSOLE_TOKENS": "a=y", "ALTIWARD_SYSLOG_ADDR": "s:1", "ALTIWARD_SYSLOG_TLS": "maybe"},
+		"update check":     {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_CONSOLE_TOKENS": "a=y", "ALTIWARD_UPDATE_CHECK": "no"},
+		"retention short":  {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_CONSOLE_TOKENS": "a=y", "ALTIWARD_AUDIT_RETENTION_DAYS": "90"},
+		"retention words":  {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_CONSOLE_TOKENS": "a=y", "ALTIWARD_AUDIT_RETENTION_DAYS": "a year"},
+		"syslog ca no tls": {"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_CONSOLE_TOKENS": "a=y", "ALTIWARD_SYSLOG_ADDR": "s:1", "ALTIWARD_SYSLOG_TLS": "false",
 			"ALTIWARD_SYSLOG_CA_FILE": "/ca.pem"},
 	}
 	for name, m := range cases {
@@ -431,7 +436,7 @@ func handshake(addr string, roots *x509.CertPool) error {
 func TestTrustedRoots(t *testing.T) {
 	caFile, cert := testfixture.PrivateCA(t, "Private CA")
 	addr := testfixture.TLSListener(t, cert)
-	base := map[string]string{"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_SYSLOG_ADDR": addr}
+	base := map[string]string{"ALTIWARD_AGENT_TOKENS": "a=x", "ALTIWARD_CONSOLE_TOKENS": "a=y", "ALTIWARD_SYSLOG_ADDR": addr}
 
 	c, err := config.Load(env(base))
 	if err != nil {
@@ -485,6 +490,46 @@ func TestTrustedRoots(t *testing.T) {
 		}
 		if _, err := c.TrustedRoots(); err == nil || !strings.Contains(err.Error(), "ALTIWARD_TRUSTED_CAS_FILE") {
 			t.Errorf("%s: err %v", file, err)
+		}
+	}
+}
+
+func TestConsoleNeedsAnAdminWayIn(t *testing.T) {
+	const noToken = "set ALTIWARD_CONSOLE_TOKENS, or single sign-on with ALTIWARD_OIDC_ISSUER: without either, nobody can sign in to the console"
+	const noAdmins = "set ALTIWARD_OIDC_ADMIN_GROUPS, or keep a console token in ALTIWARD_CONSOLE_TOKENS: without either, nobody can approve Macs or change settings"
+	sso := map[string]string{
+		"ALTIWARD_OIDC_ISSUER": "https://login.example.com/t/v2.0", "ALTIWARD_OIDC_CLIENT_ID": "app",
+		"ALTIWARD_CONSOLE_URL": "https://altiward.example.com",
+	}
+	with := func(extra ...map[string]string) map[string]string {
+		m := map[string]string{"ALTIWARD_AGENT_TOKENS": "acme=agent-token-0000000001"}
+		for _, e := range extra {
+			for k, v := range e {
+				m[k] = v
+			}
+		}
+		return m
+	}
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"no console tokens, no single sign-on", with(), noToken},
+		{"only commas", with(map[string]string{"ALTIWARD_CONSOLE_TOKENS": ","}), noToken},
+		{"only blanks and a comma", with(map[string]string{"ALTIWARD_CONSOLE_TOKENS": " , "}), noToken},
+		{"single sign-on with viewer groups only", with(sso, map[string]string{"ALTIWARD_OIDC_VIEWER_GROUPS": "g1"}), noAdmins},
+		{"single sign-on with admin groups", with(sso, map[string]string{"ALTIWARD_OIDC_ADMIN_GROUPS": "g1"}), ""},
+		{"console token, no single sign-on", with(map[string]string{"ALTIWARD_CONSOLE_TOKENS": "acme=console-token-0000000001"}), ""},
+		{"console token, single sign-on with viewer groups only", with(sso, map[string]string{
+			"ALTIWARD_CONSOLE_TOKENS": "acme=console-token-0000000001", "ALTIWARD_OIDC_VIEWER_GROUPS": "g1"}), ""},
+	} {
+		_, err := config.Load(env(tc.env))
+		switch {
+		case tc.want == "" && err != nil:
+			t.Errorf("%s: %v", tc.name, err)
+		case tc.want != "" && (err == nil || err.Error() != tc.want):
+			t.Errorf("%s: got %v, want %q", tc.name, err, tc.want)
 		}
 	}
 }

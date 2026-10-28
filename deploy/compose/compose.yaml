@@ -20,7 +20,9 @@ services:
     environment:
       ALTIWARD_DATABASE_URL: postgres://altiward:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/altiward?sslmode=disable
       ALTIWARD_AGENT_TOKENS: ${ALTIWARD_AGENT_TOKENS:?set ALTIWARD_AGENT_TOKENS in .env}
-      ALTIWARD_CONSOLE_TOKENS: ${ALTIWARD_CONSOLE_TOKENS:?set ALTIWARD_CONSOLE_TOKENS in .env}
+      # May be empty once single sign-on with admin groups works (docs/install.md,
+      # "Console token and break-glass").
+      ALTIWARD_CONSOLE_TOKENS: ${ALTIWARD_CONSOLE_TOKENS:-}
       # Every other setting comes from .env, and is off while it's empty there: don't edit
       # this file, so an upgrade can replace it (docs/install.md, "Releases and updates").
       # Days to keep console activity (at least 365). Empty keeps it forever.

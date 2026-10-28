@@ -271,6 +271,16 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 		c.OIDC = o
 	}
+	// A server nobody can sign in to, or where nobody can approve a Mac or change a setting,
+	// is a mistake: refuse to start rather than run with a console no admin can use.
+	if len(list(c.ConsoleTokens)) == 0 {
+		if c.OIDC == nil {
+			return c, errors.New("set ALTIWARD_CONSOLE_TOKENS, or single sign-on with ALTIWARD_OIDC_ISSUER: without either, nobody can sign in to the console")
+		}
+		if len(c.OIDC.AdminGroups) == 0 {
+			return c, errors.New("set ALTIWARD_OIDC_ADMIN_GROUPS, or keep a console token in ALTIWARD_CONSOLE_TOKENS: without either, nobody can approve Macs or change settings")
+		}
+	}
 	i, err := loadIntune(getenv, c.AgentTokens, c.ConsoleTokens)
 	if err != nil {
 		return c, err
