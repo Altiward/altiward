@@ -22,6 +22,9 @@ report as badge evidence. Successful tests alone do not establish a coverage per
   exported LLVM JSON. Use the production source entries when assessing coverage;
   test and generated runner code are not evidence of production coverage. LLVM line
   and region metrics must be identified as such, rather than called statement coverage.
+  The first macOS report covers 27 of 31 production source files: the XPC interface,
+  daemon and hook entry points are absent. Their coverage must be measured as well
+  before making a claim about the complete agent.
 
 To measure Go locally, start Postgres with `make db` and set
 `ALTIWARD_TEST_DATABASE_URL` as described by `make test-db`, then run:
