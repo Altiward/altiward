@@ -396,7 +396,7 @@ versions and who is an admin. If one doesn't, see
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/install/fleet-dark.png">
-  <img src="images/install/fleet-light.png" width="720" alt="Fleet in the console: a row per Mac with its serial number, last check-in, admins, and macOS, agent and SAP Privileges versions. Above the table, a Show control switches between Macs in use and retired Macs, beside the search box.">
+  <img src="images/install/fleet-light.png" width="720" alt="Fleet in the console: a row per Mac with its serial number, last check-in, admins, and macOS, agent and SAP Privileges versions. Above the table, a Show control switches between Macs in use and retired Macs, beside the search box. With Intune connected, a closed panel above the table, In Intune, never reported to Altiward, counts the Macs Intune manages that no agent has reached.">
 </picture>
 
 Then grant admin to a test user through Privileges. **You should see** the session under
@@ -616,6 +616,15 @@ In the console, under **Settings › General**:
   out; until you approve it, a Mac doesn't report. Each key waiting for approval raises an
   `agent.enrollment` event with state `pending`, so a SIEM alerting on those alerts on every
   new Mac while this is on. An omitted flag in a settings API update turns it off.
+- **Require an Intune match.** Under **Settings › MDM**, and shown only while Intune is
+  connected ([step 7](#7-connect-intune-optional)); without Intune it has no effect. Off by
+  default. A new key then waits in **Enrollments** for your approval unless the device ID the
+  Mac sent matched Intune, so a Mac that sent none, sent an ID that isn't an Intune device ID or
+  one Intune doesn't know, or enrolled while Intune couldn't be reached, waits too. Turn it on
+  once your profile sends `MDMDeviceID` to every Mac ([step 2](#2-deploy-the-agent)). Keys
+  already in use keep working. If some active Macs didn't match at their last enrolment,
+  turning it on asks you to confirm and says how many. A key sent with another Mac's device ID
+  waits for approval whatever this says. An omitted flag in a settings API update turns it off.
 - **Alert when a Mac stops checking in.** Hours without a check-in before Altiward raises
   an alert. The default of 72 rides out a weekend with laptops closed.
 - **Keep history for.** How long Altiward keeps events, ended elevation sessions, commands and
@@ -681,9 +690,24 @@ its inspector links to. A key in a file shows a note that the agent moves it int
 Secure Enclave by itself or, on a Mac without one, replaces it every 30 days, so there is
 no need to revoke it.
 
+With Intune connected ([step 7](#7-connect-intune-optional)), a key's details also show an
+**Intune check**: what Intune said about the device ID the Mac sent when it enrolled. **Matches
+Intune** is the answer you want. The others are for you to look at before you approve:
+**Intune has this device ID for another Mac** (the key waits for approval whatever your settings
+are), **Intune doesn't know this device ID**, **The profile's MDMDeviceID isn't an Intune
+device ID**, **The agent sent no Intune device ID**, and **Intune couldn't be reached; check it
+before approving**. A key that enrolled before Intune was connected, or with it off, shows no
+check. A Mac that Intune doesn't list at all is tagged **Not in Intune**. The device ID itself
+is never shown.
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/install/enrollments-dark.png">
-  <img src="images/install/enrollments-light.png" width="720" alt="Enrollments in the console, with filters for All, Waiting, Active, Revoked and Rotated: each key shows its fingerprint and whether it is kept in the Secure Enclave, in a file, or not reported. One Mac's earlier file key shows as Rotated. That Mac's key in use is selected, with a Revoke button, its device ID, the key it was rotated from, and a note that the agent moves a file key into the Secure Enclave or, on a Mac without one, replaces it every 30 days.">
+  <img src="images/install/enrollments-light.png" width="720" alt="Enrollments in the console, with filters for All, Waiting, Active, Revoked and Rotated: each key shows its fingerprint and whether it is kept in the Secure Enclave, in a file, or not reported. One Mac's earlier file key shows as Rotated. That Mac's key in use is selected, with a Revoke button, its device ID, the key it was rotated from, and a note that the agent moves a file key into the Secure Enclave or, on a Mac without one, replaces it every 30 days. With Intune connected, the key's details also show an Intune check, and a Mac Intune doesn't list is tagged Not in Intune.">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/install/enrollment-intune-mismatch-dark.png">
+  <img src="images/install/enrollment-intune-mismatch-light.png" width="360" alt="A key waiting for approval, with its Intune check reading: Intune has this device ID for another Mac. Its Approve and Reject buttons are above the key's details, and a note says the Mac enrolled again with a new key.">
 </picture>
 
 **Activity** keeps every sign-in and every change made in the console forever, and sends
@@ -855,6 +879,35 @@ A failing sync adds a line to `problems` that says why, such as `The Intune sync
 The same status, and the copy of the Macs, are at `GET /v1/mdm` and `GET /v1/mdm/devices`
 with a console token or a signed-in session. See [Troubleshooting](#troubleshooting) for
 what the errors mean.
+
+### What it adds to the console
+
+Once the first sync has finished:
+
+- **Enrollments** checks each key that enrols, as described in
+  [Settings worth reviewing](#6-settings-worth-reviewing): the **Intune check** in a key's
+  details, **Not in Intune** on a Mac Intune doesn't list, and the **Require an Intune match**
+  setting. It asks Intune for the device ID the Mac's profile sent
+  ([step 2](#2-deploy-the-agent)) once, when the Mac enrols, waits at most 10 seconds and makes at most 30
+  lookups a minute. A Mac enrolling again with a key it already has makes none.
+- **Fleet** shows, in a Mac's details, its **Primary user (Intune)** and **Last Intune
+  check-in**, or **Not in Intune**. A panel above the table, **In Intune, never reported to
+  Altiward**, lists the Macs Intune manages that no agent has ever checked in from: the agent
+  may not have reached them yet. It is hidden when there are none, and when Intune is off.
+- **Settings › MDM** shows whether Intune is connected, how many Macs it holds, when it last
+  synced and the last error, and how many active Macs matched Intune at their last enrolment.
+  It links back here while Intune isn't connected. Everyone who can sign in sees these, as
+  they see the Intune records themselves.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/install/settings-mdm-dark.png">
+  <img src="images/install/settings-mdm-light.png" width="720" alt="Settings, MDM tab: Microsoft Intune is Synced with 7 Macs, the last sync time and no error, and 4 of 6 active Macs matched Intune at their last enrolment. Below, the Require an Intune match switch is off.">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/install/fleet-never-reported-dark.png">
+  <img src="images/install/fleet-never-reported-light.png" width="720" alt="Fleet with the panel In Intune, never reported to Altiward open above the table: two Macs Intune manages, each with its serial number, name, primary user and last Intune check-in.">
+</picture>
 
 ## Enforcement
 

@@ -3,10 +3,10 @@ import userEvent from "@testing-library/user-event";
 import type { JSX } from "react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, type Device, type Enrollment, type Session } from "../api";
+import { ApiError, type Device, type Enrollment, type MDMCheck, type Session } from "../api";
 import { ApiContext } from "../context";
 import { shortFingerprint } from "../format";
-import { enrollment, fakeApi, session } from "../test/fixtures";
+import { enrollment, fakeApi, mdmDevice, mdmStatus, session } from "../test/fixtures";
 import { AdminsNowView } from "./AdminsNow";
 import { EnrollmentsView } from "./Enrollments";
 
@@ -633,5 +633,71 @@ describe("Admins Now", () => {
     await userEvent.click(screen.getByText("bjones").closest("tr")!);
     inspector = screen.getByRole("complementary", { name: "Session details" });
     expect(within(inspector).getByRole("button", { name: "Revoke admin rights…" })).toBeInTheDocument();
+  });
+});
+
+describe("Enrollments and Intune", () => {
+  const connected = (devices = [mdmDevice()], status = mdmStatus()) => ({
+    mdmStatus: vi.fn(async () => status), mdmDevices: vi.fn(async () => devices),
+  });
+
+  it("flags a Mac Intune doesn't list, once the connection has synced", async () => {
+    const api = fakeApi({
+      enrollments: vi.fn(async () => [
+        enrollment({ device_id: "d-in", serial: "IN-INTUNE" }), enrollment({ device_id: "d-out", serial: "NOT-LISTED" }),
+      ]),
+      ...connected([mdmDevice({ serial: "in-intune " })]),
+    });
+    renderView(api, <EnrollmentsView />);
+    const out = (await screen.findByText("NOT-LISTED")).closest("tr")!;
+    await waitFor(() => expect(within(out).getByText("Not in Intune")).toBeInTheDocument());
+    expect(within(screen.getByText("IN-INTUNE").closest("tr")!).queryByText("Not in Intune")).toBeNull();
+  });
+
+  it.each([
+    ["Intune is off", {}],
+    ["the connection has never synced", connected([], mdmStatus({ last_success_at: undefined }))],
+  ])("doesn't flag any Mac when %s", async (_why, over) => {
+    const api = fakeApi({ enrollments: vi.fn(async () => [enrollment({ serial: "NOT-LISTED" })]), ...over });
+    renderView(api, <EnrollmentsView />);
+    await screen.findByText("NOT-LISTED");
+    await waitFor(() => expect(api.mdmStatus).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("Not in Intune")).toBeNull();
+  });
+
+  it("doesn't flag a key that was revoked or replaced", async () => {
+    const api = fakeApi({
+      enrollments: vi.fn(async () => [enrollment({ serial: "GONE", status: "revoked", revoked_at: "2026-10-02T00:00:00Z" })]),
+      ...connected([]),
+    });
+    renderView(api, <EnrollmentsView />);
+    await screen.findByText("GONE");
+    await waitFor(() => expect(api.mdmStatus).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("Not in Intune")).toBeNull();
+  });
+
+  it.each<[MDMCheck, string]>([
+    ["match", "Matches Intune"],
+    ["mismatch", "Intune has this device ID for another Mac"],
+    ["unknown_id", "Intune doesn't know this device ID"],
+    ["unavailable", "Intune couldn't be reached; check it before approving"],
+    ["invalid_id", "The profile's MDMDeviceID isn't an Intune device ID"],
+    ["not_sent", "The agent sent no Intune device ID"],
+  ])("reads an %s check in the inspector", async (check, words) => {
+    const api = fakeApi({ enrollments: vi.fn(async () => [enrollment({ mdm_check: check })]), ...connected() });
+    renderView(api, <EnrollmentsView />);
+    await userEvent.click(await screen.findByText("C02XK0AAJGH5"));
+    const inspector = screen.getByRole("complementary", { name: "Enrollment details" });
+    expect(within(inspector).getByText("Intune check")).toBeInTheDocument();
+    expect(within(inspector).getByText(words)).toBeInTheDocument();
+  });
+
+  it("has no Intune check row when the key has no check", async () => {
+    const api = fakeApi({ enrollments: vi.fn(async () => [enrollment()]) });
+    renderView(api, <EnrollmentsView />);
+    await userEvent.click(await screen.findByText("C02XK0AAJGH5"));
+    expect(within(screen.getByRole("complementary", { name: "Enrollment details" })).queryByText("Intune check")).toBeNull();
   });
 });

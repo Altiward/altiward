@@ -1,14 +1,16 @@
 import { type JSX, useMemo, useState } from "react";
-import { ApiError, type CredentialStatus, type Enrollment, type KeyStorage } from "../api";
+import { ApiError, type CredentialStatus, type Enrollment, type KeyStorage, type MDMCheck } from "../api";
 import { Banner, Details, Empty, Explain, Missing, RoleNote, SearchField, Segmented, Toolbar } from "../components/Chrome";
 import { Fingerprint } from "../components/Fingerprint";
-import { AttentionGlyph, ChipGlyph, CloseIcon, EndedGlyph, FileGlyph, RotatedGlyph } from "../components/Icons";
+import { AttentionGlyph, ChipGlyph, CloseIcon, EndedGlyph, FileGlyph, NotGrantedGlyph, RotatedGlyph, VerifiedGlyph } from "../components/Icons";
+import { NotInIntune } from "../components/NotInIntune";
 import { ConfirmSheet } from "../components/Sheet";
 import { StateBadge } from "../components/StateBadge";
 import { Table } from "../components/Table";
 import { useApi, useCan } from "../context";
 import { explanations } from "../explanations";
 import { dateTime, hasFailingCheck, lastCheckIn, relativeTime } from "../format";
+import { hasSynced, normaliseSerial, useMDM } from "../mdm";
 import { useLoad } from "../useLoad";
 
 type Filter = CredentialStatus | "rotated" | "all";
@@ -44,10 +46,30 @@ function KeyKeptIn({ storage }: { storage: KeyStorage }) {
   return <span className="key-storage"><Glyph />{word}</span>;
 }
 
+/** What Intune said about the device ID the Mac sent as it enrolled, with a glyph: a match is
+ *  verified, a mismatch is a failure, and anything else is for a person to look at. */
+const intuneCheckLook: Record<MDMCheck, [string, "ok" | "denied" | "attention"]> = {
+  match: ["Matches Intune", "ok"],
+  mismatch: ["Intune has this device ID for another Mac", "denied"],
+  unknown_id: ["Intune doesn't know this device ID", "attention"],
+  unavailable: ["Intune couldn't be reached; check it before approving", "attention"],
+  invalid_id: ["The profile's MDMDeviceID isn't an Intune device ID", "attention"],
+  not_sent: ["The agent sent no Intune device ID", "attention"],
+};
+function IntuneCheck({ check }: { check: MDMCheck }) {
+  const [words, look] = intuneCheckLook[check] ?? [check, "attention"]; // a later server may send another outcome
+  return look === "ok" ? <span className="secondary"><VerifiedGlyph /> {words}</span>
+    : <span className={`tag wrap ${look}`}>{look === "denied" ? <NotGrantedGlyph /> : <AttentionGlyph />} {words}</span>;
+}
+
 /** Device credentials: approve re-enrollments, revoke lost Macs. */
 export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
   const api = useApi();
   const { data, error, reload } = useLoad(() => api.enrollments(), [], 30_000);
+  const mdm = useMDM();
+  // Only a key in use or waiting: a revoked or replaced one says nothing about the Mac now.
+  const notInIntune = (e: Enrollment) => hasSynced(mdm.status) && (e.status === "active" || e.status === "pending")
+    && !mdm.bySerial.has(normaliseSerial(e.serial));
   const [evidenceVersion, setEvidenceVersion] = useState(0);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
@@ -105,7 +127,12 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
             <Table label="Enrollments" rows={rows} rowKey={(e) => e.device_id} selected={selected} onSelect={setSelected}
               initialSort={{ key: "enrolled", descending: true }}
               columns={[
-                { key: "mac", title: "Mac", sort: (e) => e.serial, render: (e) => <span className="data">{e.serial}</span> },
+                { key: "mac", title: "Mac", sort: (e) => e.serial, render: (e) => (
+                  <>
+                    <span className="data">{e.serial}</span>
+                    {notInIntune(e) && <span style={{ marginLeft: 8 }}><NotInIntune /></span>}
+                  </>
+                ) },
                 { key: "status", title: "Status", sort: (e) => e.status, render: (e) => <Status enrollment={e} /> },
                 // Where the key is kept goes under the fingerprint: a column of its own leaves the
                 // dates no room beside the inspector.
@@ -121,7 +148,7 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
           )}
         </div>
         {current && (
-          <EnrollmentInspector enrollment={current} onClose={() => setSelected(null)} evidenceVersion={evidenceVersion}
+          <EnrollmentInspector enrollment={current} notInIntune={notInIntune(current)} onClose={() => setSelected(null)} evidenceVersion={evidenceVersion}
             active={(data ?? []).find((e) => e.serial === current.serial && e.device_id !== current.device_id && e.status === "active")}
             retiresMac={current.status === "active" && !(data ?? []).some((o) =>
               o.serial === current.serial && o.device_id !== current.device_id && (o.status === "active" || o.status === "pending"))}
@@ -136,8 +163,10 @@ export function EnrollmentsView({ onChanged }: { onChanged?: () => void }) {
 }
 
 /** A pending key replaces the Mac's active key when approved, if it has one. */
-function EnrollmentInspector({ enrollment: e, active, retiresMac, predecessor, successor, inUse, evidenceVersion, onClose, onDone, onRotated, onFollow }: {
+function EnrollmentInspector({ enrollment: e, notInIntune, active, retiresMac, predecessor, successor, inUse, evidenceVersion, onClose, onDone, onRotated, onFollow }: {
   enrollment: Enrollment; active: Enrollment | undefined;
+  /** Intune has synced and lists no Mac with this serial. */
+  notInIntune: boolean;
   /** Revoking this key leaves the Mac with no active key and none waiting for approval. */
   retiresMac: boolean; predecessor: Enrollment | undefined; successor: Enrollment | undefined;
   /** For a rotated key, the active key its rotations led to, if the list has it. */
@@ -181,7 +210,7 @@ function EnrollmentInspector({ enrollment: e, active, retiresMac, predecessor, s
       <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
         <div style={{ flex: 1 }}>
           <h2 className="data" style={{ fontSize: 18, lineHeight: "24px" }}>{e.serial}</h2>
-          <div className="badges"><Status enrollment={e} explain /></div>
+          <div className="badges"><Status enrollment={e} explain />{notInIntune && <NotInIntune />}</div>
         </div>
         <button type="button" className="button icon-button" aria-label="Close details" onClick={onClose}><CloseIcon /></button>
       </div>
@@ -212,6 +241,7 @@ function EnrollmentInspector({ enrollment: e, active, retiresMac, predecessor, s
             : <Missing key="from">Not in this list</Missing>] as [string, JSX.Element]] : []),
           ["Key kept in", <Explain key="kept" tip={explanations.keyStorage} bare><KeyKeptIn storage={e.key_storage} /></Explain>],
           ["Hardware UUID", <span key="hw" className="data">{e.hardware_uuid}</span>],
+          ...(e.mdm_check ? [["Intune check", <IntuneCheck key="intune" check={e.mdm_check} />]] as [string, JSX.Element][] : []),
           ["Enrolled with", <Explain key="token" tip={explanations.enrolledWith} bare>
             {e.token ? <span className="data">{e.token}</span> : <Missing>Not recorded</Missing>}
           </Explain>],

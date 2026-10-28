@@ -183,9 +183,46 @@ function psql(sql, what) {
   }
 }
 
+/** Writes what a connected Intune would hold: a copy of its Macs, the sync that made it, and
+ *  each key's Intune check. Straight into Postgres, as the server learns these from Microsoft
+ *  Graph and from the profile's device ID, which a seed has neither of. Without Intune
+ *  connected the server shows none of it, and deletes the copy when it next starts. */
+function seedIntune() {
+  const q = (v) => `'${String(v).replaceAll("'", "''")}'`;
+  const tenant = "(SELECT tenant_id FROM devices LIMIT 1)";
+  // Four of the Macs are in Intune and report. The silent Mac isn't in it at all; two others
+  // are in it and have never run the agent.
+  const copy = [
+    [a.serial, "Jane's MacBook Pro", jane[1], ago(20)], [b.serial, "Shared lab MacBook Air", "lab@example.com", ago(90)],
+    [c.serial, "Anna's MacBook Pro", anna[1], ago(35)], [d.serial, "Ben's MacBook Air", ben[1], ago(300)],
+    [e.serial, "Mia's iMac", mia[1], ago(60)],
+    ["C02NEWHIRE01", "Front desk iMac", "reception@example.com", ago(2 * 24 * 60)],
+    ["C02PILOT0042", "Loaner MacBook Pro", "", null],
+  ];
+  const rows = copy.map(([serial, name, upn, seen]) =>
+    `(${tenant}, 'intune', gen_random_uuid()::text, ${q(serial)}, gen_random_uuid()::text, ${q(upn)}, ${q(name)}, ${seen ? q(seen) : "'-infinity'"})`);
+  const outcome = [[a.serial, "match"], [b.serial, "match"], [c.serial, "match"], [d.serial, "not_sent"],
+    [e.serial, "match"], [f.serial, "unknown_id"]];
+  return psql(`
+    DELETE FROM mdm_devices WHERE tenant_id = ${tenant} AND source = 'intune';
+    INSERT INTO mdm_devices (tenant_id, source, device_id, serial, entra_device_id, primary_upn, name, last_check_in)
+      VALUES ${rows.join(", ")};
+    DELETE FROM mdm_sync WHERE tenant_id = ${tenant} AND source = 'intune';
+    INSERT INTO mdm_sync (tenant_id, source, claimed_at, last_success_at, devices)
+      VALUES (${tenant}, 'intune', now(), now() - interval '8 minutes', ${copy.length});
+    UPDATE device_credentials AS c SET mdm_check = v.outcome
+      FROM (VALUES ${outcome.map(([serial, o]) => `(${q(serial)}, ${q(o)})`).join(", ")}) AS v(serial, outcome)
+      WHERE c.serial = v.serial;
+    UPDATE device_credentials SET mdm_check = 'mismatch' WHERE serial = ${q(a.serial)} AND status = 'pending'`,
+  "write the Intune copy into make db's Postgres, so Enrollments, Fleet and Settings show no Intune");
+}
+
 // A queued device-wide revoke, and a reinstalled Mac waiting for approval.
 await request("POST", `/v1/devices/${b.serial}/revoke`, { bearer: CONSOLE, body: {} });
 await request("PUT", "/v1/settings", { bearer: CONSOLE, body: { reenrollment_requires_approval: true } });
 const again = await enroll(a.serial);
 console.log(`Seeded 6 Macs (${silent ? 1 : 0} silent, ${rotated ? 1 : 0} with a rotated key), 6 sessions, 3 tamper alerts, 3 uses of a permanent admin, 1 queued revoke; ${a.serial} re-enrolled (${again.status}).`);
+// SEED_BACKDATE=external is the demo, which has no Docker CLI and runs without Intune.
+const intune = process.env.SEED_BACKDATE !== "external" && seedIntune();
+if (intune) console.log("Wrote a copy of 7 Intune Macs, its sync and each key's Intune check; they show once the API runs with ALTIWARD_INTUNE_AUTH set.");
 console.log("Re-enrollment approval is now on; turn it off in Settings if you prefer.");

@@ -69,10 +69,16 @@ const browser = await chromium.launch();
 try {
   psql("altiward", `DROP DATABASE IF EXISTS ${DATABASE} WITH (FORCE)`);
   psql("altiward", `CREATE DATABASE ${DATABASE}`);
-  await startServer({
-    ALTIWARD_SYSLOG_ADDR: `127.0.0.1:${syslog.address().port}`, ALTIWARD_SYSLOG_TLS: "false",
-  });
+  const siem = { ALTIWARD_SYSLOG_ADDR: `127.0.0.1:${syslog.address().port}`, ALTIWARD_SYSLOG_TLS: "false" };
+  await startServer(siem);
   execFileSync("node", [join(root, "dev/seed.mjs"), SERVER], { env: { ...process.env, SEED_DATABASE: DATABASE }, stdio: "inherit" });
+  // Intune connects only now, after the seed wrote its copy and a sync the server counts as
+  // fresh, so it doesn't sync: these credentials reach nothing, and are never used.
+  await stopServer();
+  await startServer({
+    ...siem, ALTIWARD_INTUNE_AUTH: "secret", ALTIWARD_INTUNE_TENANT_ID: "00000000-0000-0000-0000-000000000000",
+    ALTIWARD_INTUNE_CLIENT_ID: "00000000-0000-0000-0000-000000000000", ALTIWARD_INTUNE_CLIENT_SECRET: "unused",
+  });
   // People signed in through single sign-on, for Settings. Only the token's hash is stored,
   // and these tokens are never used.
   psql(DATABASE, `INSERT INTO console_sessions
@@ -125,6 +131,15 @@ try {
     await open("/enrollments");
     await select("Enrollments", /C02WQ3DDKL7M.*Active/);
     await shot("enrollments", "replaces it every 30 days");
+    // A reinstalled Mac waiting for approval, whose profile sent another Mac's Intune device ID.
+    await select("Enrollments", /C02XK0AAJGH5.*Waiting for approval/);
+    await shot("enrollment-intune-mismatch", "Intune has this device ID for another Mac", ".inspector");
+    await open("/settings/mdm");
+    await shot("settings-mdm", "Require an Intune match", ".form");
+    // Macs Intune manages that no agent has reached: the panel is closed until opened.
+    await open("/fleet");
+    await page.getByText("In Intune, never reported to Altiward").click();
+    await shot("fleet-never-reported", "Front desk iMac", ".never-reported");
     await open("/fleet?show=attention");
     await select("Macs", "C02VJ4EEMD6R");
     await shot("fleet-hook-not-reporting", "PostChangeExecutableChecksum", '[role="group"][aria-labelledby="integrity-title"]');

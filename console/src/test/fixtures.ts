@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import type { Api, Enrollment, Me, Overview, Role, Session } from "../api";
+import type { Api, Enrollment, MDMDevice, MDMStatus, Me, Overview, Role, Session } from "../api";
 import type { GitHubRelease } from "../updates";
 
 export function session(over: Partial<Session> = {}): Session {
@@ -18,6 +18,22 @@ export function enrollment(over: Partial<Enrollment> = {}): Enrollment {
     device_id: "d-active", serial: "C02XK0AAJGH5", hardware_uuid: "HW-1", public_key: btoa("abc"),
     key_storage: "secure_enclave", token: "token:1a2b3c4d", status: "active", created_at: "2026-10-01T00:00:00Z",
     activated_at: "2026-10-01T00:00:00Z", revoked_at: null, ...over,
+  };
+}
+
+/** Intune connected and synced a few minutes ago, with no keys checked yet. */
+export function mdmStatus(over: Partial<MDMStatus> = {}): MDMStatus {
+  return {
+    configured: true, source: "intune", last_success_at: "2026-10-18T11:45:00Z", last_error: "", devices: 3,
+    silence_held: 0, checks: {}, ...over,
+  };
+}
+
+/** A Mac in the copy of Intune's devices. */
+export function mdmDevice(over: Partial<MDMDevice> = {}): MDMDevice {
+  return {
+    serial: "C02XK0AAJGH5", primary_upn: "jane.doe@example.com", name: "Jane's MacBook Pro",
+    last_check_in: "2026-10-18T10:00:00Z", ...over,
   };
 }
 
@@ -55,6 +71,8 @@ export function fakeApi(over: Partial<Api> = {}): Api {
       history: { days: 365, kept_for_good: false, reason: "default_no_siem" as const, held_before: null, waiting_for_backfill: false },
     })),
     me: vi.fn(async () => signedIn("admin")), signOut: vi.fn(async () => undefined),
+    // Intune is off unless a test connects it.
+    mdmStatus: vi.fn(async () => ({ configured: false })), mdmDevices: vi.fn(async () => []),
     exports: vi.fn(async () => []), testExport: none(), retryExports: none(),
     consoleSessions: vi.fn(async () => []), endConsoleSession: none(),
     ...over,

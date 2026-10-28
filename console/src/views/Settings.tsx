@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router";
-import type { ConsoleSignIn, ExportSink, HistoryPolicy, Settings } from "../api";
-import { Banner, RoleNote, Segmented, Toolbar } from "../components/Chrome";
+import type { ConsoleSignIn, ExportSink, HistoryPolicy, MDMCheck, MDMStatus, Settings } from "../api";
+import { Banner, Details, Missing, RoleNote, Segmented, Toolbar } from "../components/Chrome";
 import { StateBadge } from "../components/StateBadge";
 import { ConfirmSheet } from "../components/Sheet";
 import { Command, UpdatesGroup } from "../components/Updates";
@@ -56,9 +56,21 @@ function keptDays(p: HistoryPolicy): number {
 const TABS = [
   { to: "/settings", title: "General" },
   { to: "/settings/siem", title: "SIEM export" },
+  { to: "/settings/mdm", title: "MDM" },
   { to: "/settings/sign-ins", title: "Sign-ins", admin: true },
   { to: "/settings/updates", title: "Updates", admin: true },
 ];
+
+/** The body of a settings update. PUT replaces every setting, so a change sends the rest as
+ *  loaded, apart from the history period: the server keeps the stored one when it is left out,
+ *  so only a change to it sends it, and a stale page can't put back a period changed elsewhere. */
+function withChange(loaded: Settings, change: Partial<Settings>): Settings {
+  const { history_days: _stored, ...rest } = loaded;
+  return { ...rest, ...change };
+}
+
+/** The guide on GitHub for the server that's running, or main for a build without a release version. */
+const guideRef = (version: string | null) => (version && /^\d+\.\d+\.\d+(-rc\.\d+)?$/.test(version) ? `server-v${version}` : "main");
 
 export function SettingsView() {
   const admin = useCan("admin");
@@ -76,6 +88,7 @@ export function SettingsView() {
           <Routes>
             <Route index element={<GeneralSettings />} />
             <Route path="siem" element={<SiemExport />} />
+            <Route path="mdm" element={<MdmSettings />} />
             {admin && <Route path="sign-ins" element={<ConsoleSignIns />} />}
             {admin && <Route path="updates" element={<Updates />} />}
             <Route path="*" element={<Navigate to="/settings" replace />} />
@@ -115,15 +128,11 @@ function GeneralSettings() {
     setHistoryDays(c.days);
   }, [loaded, storedHistory]);
 
-  // PUT replaces every setting, so each change sends the rest as loaded, apart from the
-  // history period: the server keeps the stored one when it is left out, so only a change to
-  // it sends it, and a stale page can't put back a period changed elsewhere.
   async function save(change: Partial<Settings>) {
     if (!data) return;
     setSaving(true);
     try {
-      const { history_days: _stored, ...rest } = data;
-      await api.putSettings({ ...rest, ...change });
+      await api.putSettings(withChange(data, change));
       setSaveError(null);
       await reload();
       await policy.reload();
@@ -394,8 +403,7 @@ function SiemExport() {
 function ConnectSiem({ connected, where, version }: { connected: string[]; where: Where; version: string | null }) {
   const guides = siemGuides(where).filter((g) => !connected.includes(g.sink));
   if (guides.length === 0) return null;
-  // The guide for the server that's running, or main for a build without a release version.
-  const ref = version && /^\d+\.\d+\.\d+(-rc\.\d+)?$/.test(version) ? `server-v${version}` : "main";
+  const ref = guideRef(version);
   const azure = where.azureApp !== undefined;
   return (
     <div className="siem-connect">
@@ -460,6 +468,130 @@ function SinkRow({ sink, canAct, busy, onRetry }: {
         {failing && <button type="button" className="button" disabled={busy || !canAct} onClick={onRetry}>Retry now</button>}
       </span>
     </div>
+  );
+}
+
+/** How the Macs that didn't match Intune are described, by the outcome of their check. */
+const unmatchedWords: Record<Exclude<MDMCheck, "match">, string> = {
+  not_sent: "sent no Intune device ID",
+  invalid_id: "sent an invalid device ID",
+  mismatch: "sent another Mac's device ID",
+  unknown_id: "sent a device ID Intune doesn't know",
+  unavailable: "enrolled while Intune couldn't be reached",
+};
+
+/** Whether the last sync failed: its error is newer than its last success. */
+const syncFailing = (s: MDMStatus) =>
+  !!s.last_error_at && (!s.last_success_at || new Date(s.last_error_at) > new Date(s.last_success_at));
+
+/** Microsoft Intune: whether it is connected and syncing, how many active Macs matched it when
+ *  they enrolled, and the setting that holds the rest for approval. Like the SIEMs, the
+ *  connection is set in the server's environment, so nothing here changes it. */
+function MdmSettings() {
+  const api = useApi();
+  const canChange = useCan("admin");
+  const status = useLoad(() => api.mdmStatus(), []);
+  const settings = useLoad(() => api.settings(), []);
+  const { data: about } = useLoad(() => api.about(), []);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+
+  const s = status.data;
+  const checks = s?.checks ?? {};
+  const matched = checks.match ?? 0;
+  const checked = Object.values(checks).reduce((sum, n) => sum + (n ?? 0), 0);
+  const unmatched = checked - matched;
+  const guide = `https://github.com/Altiward/altiward/blob/${guideRef(about?.version ?? null)}/docs/install.md#7-connect-intune-optional`;
+
+  async function setRequired(on: boolean) {
+    if (!settings.data) return;
+    setSaving(true);
+    setConfirming(false);
+    try {
+      await api.putSettings(withChange(settings.data, { require_intune_match: on }));
+      setSaveError(null);
+      await settings.reload();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="group" role="group" aria-labelledby="mdm-title" style={{ marginTop: 0 }}>
+        <h3 id="mdm-title">Microsoft Intune</h3>
+        {(status.error || settings.error || saveError) && <Banner>{saveError ?? status.error ?? settings.error}</Banner>}
+        {s && !s.configured && (
+          <div className="box">
+            <div className="row">
+              <span>
+                <span>Intune</span>
+                <p className="hint">
+                  Connecting Intune lets Altiward check each Mac that enrols against the Macs Intune manages, and shows
+                  each Mac's primary user in Fleet. Like a SIEM, it is set in the server's environment, not here.{" "}
+                  <a href={guide} target="_blank" rel="noreferrer">Connect Intune</a>.
+                </p>
+              </span>
+              <StateBadge state="ended" label="Not connected" />
+            </div>
+          </div>
+        )}
+        {s?.configured && (
+          <>
+            <Details rows={[
+              ["Sync", syncFailing(s) ? <StateBadge key="sync" state="not-granted" label="Failing" />
+                : s.last_success_at ? <StateBadge key="sync" state="verified" label="Synced" />
+                : <StateBadge key="sync" state="claimed" label="Waiting for the first sync" />],
+              ["Macs in Intune", String(s.devices ?? 0)],
+              ["Last synced", s.last_success_at ? dateTime(s.last_success_at) : <Missing key="synced">Not yet</Missing>],
+              ["Last error", s.last_error
+                ? <span key="error"><code>{s.last_error}</code>{s.last_error_at && <span className="secondary"> ({dateTime(s.last_error_at)})</span>}</span>
+                : <Missing key="error">None</Missing>],
+            ]} />
+            <p className="hint">
+              {checked === 0
+                ? "No active Mac has enrolled with Intune connected yet, so none has been checked."
+                : `${matched} of ${checked} active Macs matched Intune at their last enrolment.`}
+            </p>
+            {unmatched > 0 && (
+              <p className="hint">
+                Of the rest, {(Object.keys(unmatchedWords) as (keyof typeof unmatchedWords)[])
+                  .filter((k) => checks[k]).map((k) => `${checks[k]} ${unmatchedWords[k]}`).join(", ")}.
+              </p>
+            )}
+          </>
+        )}
+      </div>
+      {s?.configured && (
+        <div className="group">
+          <h3>Enrolment</h3>
+          {!canChange && <RoleNote>Changing settings needs the admin role.</RoleNote>}
+          <div className="box">
+            <label className="row">
+              <span>
+                <span>Require an Intune match</span>
+                <p className="hint">
+                  Off by default. A new key waits for approval in Enrollments unless the device ID the Mac sent matched
+                  Intune: a Mac that sent none, an invalid or unknown ID, or that Intune couldn't be asked about waits too.
+                  A key sent with another Mac's device ID waits whatever this says. Keys already in use keep working.
+                </p>
+              </span>
+              <input type="checkbox" role="switch" disabled={!settings.data || saving || !canChange}
+                checked={settings.data?.require_intune_match ?? false}
+                onChange={(e) => (e.target.checked && unmatched > 0 ? setConfirming(true) : void setRequired(e.target.checked))} />
+            </label>
+          </div>
+        </div>
+      )}
+      {confirming && (
+        <ConfirmSheet title="Require an Intune match?" confirm="Require a match" busy={saving}
+          message={`${unmatched} of ${checked} active Macs didn't match Intune at their last enrolment. Their keys keep working, but from now on a new key from a Mac that doesn't match waits for your approval in Enrollments.`}
+          onConfirm={() => void setRequired(true)} onCancel={() => setConfirming(false)} />
+      )}
+    </>
   );
 }
 
