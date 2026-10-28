@@ -1,10 +1,9 @@
 # Core event schema
 
 [`event.schema.json`](event.schema.json) is the contract between the Mac agent and the
-API. Three types, `agent.silent`, `agent.enrollment` and `agent.admin_group`, are raised only by
-the backend;
-the API refuses them from agents. The [examples](examples/) are decoded by both the Swift
-and Go test suites.
+API. Three types, `agent.silent`, `agent.enrollment` and `agent.admin_group`, are raised
+only by the backend, and the API refuses them from agents. The [examples](examples/) are
+decoded by both the Swift and Go test suites.
 
 Changing the schema means changing, together: the JSON Schema, the fixtures,
 `agent/Sources/AltiwardCore/Event.swift` and `backend/internal/event/event.go`. The Go
@@ -121,14 +120,14 @@ ownership checks over concurrent ingestion writes within one tenant.
 | | `hardware_uuid_matches` | Whether the new key's hardware UUID is the previous credential's (sent with `previous_device_id`; always `true` for `rotated`) |
 | | `rotated_to` | The device ID of the key that replaced the stale one (`rotated_key_used` only) |
 | | `revoked_device_id` | The device ID of the key this event revoked, when it revoked one (`rotated_key_used` only) |
-| `agent.admin_group` | `state` | `changed` (the group differs from the one last reported) or `snapshot` (the whole group, once a day for each Mac that has checked in) |
+| `agent.admin_group` | `state` | `changed` (the group differs from the one last reported) or `snapshot` (the whole group: a Mac's first, and then once a day for each Mac that isn't retired, checked in during the last 24 hours and has a group reported) |
 | | `members` | Everyone in the Mac's admin group at the reading (its `admin_members`), including anyone elevated at that moment |
 | | `permanent_admins` | The reading's configured standing admins. It is not membership: a name on it may not be in the group, or not exist on the Mac |
 | | `added` | The people who joined the group since the last report (`changed` only). Each has `name`, and `session_id` and `source` (`privileges` or `out_of_band`) of the matching entry in the reading's `open_sessions` when there is one |
 | | `removed` | The names of the people who left it (`changed` only) |
 | | `health_event_id` | The event ID of the `agent.health` reading this reports (a lower-case UUID) |
 | | `as_of` | The reading's time by the Mac's clock. The event's `timestamp` is when the backend raised it |
-| | `truncated` | People left out because a list holds at most 200 names; `0` when none |
+| | `truncated` | People left out because a list holds at most 200 names, and names left out to keep the raised event under the 64 KiB detail limit; `0` when none |
 
 `elevation.overdue` is sent at most once per session expiry (a renewal re-arms it) and
 leaves the session open. `elevation.expired_enforced` ends it.
@@ -178,8 +177,9 @@ Mac's admin group after the health readings that recorded it expire. Its `timest
 the backend raised it, and `device` is the Mac's last known identity and versions. It doesn't
 count as a check-in. It is a record, not a detection: `admin.out_of_band` and the elevation
 events raise the findings. Only `members` is the group; a change to `permanent_admins` alone
-raises nothing. Lists are cut to 200 names, with duplicates and over-long names dropped, and
-`truncated` counts what was left out.
+raises nothing. Duplicates and over-long names are dropped. Lists are cut to 200 names, and
+further if the event would pass the 64 KiB detail limit, and `truncated` counts the names
+cut.
 
 `activity` is defined but not yet emitted.
 

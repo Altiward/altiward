@@ -297,14 +297,14 @@ Then carry on from [step 2](#2-give-altiward-the-values).
 | Column | Type | |
 | --- | --- | --- |
 | `TimeGenerated` | datetime | When it happened |
-| `EventUid` | string | Event ID, unique per event |
+| `EventUid` | string | Event ID, unique per record. An `agent.admin_group` event gives several records, so the second and later add `/added/<name>`, `/removed/<name>`, `/member/<name>` or `/group` |
 | `TenantUid` | string | Tenant |
 | `SessionUid` | string | Elevation session |
 | `ClassUid` | int | OCSF class |
 | `ActivityId` | int | OCSF activity |
 | `SeverityId` | int | OCSF severity |
 | `DeviceSerial` | string | The Mac's serial number |
-| `UserName` | string | The user, the actor for a console action, or the enrolment token fingerprint |
+| `UserName` | string | The user, the actor for a console action (`altiward:server` when the server acted by itself), the person an `agent.admin_group` record is about, or the enrolment token fingerprint |
 | `Message` | string | A sentence describing the event |
 | `Ocsf` | dynamic | The full OCSF record |
 

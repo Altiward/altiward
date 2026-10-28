@@ -58,7 +58,9 @@ You need:
 
 - **A Linux server or VM** with Docker Engine and the Docker Compose plugin. As a starting
   point, not a measured requirement: 2 vCPUs, 4 GB of memory and 20 GB of disk. Altiward
-  keeps every event for now, so watch disk use as your fleet grows.
+  keeps history for a year once a SIEM is connected, and for good until then (see
+  [Settings worth reviewing](#6-settings-worth-reviewing)), so watch disk use as your fleet
+  grows.
 - **Two DNS names** pointing at the server, for example `altiward-agents.example.com`
   and `altiward.example.com`.
 - **Ports 80 and 443** reachable on the server from the internet, so Caddy can get
@@ -369,7 +371,7 @@ versions and who is an admin. If one doesn't, see
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/install/fleet-dark.png">
-  <img src="images/install/fleet-light.png" width="720" alt="Fleet in the console: a row per Mac with its serial number, last check-in, admins, and macOS, agent and SAP Privileges versions.">
+  <img src="images/install/fleet-light.png" width="720" alt="Fleet in the console: a row per Mac with its serial number, last check-in, admins, and macOS, agent and SAP Privileges versions. Above the table, a Show control switches between Macs in use and retired Macs, beside the search box.">
 </picture>
 
 Then grant admin to a test user through Privileges. **You should see** the session under
@@ -417,6 +419,21 @@ since then is sent again.
 ```sh
 docker compose exec altiward /usr/local/bin/altiward-api replay-exports sentinel 2026-10-01
 ```
+
+Replaying also matters for history. The first time the server starts with a SIEM
+configured, Altiward notes that date. With the default **Keep history for** period
+([Settings worth reviewing](#6-settings-worth-reviewing)), nothing received before the latest
+SIEM's date is removed, so connecting a SIEM to an old server never deletes history the SIEM
+wasn't sent. Replaying from an earlier date moves that date back to it. A period you set
+yourself isn't held back by this. Events from before a replay's date, and any the server has
+already removed, can't be sent.
+
+Connecting a SIEM, or upgrading a server that has one, starts the default period of one year.
+It removes nothing younger than 90 days, and nothing a SIEM is still waiting for.
+
+Every replica of the server needs the same SIEM settings. A replica without a SIEM stores the
+events it receives without queuing them for it, so the SIEM never gets them, and what history
+may be removed depends on which SIEMs the server has.
 
 Events wait in Postgres until your SIEM accepts them, so a SIEM outage delays them
 without losing any. The console's Settings shows, for each SIEM, what is waiting and the
@@ -566,6 +583,19 @@ In the console, under **Settings › General**:
   new Mac while this is on. An omitted flag in a settings API update turns it off.
 - **Alert when a Mac stops checking in.** Hours without a check-in before Altiward raises
   an alert. The default of 72 rides out a weekend with laptops closed.
+- **Keep history for.** How long Altiward keeps events, ended elevation sessions, commands and
+  Macs that stopped checking in. **Default** is one year when a SIEM is connected and for good
+  when none is. **Days** takes 90 to 3650, whether or not a SIEM is connected. **Keep for
+  good** removes nothing. The setting shows the period in force and why. Altiward removes
+  what is older once a day. Shortening the period asks you to confirm, and your SIEM keeps
+  what it was sent. It never removes an event a SIEM is waiting for, anything from the last
+  90 days, or, under the default, anything received before your SIEM was connected until you
+  replay it to the SIEM ([Connect your SIEM](#4-connect-your-siem)). Removal doesn't start
+  until the server has sent each Mac's admin group to your SIEM from the readings it already
+  holds, which happens once, when the server first starts after an upgrade. What is removed
+  and what stays is in [Data handling](data-handling.md#how-long-history-is-kept).
+
+  An omitted `history_days` in a settings API update keeps the stored value.
 
 Two more settings go in `.env`; `0` turns one off:
 
@@ -594,8 +624,17 @@ while **Enrollments** fills with serials or keys you don't recognise. Then chang
 token ([Changing tokens](#changing-tokens)), revoke the keys you don't recognise, and
 meanwhile raise the limit or set it to `0`.
 
-To retire a Mac, revoke its enrollment in **Enrollments**. It then stops being able to
-report and never raises a "not checking in" alert. A key that rotation replaced shows as
+To retire a Mac, revoke its enrollment in **Enrollments**. Revoking a Mac's only active key,
+with no key waiting for approval, retires it. It then stops being able to report and never
+raises a "not checking in" alert. It leaves **Fleet**, which shows Macs in use: choose
+**Retired** in the **Show** control to see it, with when it was retired and when its history is
+removed. It no longer counts in the Overview's Mac figures. The revoke asks you to confirm and
+says so, and warns if someone still has admin rights on the Mac or it is failing an integrity
+check. Anyone with an open session on a retired Mac stays in **Admins now**, tagged
+**Mac retired**, because nothing reaches the Mac to end it. Rejecting a key waiting for
+approval doesn't retire a Mac, nor does the revoke Altiward makes itself when a replaced key is
+used again. A new key for a retired Mac, such as when it enrols again, brings it back to Fleet.
+Revoking is also how you re-key a Mac that is still in use. A key that rotation replaced shows as
 **Rotated**, not **Revoked**, and offers no actions: revoke the Mac's key in use, which
 its inspector links to. A key in a file shows a note that the agent moves it into the
 Secure Enclave by itself or, on a Mac without one, replaces it every 30 days, so there is
@@ -607,7 +646,9 @@ no need to revoke it.
 </picture>
 
 **Activity** keeps every change made in the console forever, and sends each one to your
-SIEM. To remove old entries, set `ALTIWARD_AUDIT_RETENTION_DAYS` in `.env` (at least 365)
+SIEM. It also records what Altiward does by itself, such as removing history past its period
+or a Mac that stopped checking in, with the actor `altiward:server`, shown in the console as
+Altiward. To remove old entries, set `ALTIWARD_AUDIT_RETENTION_DAYS` in `.env` (at least 365)
 and run `docker compose up -d`. Altiward then removes older entries once a day, but never
 one your SIEM hasn't received yet.
 
@@ -894,11 +935,14 @@ mode; without the log, each claim renews it, and each is reported as
   about export failures mean your SIEM is refusing events; they are retried with
   backoff.
 - Each Mac's last check-in, and any **Not checking in** or **Needs attention** tags, are
-  in **Fleet**. **Activity** lists every change made in the console.
+  in **Fleet**, which hides retired Macs unless you choose **Retired**. **Activity** lists
+  every change made in the console.
 
 ### Backups
 
-Postgres holds everything. Back it up daily, and keep `.env` somewhere safe as well:
+Postgres holds everything, and removes history past its period ([Settings worth
+reviewing](#6-settings-worth-reviewing)), so an old backup holds history the live database
+no longer does. Back it up daily, and keep `.env` somewhere safe as well:
 
 ```sh
 docker compose exec -T postgres pg_dump -U altiward -Fc altiward > altiward-$(date +%F).dump
@@ -1168,6 +1212,10 @@ For anything else, run the [diagnostics report](#diagnostics-for-a-bug-report) a
 `problems` list.
 
 ### A Mac never appears
+
+A Mac that was in **Fleet** and has gone is usually retired: choose **Retired** in the
+**Show** control. If it isn't there either, **Activity** shows whether Altiward removed it
+(`remove_device`) after it hadn't checked in for longer than the history period.
 
 On the Mac, ask the agent:
 

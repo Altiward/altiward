@@ -2,8 +2,10 @@
 
 `altiward-api` is one Go binary. It handles agent ingestion, serves the read API behind
 the console, and runs the SIEM export workers and the monitor that raises `agent.silent`
-when a Mac stops checking in. The backend raises one other event itself, `agent.enrollment`,
-when a Mac enrols a key. Agents can't send either: the API refuses both types.
+when a Mac stops checking in. The backend raises two other events itself: `agent.enrollment`,
+when a Mac enrols a key, and `agent.admin_group`, the admin group of a Mac, so that a SIEM
+keeps it after the health readings expire. Agents can't send any of the three: the API
+refuses them.
 
 | Package | Role |
 | --- | --- |
@@ -13,8 +15,9 @@ when a Mac enrols a key. Agents can't send either: the API refuses both types.
 | `internal/api` | HTTP handlers. `enrollment_event.go` builds the `agent.enrollment` event stored when a key enrols |
 | `internal/ocsf` | Mapping to OCSF 1.9.0 for export |
 | `internal/export` | Outbox worker plus Splunk, Sentinel and syslog (CEF) sinks |
-| `internal/monitor` | Raises `agent.silent` for a Mac that stops checking in |
-| `internal/retention` | Removes audit entries past `ALTIWARD_AUDIT_RETENTION_DAYS`, daily |
+| `internal/admingroup` | Decides the `agent.admin_group` events (`changed` and `snapshot`) from a health reading and the group last sent for the Mac |
+| `internal/monitor` | Raises `agent.silent` for a Mac that stops checking in, and the daily `agent.admin_group` snapshots. A retired Mac gets no new silence alert and no snapshot |
+| `internal/retention` | Removes audit entries past `ALTIWARD_AUDIT_RETENTION_DAYS`, daily. `History` removes events, ended sessions, commands and quiet Macs past each organisation's `history_days`, daily, and never what a SIEM still waits for ([data handling](../docs/data-handling.md#how-long-history-is-kept)) |
 | `internal/diagnose` | The `altiward-api diagnose` support report |
 | `internal/release` | `OldestSupportedAgent` and the agent version check |
 | `internal/sso` | Console single sign-on: OIDC with PKCE through go-oidc, groups to roles. `sso/ssotest` is a fake identity provider for tests |
@@ -79,12 +82,13 @@ token in `X-CSRF-Token`; requests with a token don't.
 | `POST /v1/agent/rotate` | Device signature, by the key being replaced. `{"public_key", "key_storage", "proof"}`: the new key as in enrolment, and its proof (above). Responds `{"device_id", "status"}`: 201 and `active` for the new key, which takes the old key's tenant, serial and hardware UUID, with no approval; the old key is revoked in the same step. The same body again answers 200 with the same `device_id` and the new key's current `status` (`revoked` if an admin has revoked it since), at any time, and is never rate limited. Refused with 400 and `code` `rotation_invalid` (the body doesn't decode, `public_key` isn't P-256 or is the signing key, or the proof is wrong); 409 `key_in_use` (any credential holds the key, in any tenant); 409 `rotation_not_allowed` (the signing key claims the Secure Enclave); 429 `rotation_rate_limited` with `Retry-After` (the signing key has been active less than 24 hours); 403 `enrollment_pending`; 401 `credential_invalid` (the signing key is revoked, or was rotated to a different key). |
 | `GET /v1/sessions` | Newest first. Query: `user`, `device`, `open=true`, `since`, `until` (RFC 3339, on start time), `limit` (≤ 500). Each session adds `open`, `allowed_seconds`, `actual_seconds` and `overran`. |
 | `GET /v1/sessions/{id}` | `{"session": ..., "events": [...]}`: the timeline, oldest first, with `received_at`. |
-| `GET /v1/devices` | Fleet inventory: versions, last check-in, current `admin_members` and `permanent_admins`, Privileges config. |
-| `GET /v1/overview?days=7\|30\|90` | The console's overview, worked out by `internal/report` from session and device state and each SIEM's queue: admins now by source, alerts, the period's elevations per day (per week over 90 days), median time held against allowed, the top five people and Macs, agent versions and SIEM state. 30 days by default. |
+| `GET /v1/devices` | Fleet inventory: versions, last check-in, current `admin_members` and `permanent_admins`, Privileges config. `retired_at` is when an admin revoked the Mac's only key, left out while the Mac is in use. Retired Macs are still returned, for the console to hide by default. |
+| `GET /v1/overview?days=7\|30\|90` | The console's overview, worked out by `internal/report` from session and device state and each SIEM's queue: admins now by source, alerts, the period's elevations per day (per week over 90 days), median time held against allowed, the top five people and Macs, agent versions and SIEM state. 30 days by default. Retired Macs are left out of the counts of Macs (failing checks, silent, health, agent versions) but not of open sessions or what happened in the period. |
 | `GET /v1/enrollments` | Device credentials, newest first. Query: `status` (`active`, `pending`, `revoked`), `serial`. A key made by rotation has `rotated_from`, the key it replaced; a key that rotation replaced is `revoked` and has `rotated_to`, the key that replaced it. Both are left out when empty. |
 | `POST /v1/enrollments/{device_id}/approve` | Activate a pending re-enrollment; revokes the Mac's previous credential. |
-| `POST /v1/enrollments/{device_id}/revoke` | Revoke a credential. A key that rotation replaced, whose lineage still has an active key, is refused with 409 `credential_rotated` and `current_device_id`, the key in use, and nothing changes: revoke that key instead. |
-| `GET /v1/settings`, `PUT /v1/settings` | Tenant settings: `{"reenrollment_requires_approval": true, "new_mac_requires_approval": false, "silent_after_hours": 0, "silent_alerts_off": false}`. Approval defaults to on; an omitted or null flag also means on. Only explicit `false` permits automatic identity replacement. `new_mac_requires_approval` holds every serial's first key for approval too; it is off by default and when omitted. `silent_after_hours` is 1 to 720, or 0 for the default of 72. `silent_alerts_off` stops new `agent.silent` alerts; a Mac already reported still resumes. `PUT` replaces them all. |
+| `POST /v1/enrollments/{device_id}/revoke` | Revoke a credential. Revoking a Mac's only active key, with none pending, retires the Mac (`retired_at`), and the entry in Activity says `retired`, and `open_sessions` and `failing_checks` when either applies. Rejecting a pending key, or a revoke that changes nothing, never retires a Mac; any new key for the Mac clears `retired_at`. A key that rotation replaced, whose lineage still has an active key, is refused with 409 `credential_rotated` and `current_device_id`, the key in use, and nothing changes: revoke that key instead. |
+| `GET /v1/settings`, `PUT /v1/settings` | Tenant settings: `{"reenrollment_requires_approval": true, "new_mac_requires_approval": false, "silent_after_hours": 0, "silent_alerts_off": false}`. Approval defaults to on; an omitted or null flag also means on. Only explicit `false` permits automatic identity replacement. `new_mac_requires_approval` holds every serial's first key for approval too; it is off by default and when omitted. `silent_after_hours` is 1 to 720, or 0 for the default of 72. `silent_alerts_off` stops new `agent.silent` alerts; a Mac already reported still resumes. `history_days` is how long history is kept: 0 for the default (a year with a SIEM connected, for good without one), -1 to keep it for good, or 90 to 3650 days. A `PUT` that leaves `history_days` out keeps the stored value. `PUT` replaces the rest. |
+| `GET /v1/retention` | Viewer. The history period in force: `{"history": {"days", "kept_for_good", "reason", "held_before", "waiting_for_backfill"}}`. `reason` is `default_siem`, `default_no_siem`, `set` or `kept_for_good`. `held_before` is the SIEM coverage date while the default period keeps back history received before it, otherwise null. `waiting_for_backfill` is true until the admin group has been sent from stored readings: expiry doesn't start before that. |
 | `GET /v1/exports` | Each configured SIEM: `{"sink", "pending", "failing", "oldest_queued_at", "max_attempts", "last_error", "last_delivered_at"}`. `last_delivered_at` is when it last accepted something for this tenant, or null. |
 | `POST /v1/exports/test`, `POST /v1/exports/{sink}/retry` | Admin. Queue a test event for every SIEM, or make a failing SIEM's waiting items due now. Both are audited. |
 | `GET /v1/mdm` | The Intune connection: `{"configured": true, "source": "intune", "last_success_at", "last_error_at", "last_error", "devices", "silence_held_at", "silence_held"}`, or `{"configured": false}` when Intune is off. `devices` is how many Macs the last successful sync copied; a failed sync keeps that copy and records `last_error`. `silence_held_at` and `silence_held` say when silence alerts were last held back because too many Macs tripped at once, and how many. Each time is left out until it first happens. |
@@ -95,7 +99,7 @@ token in `X-CSRF-Token`; requests with a token don't.
 | `GET /v1/console-sessions` | Admin. Who is signed in to the console through single sign-on: `{"sessions": [{"id", "actor", "name", "role", "created_at", "ends_at", "expires_at", "current"}]}`. `id` is the hex of the session's stored hash, never its cookie. |
 | `DELETE /v1/console-sessions/{id}` | Admin. Ends that sign-in, audited as `end_console_session`. 204, or 404 if it has already ended. |
 | `GET /v1/about` | `{"version", "oldest_supported_agent", "tamper_severities", "update_check"}`: the server's version, the oldest agent minor release it accepts, the severity each known tamper check's failure is exported with, and whether the console may check GitHub for newer releases (`ALTIWARD_UPDATE_CHECK`). On Azure Container Apps it adds `"platform": "azure-container-apps"` and `"app"`, the app's name. The console shows the version, tags older agents, gives failing checks their severity and tells admins when a newer release is out, and how to install it where the server runs. |
-| `GET /v1/audit` | Console actions, newest first: `{"entries": [{"id", "at", "actor", "action", "target", "detail", "seq"}]}`. Actions: `revoke_session`, `revoke_device`, `approve_enrollment`, `revoke_enrollment`, `change_settings` (with `previous` and `settings`), `sign_in` (with `role`, `name` and `subject`), `sign_out`, `test_export`, `retry_exports` and `end_console_session` (its target is the signed-in person's actor). `actor` is the person's email with single sign-on; for a token it is `token:` and the first 8 hex digits of its SHA-256, or `break-glass:` and the same digits once single sign-on is on. Entries in the same instant list newest first by `seq`, the order recorded. Query: `before` (RFC 3339), `before_seq` (with `before`: the next page starts after the last entry's `at` and `seq`, so none are skipped), `limit` (≤ 500). Each entry is written in the transaction that made the change; the table is append-only, except that entries older than 365 days can be removed by retention. |
+| `GET /v1/audit` | Console actions, newest first: `{"entries": [{"id", "at", "actor", "action", "target", "detail", "seq"}]}`. Actions: `revoke_session`, `revoke_device`, `approve_enrollment`, `revoke_enrollment`, `change_settings` (with `previous` and `settings`), `sign_in` (with `role`, `name` and `subject`), `sign_out`, `test_export`, `retry_exports` and `end_console_session` (its target is the signed-in person's actor). The server writes three more by itself, with the actor `altiward:server`: `expire_history` (one for each organisation per run that removed anything: the cutoff, the period and why, and counts), `remove_device` (a Mac that stopped checking in, removed with its history: its serial, last check-in, counts and the event ID of its open `agent.silent` alert, if any) and `revoke_enrollment` for each key the server revoked with the Mac. `actor` is the person's email with single sign-on; for a token it is `token:` and the first 8 hex digits of its SHA-256, or `break-glass:` and the same digits once single sign-on is on. Single sign-on refuses to sign in a person whose actor (their email, else username, UPN or subject) starts with `altiward:`, `token:` or `break-glass:`. Entries in the same instant list newest first by `seq`, the order recorded. Query: `before` (RFC 3339), `before_seq` (with `before`: the next page starts after the last entry's `at` and `seq`, so none are skipped), `limit` (≤ 500). Each entry is written in the transaction that made the change; the table is append-only, except that entries older than 365 days can be removed by retention. |
 | `GET /v1/auth/config` | No authentication. `{"sso": true}` when single sign-on is set up. |
 | `GET /v1/auth/login` | No authentication. Starts single sign-on: sets a short-lived sign-in cookie and redirects to the identity provider. Query: `next`, a path on this site to return to, and `select_account=1`, which asks the identity provider for its account picker (as does the first sign-in after a sign-out). |
 | `GET /v1/auth/callback` | Where the identity provider sends the browser back. Sets the session cookie (`__Host-altiward_session`, HttpOnly, Secure, SameSite=Lax) and redirects to `next`, or to `/?sso_error=` with `no_role`, `groups`, `expired`, `denied`, `unavailable` or `failed`. |
@@ -144,11 +148,17 @@ out-of-band session).
 | `ALTIWARD_SYSLOG_ADDR`, `_TLS`, `_CA_FILE`, `_FORMAT`, `_FRAMING` | TLS, `cef`, `octet` | Enables the syslog sink; see [integrations/syslog](../integrations/syslog/README.md) |
 
 Each sink gets every exportable agent event and every console action from the audit log
-(OCSF API Activity, event type `console.<action>`). Both share one outbox queue per sink,
-written in the transaction that stores the event or makes the change.
+(OCSF API Activity, event type `console.<action>`), including what the server does by itself,
+whose actor maps to a System user, "Altiward server". Both share one outbox queue per sink,
+written in the transaction that stores the event or makes the change. An `agent.admin_group`
+event becomes OCSF Group Management (3006) records: one for each person added, removed or in
+the group, and one for the Mac. Health readings and command results are never exported.
 
 Export sinks are global per deployment for now. The outbox already records the tenant, so
-per-tenant sink configuration can come later without a data migration.
+per-tenant sink configuration can come later without a data migration. Every replica must have
+the same sinks: a replica without one stores events without queuing them for it. The server
+notes when it first started with each sink, and under the default history period removes
+nothing received before the latest of those dates.
 
 ## Run and test
 
@@ -167,7 +177,8 @@ Admins deploy it with [deploy/compose](../deploy/compose/); see the
 server: `health` (exit 0 if the local server answers `/healthz`, for container health
 checks), `diagnose` (a support report as JSON, secrets hidden, database read without
 migrating), `drop-exports SINK` (drop the export queue of a sink no longer configured;
-it refuses a configured one) and `version`.
+it refuses a configured one), `replay-exports SINK SINCE` (queue what was received since a
+date for a configured sink, and move that sink's coverage date back to it) and `version`.
 
 ```sh
 make backend-test    # unit tests; the Postgres store suite is skipped
