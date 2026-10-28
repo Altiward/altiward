@@ -2,7 +2,7 @@ import Foundation
 import IOKit
 
 public enum AgentVersion {
-    public static let current = "1.1.0"
+    public static let current = "1.2.0"
 }
 
 /// Reads the Mac's identity for the `device` block of every event.

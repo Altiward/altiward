@@ -9,6 +9,271 @@ Each release has one section headed `## Server X.Y.Z - YYYY-MM-DD` or
 don't apply. Changes that haven't shipped wait in [`changelog.d/`](changelog.d/), one
 file each, and the release adds them here: don't edit this file in a pull request.
 
+## Agent 1.2.0 - 2026-10-28
+
+### Upgrade order
+
+Upgrade the server to 1.2.0 first. A 1.1 server accepts this agent's enrolment and events,
+but it ignores the MDM device ID the agent sends, so it can't check the Mac against
+Intune, and it sends both new Platform SSO findings to the SIEM at High, titled only by
+their check names.
+
+Deliver the agent's settings, and SAP Privileges', through MDM before you roll this
+release out. The installed agent now takes its settings only from the `com.altiward.agent`
+payloads of the profiles MDM installed, and its use of Privileges' settings from MDM's
+payloads too. A profile installed by hand no longer counts, and the `ALTIWARD_*`
+environment overrides are ignored. On a Mac not enrolled in MDM, the agent takes its
+settings from the preferences and fails `settings_managed`, so use one only for testing.
+
+Deploy this release's `corp.sap.privileges.plist` keys (or
+`corp.sap.privileges.mobileconfig`) to your Privileges profile with the package, as for
+every agent upgrade: its `PostChangeExecutableChecksum` is this build's hook. With the old
+checksum, Privileges stops running the hook and Altiward raises "SAP Privileges no longer
+reports to Altiward".
+
+The agent upgrades its store, `agent.sqlite`, from schema version 3 to 5 on first start,
+and an older agent refuses a store a newer one wrote. To go back to agent 1.1, remove the
+agent with its data (`uninstall.sh --purge`, which also deletes events not yet delivered)
+before installing 1.1: the Mac then enrols again with a new key, which waits for approval
+if **Approve Macs that enrol again** is on.
+
+Server 1.2.0's early silence alert needs Intune connected, and applies only to Macs whose
+agent has reported 1.2.0 or later, the first release that checks in at least hourly.
+
+### Breaking changes
+
+None.
+
+### Security
+
+- The installed agent takes its settings from the `com.altiward.agent` payloads of the
+  profiles MDM installed, as the Mac's `/usr/bin/profiles` reports them, instead of the
+  preferences. An admin could write `/Library/Managed Preferences` and macOS reported the
+  written values as set by MDM, so they could point the agent at another server or change
+  its policy unnoticed. The agent keeps the last settings it read for when the profiles
+  can't be read, and on first start waits until they can. A Mac not enrolled in MDM takes
+  the settings from the preferences and fails `settings_managed`. `ALTIWARD_*` environment
+  overrides now apply only in development.
+- `settings_managed` compares the managed preferences files for `com.altiward.agent` and
+  `corp.sap.privileges` with MDM's payloads, both ways, on every heartbeat and whenever
+  one of the files changes: the device's files, and the folders of people signed in at the
+  login window. A changed, removed or added key fails it, naming the key, never its value,
+  and it is reported `failed` again when the failing keys change, at most every 10
+  minutes. The agent's own use of Privileges' settings (expiry, the checks) also comes
+  from MDM's payloads.
+- Release downloads include signed SLSA build provenance in `provenance.intoto.jsonl`,
+  tying the package, configuration profiles and release notes to their source commit and
+  release workflow. The workflow verifies each file's provenance before publishing; the
+  install guide shows how to check a download with the GitHub CLI.
+
+### Changes
+
+- On a Mac registered for Platform SSO, events carry each person's UPN without a
+  `UserPrincipalNames` entry (#27). The agent reads the account Platform SSO links to each
+  Mac account from the Mac's local directory, keeps its own record of every link, and
+  takes UPNs only from that record. Each change to a link, at any time, is sent as
+  `agent.tamper`: `platform_sso_link_changed` when an account moves to another person's
+  account, or is linked when it was last linked to someone else, another Mac account has
+  the same link, or someone holds admin rights; `platform_sso_link` when a link is added
+  otherwise (registering for Platform SSO adds one) or removed. A `UserPrincipalNames`
+  entry still wins, but only one MDM sets: a map set outside MDM is now ignored, and fails
+  the settings check.
+- Every event of an elevation carries the same UPN: the one on record when its grant claim
+  arrived, or when rights nobody granted were found, including none. So a link changed
+  during the elevation can't move it onto someone else. The agent's store gains a column
+  for this; an elevation open during the upgrade takes the UPN on record for each event.
+- `PlatformSSOIdentity`, on by default, turns the Platform SSO read off when MDM sets it
+  to `false`, for sites that allow only UPNs they supply. A value set outside MDM is
+  ignored and fails the settings check. Turning it on again reports every link as added.
+- The agent sends the MDM's ID for the Mac when it enrols, if the profile sets
+  `MDMDeviceID` (Intune fills in `{{deviceid}}`), so the server can check the Mac against
+  the MDM's list. `HeartbeatInterval` is now capped at 3600 seconds, so a running agent
+  checks in at least hourly.
+
+## Server 1.2.0 - 2026-10-28
+
+### Upgrade order
+
+Upgrade the server before the agents. Agents 1.1 and 1.2 both report to it, so they need
+nothing for the upgrade, but agent 1.2.0 needs it for the Intune check at enrolment, the
+early silence alert and the titles of its Platform SSO findings. Agent 1.0 is no longer
+supported: the console tags Macs still running it **Agent outdated**.
+
+A server with several organisations now refuses to start unless each one has a console
+token of its own, or single sign-on serving it (`ALTIWARD_OIDC_TENANT`) with admin groups:
+check `ALTIWARD_CONSOLE_TOKENS` in `.env` before upgrading such a server.
+
+Upgrade every replica of the server to this version, and don't run an older one on the
+same database afterwards: an older server doesn't know `agent.admin_group`, so it drains
+that event from the outbox unsent, and the SIEM never gets it. Every replica also needs
+the same SIEM settings, because a replica without a SIEM stores events without queuing
+them for it, and what may be removed depends on which SIEMs the server has. The upgrade
+runs one migration, 0008, that adds indexes on `events` and `export_outbox`. It can take a
+while on a large database, and ingest waits until it finishes. A server with a SIEM
+connected gets the default history period of one year on upgrade, but the server records
+each SIEM as covered from an hour after the first start of this version with it
+configured, not from when you really connected it. So under the default period, nothing
+received before the upgrade is removed until you send it with `replay-exports` (Connect
+your SIEM, in `docs/install.md`), which moves that date back to where the replay starts,
+or you set a period yourself in **Keep history for**, which coverage doesn't hold back. An
+hour after the server first starts, so that the update has finished, it sends each Mac's
+admin group from the health readings it already holds, once, and those events wait another
+hour before they go to the SIEM; if that fails it tries again an hour later. Expiry waits
+for it, and begins at its next daily run after it has finished, so no admin group history
+is lost to it. During a rolling update, a health reading that an older server stores after
+the migration is neither backfilled nor raised, so the SIEM's admin group record can miss
+a change that began and ended inside the update window; the new server sends each Mac's
+current group with its first reading.
+
+### Breaking changes
+
+None.
+
+### Security
+
+- A console token's use is recorded. Its first request in each hour, to any part of the
+  console or its API, adds a **Signed in** entry to Activity by the token's fingerprint,
+  with the route of that request (such as `GET /v1/devices`, never the address it asked
+  for), and sends it to your SIEM as an OCSF Authentication record: Low severity for a
+  break-glass token, Informational otherwise. Reads in between aren't listed one by one.
+  If the entry can't be written, the server refuses the request with a server error, so a
+  token is never used unrecorded, and the console says it couldn't sign you in rather than
+  that the token is wrong. The altiward-siem break-glass rule alerts on these sign-ins
+  from altiward-siem 1.2.0.
+- Single sign-on refuses names that look like a console token's: any that starts with
+  `token:` or `break-glass:`, in any case, or has a colon, or a control or format
+  character such as a zero-width space.
+- The Caddy proxy is rebuilt with go-jose v4.1.6, which fixes the RSA JWK parsing denial
+  of service in that dependency. Caddy's PKI modules still compile the unpatched go-jose
+  v3 dependency; it remains visible to dependency scanning while an upstream fix is
+  unavailable. The new image is `ghcr.io/altiward/caddy:2.11.7-altiward.3`.
+- Release downloads include signed SLSA build provenance in `provenance.intoto.jsonl`,
+  tying every file in `SHA256SUMS` to its source commit and release workflow. The workflow
+  verifies each file's provenance before publishing; the install guide shows how to check
+  a download with the GitHub CLI.
+
+### Changes
+
+- With Intune connected, a Mac enrolling a new key is checked against Intune: the server
+  looks up the device ID the agent sends (`MDMDeviceID` in the profile) and compares
+  Intune's serial with the Mac's. A key sent with another Mac's ID, or the ID of a device
+  that isn't a Mac, waits for approval whatever the settings, and its `agent.enrollment`
+  event is High. A match never approves a key by itself: the IDs and the serial aren't
+  secrets. The new `require_intune_match` setting holds every key whose check isn't a
+  match; a settings update that leaves it out keeps it as it is. The event carries the
+  outcome (`mdm_check`) and whether Intune knows the serial (`mdm_serial_known`, which
+  counts only Macs), `GET /v1/enrollments` shows each key's `mdm_check`, and `GET /v1/mdm`
+  counts the keys in use by outcome (`checks`) and those never checked (`not_checked`): a
+  Mac is checked only when it enrols a new key. The device ID itself is stored but never
+  shown, logged or sent. Lookups wait 10 seconds at most and are capped at 30 a minute.
+  The same key enrolling again makes none, and nor does a key the enrolment limits refuse.
+- With Intune connected, the console shows what Intune says. **Enrollments** gives each
+  key an **Intune check** (from the new `mdm_check`), says that a match isn't proof, warns
+  before you approve a key sent with the device ID of another Mac or device, and tags a
+  Mac Intune doesn't list **Not in Intune**. **Fleet** shows a Mac's primary user and last
+  Intune check-in, and a panel of the Macs Intune manages that have never reported to
+  Altiward. A new **Settings › MDM** tab shows the connection, its last sync and error,
+  how many active Macs checked since Intune was connected matched it and how many haven't
+  been checked yet, with a **Require an Intune match** switch for admins that asks first
+  while some haven't matched or haven't been checked. Viewers see the Intune records too:
+  serial, name, primary user and last check-in, never the device IDs.
+- With Intune connected, a Mac whose agent stopped reporting is reported within hours
+  (#30). When Intune hears from a Mac at least 2 hours after its last check-in with
+  Altiward, the server raises its `agent.silent` alert at once with `basis`
+  `mdm_check_in`, at High: the agent may have been removed or stopped. A closed laptop
+  stays quiet, as Intune doesn't hear from it either, and the alert limit still applies to
+  every Mac (`basis` `no_contact`, Medium). A silence is raised once on either basis. The
+  early alert applies to Macs whose agent has ever reported 1.2.0 or later, during the
+  first day of a silence, from 2 hours and 10 minutes after the server starts, and to a
+  Mac with a new key held for approval only once the key has waited 4 hours. When more
+  than the larger of 5 and a fifth of the Macs in Intune meet the rule at once, counting
+  those raised already, none is raised early: Altiward itself is then probably
+  unreachable. Those Macs wait for the alert limit, the server logs a warning, and
+  **Settings › MDM** shows a banner for a day. **Fleet** says which basis raised a Mac's
+  alert.
+- `agent.silent` gains `basis`, `admin_members` (up to 50 people in the Mac's admin group
+  at its newest health reading, with `admin_members_truncated` counting the rest), and
+  with Intune connected `mdm_last_check_in` (Intune's last check-in from the Mac) and
+  `pending_device_id` (a key waiting for approval for 4 hours or more). The admins and
+  Intune's check-in are new to the SIEM, and `docs/data-handling.md` says so. The OCSF
+  finding's description names the admins, quoted, on both bases, and any waiting key.
+- The server titles the agent's new Platform SSO tamper findings: "A Mac account's
+  Platform SSO link may now name someone else" (`platform_sso_link_changed`, High) and "A
+  Mac account was linked to or unlinked from an account in Platform SSO"
+  (`platform_sso_link`, Medium). The console shows them as **Platform SSO link changed**
+  and **Platform SSO link added or removed**.
+- Revoking a Mac's only active key, with no key waiting for approval, now retires the Mac
+  (#171). A retired Mac leaves **Fleet** and the Overview's Mac figures, never raises a
+  "not checking in" alert, and shows under **Show › Retired** with when it was retired and
+  when its history is removed. The revoke asks you to confirm, and warns if someone still
+  has admin rights on the Mac or it is failing an integrity check. A person with an open
+  session on a retired Mac stays in **Admins now**, tagged **Mac retired**. A retired
+  Mac's failing check no longer counts in the Overview, but shows on the Mac under
+  **Show › Retired** in **Fleet**. A new key for the Mac brings it back, and so does an
+  alert that one of its replaced keys was used again. Macs you had already revoked this
+  way are retired when the server first starts.
+- **Keep history for**, in **Settings › General** (`history_days` in the settings API),
+  sets how long Altiward keeps events, ended elevation sessions, commands and Macs that
+  stopped checking in. The default is one year when a SIEM is connected and for good when
+  none is. You can set 90 to 3650 days, or keep history for good. Once a day the server
+  removes what is older, with each Mac that stopped checking in for longer than the period
+  and its sessions, events and commands. It revokes the Mac's keys first, so a Mac that
+  comes back enrols again. It never removes an event a SIEM is waiting for, anything from
+  the last 90 days (Postgres refuses to delete it), or, under the default period, anything
+  received before the SIEM's coverage date. That date is an hour after the first start of
+  this version with the SIEM configured, so on a server that already sends to a SIEM it is
+  the upgrade, until you replay earlier history with `replay-exports`. Removing a SIEM's
+  settings and restoring them later starts its coverage again, an hour after the start
+  that restores them, and `drop-exports` forgets it. `GET /v1/retention` reports the
+  period in force and why. Activity records each run as `expire_history` and each Mac
+  removed as `remove_device`, with the actor `altiward:server`.
+- The server raises an `agent.admin_group` event of its own, so your SIEM keeps who was in
+  each Mac's admin group after the health readings that recorded it expire. It is sent
+  when the group changes, and as a snapshot for a Mac's first reading and once a day for
+  each Mac in use. It reaches the SIEM as OCSF Group Management (3006) records: one for
+  each person who joined, left or is in the group, and one for the Mac. Expect about one
+  record for each admin on each Mac every day, one for each Mac every day, and four for
+  each elevation. It is a record, not a detection. An hour after the server first starts,
+  a one-off job raises these events from the readings already stored. Agents can't send
+  this type, and the Agent versions panels of the Splunk dashboard and the Sentinel
+  workbook leave it out, as they do `agent.enrollment` and `agent.silent`.
+- A new migration (0008) adds the indexes expiry needs, and a floor in the database that
+  refuses to delete events, sessions, commands or Macs from the last 90 days, or to change
+  when an event was received or a command created.
+- Events are no longer the full history once expiry runs: state must never be rebuilt from
+  them. `docs/data-handling.md` says what is kept and for how long.
+- A new key for a retired Mac now always waits for approval, even with re-enrolment
+  approval off (#193). Pending enrolment, retries and rejection keep the Mac retired;
+  approving the key restores it. A replaced key used again still restores the Mac through
+  the existing contest alert. The key-revoke dialogue now explains that admin rights stay
+  in place and directs you to **Admins now > Revoke** before revoking the key. The install
+  guide also explains that changing enrolment limits does not reset an agent's current
+  `Retry-After` wait; restarting the agent does.
+- `ALTIWARD_CONSOLE_TOKENS` may be empty in `compose.yaml`, which turns the break-glass
+  login off once single sign-on works. The server refuses to start with no console token
+  and no single sign-on, or with no console token and no `ALTIWARD_OIDC_ADMIN_GROUPS`,
+  because nobody could then sign in, or approve Macs and change settings. A server with
+  several organisations checks each one: each needs a console token of its own, or single
+  sign-on serving it (`ALTIWARD_OIDC_TENANT`) with admin groups.
+- The install guide has one section on the console token, "Console token and break-glass":
+  creating one, where to keep it, what's recorded, changing it without a gap, revoking one
+  or a leaked one, and turning it off, with Docker Compose and on Azure.
+- The oldest supported agent is now 1.1, so the console tags a Mac with agent 1.0 or older
+  as outdated, and the server no longer promises to accept agent 1.0's events. The frozen
+  compatibility fixtures are agent 1.1's and 1.2's.
+- A Mac's details in Fleet fold into sections. The admin group stays open; permanent
+  admins, integrity, agent, Intune and SAP Privileges show a one-line summary, such as
+  "All 9 passing", until you open them, and the console remembers which you open.
+  Integrity opens by itself when a check fails, permanent admins when one is signed in,
+  and Intune when it has no record of the Mac. Integrity alerts show the newest three,
+  with the rest of the last ten behind Show all.
+- In a narrow inspector, a detail's label wraps between words and its value keeps room for
+  a short word, so an integrity check reads "Passing" rather than breaking it letter by
+  letter.
+- The install guide says to scope SAP Privileges to the same MDM groups as Altiward, so no
+  Mac lets people become admins unrecorded, and how to stop someone elevating: change
+  Privileges' profile, rather than revoking the Mac's key.
+
 ## Agent 1.1.0 - 2026-10-28
 
 ### Upgrade order

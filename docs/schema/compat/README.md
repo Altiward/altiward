@@ -5,7 +5,7 @@ The server must accept events from each supported agent minor release: the newes
 release and the one before it, counting from 1.0.
 
 Each directory holds the events one agent release sends, frozen when that release ships:
-`agent-1.0/` is what agent 1.0.x sends. The backend's tests post every file in every
+`agent-1.1/` is what agent 1.1.x sends. The backend's tests post every file in every
 directory to the API and require all of them to be accepted.
 
 - **When an agent release ships** with a new minor version, copy `../examples/` here as

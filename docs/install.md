@@ -50,7 +50,7 @@ in `.env`: wherever this guide says to set something in `.env` and run
 [open an issue](https://github.com/Altiward/altiward/issues): manifests or a Helm chart
 come when someone needs them.
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v1.1.0%2Fdeploy%2Fazure%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v1.1.0%2Fdeploy%2Fazure%2FcreateUiDefinition.json) ([what it creates](../deploy/azure/README.md))
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v1.2.0%2Fdeploy%2Fazure%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v1.2.0%2Fdeploy%2Fazure%2FcreateUiDefinition.json) ([what it creates](../deploy/azure/README.md))
 
 ## Before you start
 
@@ -832,7 +832,7 @@ ways:
   `az identity show --name <appName>-identity --resource-group <group> --query principalId -o tsv`.
   For a VM's own identity, it is the *Object (principal) ID* on the VM's *Identity* page.
 
-  [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v1.1.0%2Fdeploy%2Fazure%2Fintune-read.json)
+  [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FAltiward%2Faltiward%2Fserver-v1.2.0%2Fdeploy%2Fazure%2Fintune-read.json)
   ([what it creates](../deploy/azure/intune-read.bicep): one permission grant, and nothing
   else). If the portal won't deploy it, `az deployment group create --resource-group <group>
   --template-uri <the template's URL> --parameters principalId=<object ID>` does the same.
@@ -1263,7 +1263,7 @@ set `ALTIWARD_VERSION` in `.env`, copy in any changed files from the new bundle'
 
 **Rolling out a new agent:** upgrade the server first, then upload the new package to
 your MDM and deploy it to a pilot group before everyone. The server accepts agents from
-the last two agent minor releases, none older than 1.0, so Macs can catch up at your
+the last two agent minor releases, none older than 1.1, so Macs can catch up at your
 pace. An agent that can rotate keys, on a server that can't, keeps its key and tries
 again a day later, so nothing breaks if the order slips, but nothing rotates either.
 Fleet tags Macs whose agent is older than that **Agent outdated**.
