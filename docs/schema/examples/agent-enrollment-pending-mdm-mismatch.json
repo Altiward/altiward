@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "event_id": "c8f5b3e2-7d40-5ba9-9f12-5e3c8d0a4b71",
+  "type": "agent.enrollment",
+  "session_id": null,
+  "timestamp": "2026-10-16T08:45:00Z",
+  "device": {
+    "serial": "C02XK0AAJGH5",
+    "hardware_uuid": "8A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+    "os_version": "",
+    "agent_version": "1.2.0",
+    "privileges_version": null
+  },
+  "user": null,
+  "elevation": null,
+  "delayed": false,
+  "detail": {
+    "state": "pending",
+    "device_id": "6e3d9f2b-8c5a-4ba4-9d7e-1f2a3b4c5d6e",
+    "key_fingerprint": "7b1d3f5a9c2e4b6d8f0a1c3e5b7d9f2a4c6e8b0d2f4a6c8e1b3d5f7a9c0e2b4d",
+    "key_storage": "secure_enclave",
+    "token": "token:1a2b3c4d",
+    "mdm_check": "mismatch",
+    "mdm_serial_known": true
+  }
+}

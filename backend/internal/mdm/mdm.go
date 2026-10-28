@@ -7,6 +7,7 @@ package mdm
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/Altiward/altiward/backend/internal/intune"
@@ -34,4 +35,11 @@ type Checker struct {
 	LookupTimeout time.Duration
 	// SerialFilter says whether the MDM answers a lookup by serial number.
 	SerialFilter bool
+
+	mu       sync.Mutex
+	started  []time.Time                          // when each live lookup in the last minute started
+	inflight map[string]*lookup                   // live lookups in flight, by ID or serial
+	notFound map[string]time.Time                 // IDs Intune didn't know, and when it said so
+	warned   map[string]time.Time                 // when each warning was last logged
+	after    func(time.Duration) <-chan time.Time // nil: time.After; a test's clock otherwise
 }

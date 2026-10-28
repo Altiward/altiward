@@ -239,8 +239,11 @@ func connectIntune(ctx context.Context, i *config.Intune, st store.Store, httpCl
 	sync := &mdm.Sync{Store: st, Source: graph, TenantID: i.Tenant, Log: log, Now: time.Now}
 	go sync.Run(ctx, mdm.Interval)
 	log.Info("Intune connection", "auth", i.Auth, "tenant", i.Tenant)
+	// Graph answers a $filter on serialNumber, with the serial as system_profiler gives it
+	// (lab probe P2), so a Mac not yet in the copy can still be looked up.
 	return &mdm.Checker{
 		Store: st, Source: graph, TenantID: i.Tenant, Log: log, Now: time.Now, LookupTimeout: 10 * time.Second,
+		SerialFilter: true,
 	}, nil
 }
 

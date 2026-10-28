@@ -67,6 +67,28 @@ func ParseKeyStorage(s string) KeyStorage {
 	}
 }
 
+// MDMCheck is what Intune said about the device ID a Mac sent as it enrolled.
+type MDMCheck string
+
+const (
+	// MDMNotChecked: Intune isn't connected for the tenant, or the key enrolled before the
+	// check existed.
+	MDMNotChecked MDMCheck = ""
+	// MDMNotSent: the Mac sent no device ID (its profile has no MDMDeviceID).
+	MDMNotSent MDMCheck = "not_sent"
+	// MDMInvalidID: what the Mac sent isn't an Intune device ID, such as an unexpanded
+	// {{deviceid}} or the Mac's Entra device ID.
+	MDMInvalidID MDMCheck = "invalid_id"
+	// MDMMatch: Intune has the device, with the serial the Mac enrolled with.
+	MDMMatch MDMCheck = "match"
+	// MDMMismatch: Intune has the device under another serial. The ID is another Mac's.
+	MDMMismatch MDMCheck = "mismatch"
+	// MDMUnknownID: Intune has no device with the ID, or one without a serial.
+	MDMUnknownID MDMCheck = "unknown_id"
+	// MDMUnavailable: Intune couldn't be asked in time.
+	MDMUnavailable MDMCheck = "unavailable"
+)
+
 // DeviceCredential binds a Mac's public key to its tenant and serial.
 type DeviceCredential struct {
 	DeviceID     string           `json:"device_id"`
@@ -89,6 +111,11 @@ type DeviceCredential struct {
 	// RotationSignedAt is when the Mac signed the rotation that made this key, by its own
 	// clock.
 	RotationSignedAt *time.Time `json:"-"`
+	// MDMDeviceID is the device ID the Mac sent as it enrolled. It is kept for the record,
+	// and never shown or sent anywhere: only MDMCheck, the outcome, is. A key made by
+	// rotation keeps its predecessor's, as it does MDMCheck.
+	MDMDeviceID string   `json:"-"`
+	MDMCheck    MDMCheck `json:"mdm_check,omitempty"`
 }
 
 // KeyFingerprint is the lower-case hex SHA-256 of the public key's DER, which is how a key
@@ -145,15 +172,28 @@ func (l EnrollLimits) refusesKey(n int) bool {
 }
 
 // holdsForApproval reports whether a new key waits for an admin instead of becoming active.
-// It does when the tenant requires approval for a Mac that enrolled before, or for a new
-// Mac, and whatever the tenant chose when the Mac has an active key and the new one claims
-// other hardware: then it may be a different Mac under the same serial. active is nil when
-// nothing is.
-func holdsForApproval(settings TenantSettings, enrolledBefore bool, active *DeviceCredential, hardwareUUID string) bool {
-	if enrolledBefore && settings.ReenrollmentRequiresApproval || !enrolledBefore && settings.NewMacRequiresApproval {
+// active is nil when no key is. In order, it does:
+//   - whatever the tenant chose, when the Mac has an active key and the new one claims other
+//     hardware: it may be a different Mac under the same serial;
+//   - whatever the tenant chose, when Intune has the device ID the Mac sent under another
+//     serial (check is MDMMismatch): the ID is another Mac's;
+//   - when the tenant requires an Intune match, for every check but a match, or no check at
+//     all (Intune not connected);
+//   - otherwise, when the tenant requires approval for a Mac that enrolled before, or for a
+//     new Mac.
+//
+// A match never makes a key active on its own: it only passes the Intune rules, and the
+// tenant's approval rules still apply.
+func holdsForApproval(settings TenantSettings, enrolledBefore bool, active *DeviceCredential, hardwareUUID string, check MDMCheck) bool {
+	switch {
+	case active != nil && active.HardwareUUID != hardwareUUID:
+		return true
+	case check == MDMMismatch:
+		return true
+	case settings.RequireIntuneMatch && check != MDMMatch && check != MDMNotChecked:
 		return true
 	}
-	return active != nil && active.HardwareUUID != hardwareUUID
+	return enrolledBefore && settings.ReenrollmentRequiresApproval || !enrolledBefore && settings.NewMacRequiresApproval
 }
 
 // Rotation replaces a Mac's active key with one it proves it holds. The old key is then
@@ -237,6 +277,11 @@ type TenantSettings struct {
 	// A serial's first key waits for console approval too, so the shared enrolment token
 	// can't add a Mac on its own. Off by default, and when missing, for rollouts.
 	NewMacRequiresApproval bool `json:"new_mac_requires_approval"`
+	// RequireIntuneMatch holds every new key whose Intune check isn't a match (MDMMatch) for
+	// approval: one whose Mac sent no ID, or an invalid or unknown one, or that Intune
+	// couldn't be asked about. A mismatch waits whatever this says. It applies only while
+	// Intune is connected for the tenant. Off by default, and when missing.
+	RequireIntuneMatch bool `json:"require_intune_match"`
 	// SilentAfterHours is how long a Mac may go without checking in before the backend
 	// raises agent.silent; 0 means DefaultSilentAfterHours.
 	SilentAfterHours int `json:"silent_after_hours"`
@@ -310,8 +355,9 @@ func (s TenantSettings) SilentAfter() time.Duration {
 
 type Credentials interface {
 	// Enroll records c (DeviceID, TenantID, Serial, HardwareUUID, PublicKey, KeyStorage,
-	// CreatedAt). The same key again returns its existing credential, KeyStorage
-	// unchanged, and no Previous, whatever limits say; a key held by another tenant
+	// Token, MDMDeviceID, MDMCheck, CreatedAt). The same key again returns its existing
+	// credential, KeyStorage and the Intune check unchanged, and no Previous, whatever
+	// limits say; a key held by another tenant
 	// is ErrConflict. A new key is then counted against limits, over the time before
 	// c.CreatedAt, and refused with ErrNewMacsLimited or ErrKeysPerMacLimited (both
 	// ErrRateLimited) when it would pass one; nothing is stored then.
@@ -319,11 +365,17 @@ type Credentials interface {
 	// (revoking it) only when the tenant explicitly disables approval and the key comes
 	// from the same hardware as the active one. Otherwise it is pending: when approval is
 	// on, even if the earlier credential was revoked, and when the hardware UUID differs
-	// from the active credential's, even if approval is off. There is no limit on the number
-	// of active Macs.
+	// from the active credential's, even if approval is off, and for the Intune checks
+	// holdsForApproval describes. There is no limit on the number of active Macs.
 	Enroll(ctx context.Context, c DeviceCredential, limits EnrollLimits) (EnrollResult, error)
 	// Credential looks a credential up by device ID across tenants, for authentication.
 	Credential(ctx context.Context, deviceID string) (DeviceCredential, error)
+	// CredentialByKey looks the tenant's credential for a public key up, or ErrNotFound. An
+	// enrolment that finds one is a retry.
+	CredentialByKey(ctx context.Context, tenantID string, publicKey []byte) (DeviceCredential, error)
+	// MDMCheckCounts counts the tenant's active credentials by their Intune check,
+	// MDMNotChecked included. An outcome no active credential has is left out.
+	MDMCheckCounts(ctx context.Context, tenantID string) (map[MDMCheck]int, error)
 	// ApproveCredential activates a pending credential and revokes the serial's other active
 	// one, recording a.
 	ApproveCredential(ctx context.Context, tenantID, deviceID string, now time.Time, a AuditEntry) (DeviceCredential, error)
@@ -338,7 +390,7 @@ type Credentials interface {
 	// refused with ErrRotationNotAllowed when it is in the Secure Enclave,
 	// ErrRotationTooSoon when it was activated less than MinRotationInterval before r.Now,
 	// and ErrKeyInUse when any credential holds r.PublicKey. Otherwise the old key is revoked and its successor is active, with the
-	// old key's serial, hardware UUID and token. Rotation is not an enrolment: no approval
+	// old key's serial, hardware UUID, token and Intune check. Rotation is not an enrolment: no approval
 	// or EnrollLimits apply.
 	Rotate(ctx context.Context, r RotateRequest) (RotateResult, error)
 	// StaleKeyUsed resolves a contest when a stale key (revoked, with a successor) signed a

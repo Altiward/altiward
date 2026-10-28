@@ -25,6 +25,9 @@ type mdmStatus struct {
 	Devices       int        `json:"devices"`
 	SilenceHeldAt *time.Time `json:"silence_held_at,omitempty"`
 	SilenceHeld   int        `json:"silence_held"`
+	// Checks counts the keys in use by the outcome of their Intune check; a key never
+	// checked isn't counted.
+	Checks map[store.MDMCheck]int `json:"checks"`
 }
 
 type mdmDevice struct {
@@ -53,9 +56,16 @@ func (s *Server) getMDMStatus(w http.ResponseWriter, r *http.Request, p auth.Pri
 		s.serverError(w, "Intune sync status", err)
 		return
 	}
+	checks, err := s.store.MDMCheckCounts(r.Context(), c.TenantID)
+	if err != nil {
+		s.serverError(w, "Intune check counts", err)
+		return
+	}
+	delete(checks, store.MDMNotChecked)
 	writeJSON(w, http.StatusOK, mdmStatus{
 		Configured: true, Source: store.MDMIntune, LastSuccessAt: st.LastSuccessAt, LastErrorAt: st.LastErrorAt,
 		LastError: st.LastError, Devices: st.Devices, SilenceHeldAt: st.SilenceHeldAt, SilenceHeld: st.SilenceHeld,
+		Checks: checks,
 	})
 }
 

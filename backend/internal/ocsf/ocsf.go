@@ -374,6 +374,16 @@ func silent(e store.StoredEvent, tenantID string) Record {
 // enrolment (the device credential) and the actor is the enrolment token's fingerprint,
 // in the same field as a console token's. A rotation has no token: the Mac proved it held
 // the old key, so the actor is the Mac, by its serial.
+// intuneReasons says, in an enrolment's message, what Intune said about the device ID the
+// Mac sent, for each mdm_check but a mismatch.
+var intuneReasons = map[string]string{
+	"match":       "Intune's record matches",
+	"not_sent":    "no Intune device ID sent",
+	"invalid_id":  "the Intune device ID isn't valid",
+	"unknown_id":  "Intune doesn't know the device ID",
+	"unavailable": "Intune couldn't be asked",
+}
+
 func enrollment(e store.StoredEvent, tenantID string) Record {
 	state, _ := e.Detail["state"].(string)
 	severity, alert := SeverityInformational, false
@@ -385,6 +395,18 @@ func enrollment(e store.StoredEvent, tenantID string) Record {
 	case event.EnrollmentStateReplaced:
 		severity, alert = SeverityHigh, true
 		msg = fmt.Sprintf("%s enrolled again; the new key replaced the previous one without approval", e.Device.Serial)
+	}
+	// What Intune said about the device ID the Mac sent. Another Mac's ID is High, whatever
+	// the state; the other outcomes keep the state's severity and say why.
+	switch check := detailString(e.Detail, "mdm_check"); {
+	case check == "mismatch":
+		severity, alert = SeverityHigh, true
+		msg = fmt.Sprintf("%s enrolled a new key with another Mac's Intune device ID", e.Device.Serial)
+		if state == event.EnrollmentStatePending {
+			msg += ", waiting for approval"
+		}
+	case intuneReasons[check] != "":
+		msg += " (" + intuneReasons[check] + ")"
 	}
 	activityID, activity, operation := 1, "Create", "enroll"
 	statusID, status := 1, "Success"

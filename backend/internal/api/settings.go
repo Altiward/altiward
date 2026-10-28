@@ -76,6 +76,6 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, p auth.Prin
 	}
 	s.log.Info("tenant settings changed", "tenant", p.TenantID, "reenrollment_requires_approval", settings.ReenrollmentRequiresApproval,
 		"new_mac_requires_approval", settings.NewMacRequiresApproval, "silent_after_hours", settings.SilentAfterHours,
-		"history_days", settings.HistoryDays)
+		"history_days", settings.HistoryDays, "require_intune_match", settings.RequireIntuneMatch)
 	writeJSON(w, http.StatusOK, settings)
 }

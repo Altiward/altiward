@@ -964,3 +964,36 @@ func TestAdminGroupRecordsHaveDistinctUIDs(t *testing.T) {
 		t.Errorf("%d records, want 2 members + 1 for the Mac", len(records))
 	}
 }
+
+// An enrolment with another Mac's Intune device ID is High; the other outcomes keep the
+// state's severity and say what Intune said.
+func TestEnrollmentNamesTheIntuneCheck(t *testing.T) {
+	mismatch := mapJSON(t, stored(t, "agent-enrollment-pending-mdm-mismatch"))
+	if mismatch["severity"] != "High" || mismatch["is_alert"] != true ||
+		mismatch["message"] != "C02XK0AAJGH5 enrolled a new key with another Mac's Intune device ID, waiting for approval" ||
+		get(mismatch, "unmapped.altiward.detail.mdm_check") != "mismatch" || get(mismatch, "unmapped.altiward.detail.mdm_serial_known") != true {
+		t.Fatalf("mismatch = %v", mismatch)
+	}
+	for _, tt := range []struct {
+		example, check, severity, message string
+	}{
+		{"agent-enrollment-enrolled", "match", "Informational", "C02XK0AAJGH5 enrolled a new key (Intune's record matches)"},
+		{"agent-enrollment-enrolled", "not_sent", "Informational", "C02XK0AAJGH5 enrolled a new key (no Intune device ID sent)"},
+		{"agent-enrollment-pending", "invalid_id", "Medium",
+			"C02XK0AAJGH5 enrolled again with a new key, waiting for approval (the Intune device ID isn't valid)"},
+		{"agent-enrollment-pending", "unknown_id", "Medium",
+			"C02XK0AAJGH5 enrolled again with a new key, waiting for approval (Intune doesn't know the device ID)"},
+		{"agent-enrollment-pending", "unavailable", "Medium",
+			"C02XK0AAJGH5 enrolled again with a new key, waiting for approval (Intune couldn't be asked)"},
+	} {
+		t.Run(tt.check, func(t *testing.T) {
+			e := stored(t, tt.example)
+			e.Detail = maps.Clone(e.Detail)
+			e.Detail["mdm_check"] = tt.check
+			r := mapJSON(t, e)
+			if r["severity"] != tt.severity || r["message"] != tt.message {
+				t.Fatalf("severity %v, message %q; want %s, %q", r["severity"], r["message"], tt.severity, tt.message)
+			}
+		})
+	}
+}

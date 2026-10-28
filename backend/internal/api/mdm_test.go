@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -121,5 +122,25 @@ func TestMDMNeedsAConsoleSignIn(t *testing.T) {
 		if rec, _ := b.do("GET", path, nil); rec.Code != http.StatusOK {
 			t.Errorf("%s as a viewer: %d %s", path, rec.Code, rec.Body)
 		}
+	}
+}
+
+// GET /v1/mdm counts the Intune checks of the keys in use, by outcome. A key that waits for
+// approval isn't in use, and one never checked isn't counted.
+func TestMDMStatusCountsChecks(t *testing.T) {
+	h, _, _ := newServerWithIntuneMacs(t)
+	if _, out := do(t, h, "GET", "/v1/mdm", consoleToken, nil); fmt.Sprint(out["checks"]) != "map[]" {
+		t.Fatalf("checks before any enrolment = %v", out["checks"])
+	}
+	enrollWithID(t, h, fixtureSerial, macIntuneID)
+	enrollWithID(t, h, "C02OTHERMAC1", otherIntuneID)
+	enrollWithID(t, h, "C02NOTININTUNE", "")
+	if a := enrollWithID(t, h, "C02NOTININTUNE2", otherIntuneID); a.status != "pending" {
+		t.Fatalf("mismatch = %s", a.status)
+	}
+	rec, out := do(t, h, "GET", "/v1/mdm", consoleToken, nil)
+	checks, _ := out["checks"].(map[string]any)
+	if rec.Code != 200 || len(checks) != 2 || checks["match"] != 2.0 || checks["not_sent"] != 1.0 {
+		t.Fatalf("status: %d %s", rec.Code, rec.Body)
 	}
 }
