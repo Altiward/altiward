@@ -11,7 +11,7 @@ type Installation struct {
 	CreatedAt time.Time
 	// RaisedIDSecret keys the IDs of events the server raises itself, so they are stable
 	// for one installation and cannot be forged from outside. 32 bytes, set once.
-	RaisedIDSecret []byte
+	RaisedIDSecret []byte `json:"-"`
 	// AdminGroupStartedAt is when this installation began keeping the admin group history:
 	// readings from before it are covered by the backfill, not by live raising.
 	AdminGroupStartedAt time.Time

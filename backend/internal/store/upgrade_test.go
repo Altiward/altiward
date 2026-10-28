@@ -59,13 +59,13 @@ func TestPostgresUpgradesFromEveryMigration(t *testing.T) {
 			beforeRetention := !slices.Contains(names[:applied], retentionMigration)
 			wantDevices, wantAudit := 1, 2
 			if beforeRetention {
-				wantDevices, wantAudit = 3, 3
+				wantDevices, wantAudit = 5, 5
 			}
 			devices, err := s.ListDevices(ctx, "acme")
 			if err != nil || len(devices) != wantDevices {
 				t.Fatalf("old devices: %+v, %v", devices, err)
 			}
-			if old := deviceBySerial(devices, "C02OLD000001"); old.AdminMembers[0] != "itadmin" || old.Silent() {
+			if old := deviceBySerial(devices, "C02OLD000001"); len(old.AdminMembers) != 1 || old.AdminMembers[0] != "itadmin" || old.Silent() {
 				t.Fatalf("old device: %+v", old)
 			}
 			sess, evs, err := s.GetSession(ctx, "acme", oldSessionID)
@@ -154,11 +154,16 @@ func TestPostgresUpgradesFromEveryMigration(t *testing.T) {
 					retired[serial] = at
 				}
 				rows.Close()
+				if err := rows.Err(); err != nil {
+					t.Fatal(err)
+				}
 				if at := retired[adminRetiredSerial]; at == nil || !at.Equal(now.Add(-48*time.Hour)) {
 					t.Fatalf("admin-revoked Mac retired_at = %v, want %v", at, now.Add(-48*time.Hour))
 				}
-				if retired[contestedSerial] != nil || retired["C02OLD000001"] != nil {
-					t.Fatalf("retired_at = %v, want only the admin-revoked Mac retired", retired)
+				for _, serial := range []string{"C02OLD000001", rejectedSerial, noopSerial, contestedSerial} {
+					if at, seeded := retired[serial]; !seeded || at != nil {
+						t.Fatalf("%s retired_at = %v (seeded %v), want it not retired", serial, at, seeded)
+					}
 				}
 			}
 			// Deleting history younger than 90 days is refused by the database itself, whatever
@@ -182,10 +187,10 @@ func TestPostgresUpgradesFromEveryMigration(t *testing.T) {
 }
 
 const (
-	adminRetiredSerial = "C02OLDRET001"
-	contestedSerial    = "C02OLDCON001"
-	adminRevokedKey    = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
-	contestRevokedKey  = "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e"
+	adminRetiredSerial = "C02OLDRET001" // the one key an admin revoked: retired
+	rejectedSerial     = "C02OLDREJ001" // a contest, then an admin rejected the pending key: not retired
+	noopSerial         = "C02OLDNOP001" // a contest, then an admin revoked the revoked key again: not retired
+	contestedSerial    = "C02OLDCON001" // a contest alone: not retired
 	oldSessionID       = "5b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d"
 	oldMDMDeviceID     = "9a0b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d"
 	mdmMigration       = "migrations/0007_mdm.sql"
@@ -294,24 +299,47 @@ func seedOldData(t *testing.T, pool *pgxpool.Pool, now time.Time, applied []stri
 			seed{`INSERT INTO mdm_sync (tenant_id, source, last_success_at, devices) VALUES ('acme', 'intune', $1, 1)`, []any{seen}},
 		)
 	}
-	// Before 0008, two Macs whose only key is revoked: one by an admin (the console wrote a
-	// revoke_enrollment entry) and one by a contest (no entry). 0008 backfills retired_at
-	// for the first only. From 0008 on, the flag is written as it happens, so there is
-	// nothing to backfill and these aren't seeded.
+	// Before 0008, Macs whose keys are all revoked, for its retired_at backfill. Only the
+	// first was retired by an admin; the rest must not be taken for it, though an admin's
+	// revoke_enrollment entry touches some of them.
 	if !slices.Contains(applied, retentionMigration) {
-		revokedAt := now.Add(-48 * time.Hour).Format(time.RFC3339)
-		for _, m := range []struct{ serial, key string }{{adminRetiredSerial, adminRevokedKey}, {contestedSerial, contestRevokedKey}} {
-			seeds = append(seeds,
-				seed{`INSERT INTO devices (tenant_id, serial, state, last_seen_at) VALUES ('acme', $1, $2, $3)`,
-					[]any{m.serial, fmt.Sprintf(`{"tenant_id":"acme","serial":%q}`, m.serial), seen}},
-				seed{`INSERT INTO device_credentials (device_id, tenant_id, serial, hardware_uuid, public_key,
-					key_digest, status, created_at, activated_at, revoked_at) VALUES ($1, 'acme', $2, 'HW-RET', '\x00',
-					decode(md5($4), 'hex'), 'revoked', $3, $3, $3)`, []any{m.key, m.serial, revokedAt, m.key}},
-			)
+		at := func(hours int) string { return now.Add(time.Duration(hours) * time.Hour).Format(time.RFC3339) }
+		type key struct {
+			id, serial string
+			activated  bool   // once active; a rejected pending key never was
+			revokedAt  string // when the key was revoked
+			entryAt    string // when an admin's revoke_enrollment entry for it was written; "" for none
 		}
-		seeds = append(seeds, seed{`INSERT INTO audit_log (tenant_id, id, at, actor, action, target, detail)
-			VALUES ('acme', 'c3d4e5f6-a7b8-4c9d-8e0f-1a2b3c4d5e6f', $1, 'token:3f2a9c1b', 'revoke_enrollment', $2, '{}')`,
-			[]any{revokedAt, adminRevokedKey}})
+		keys := []key{
+			{"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d", adminRetiredSerial, true, at(-48), at(-48)},
+			// An active key revoked by a contest (no entry), then a pending key an admin rejected.
+			{"b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e", rejectedSerial, true, at(-72), ""},
+			{"d4e5f6a7-b8c9-4d0e-8f1a-2b3c4d5e6f70", rejectedSerial, false, at(-48), at(-48)},
+			// A key revoked by a contest, then revoked again by an admin: the later entry
+			// changed nothing, and the key keeps its first revoked_at.
+			{"e5f6a7b8-c9d0-4e1f-8a2b-3c4d5e6f7081", noopSerial, true, at(-72), at(-24)},
+			{"f6a7b8c9-d0e1-4f2a-8b3c-4d5e6f708192", contestedSerial, true, at(-72), ""},
+		}
+		serials := map[string]bool{}
+		for i, k := range keys {
+			if !serials[k.serial] {
+				serials[k.serial] = true
+				seeds = append(seeds, seed{`INSERT INTO devices (tenant_id, serial, state, last_seen_at) VALUES ('acme', $1, $2, $3)`,
+					[]any{k.serial, fmt.Sprintf(`{"tenant_id":"acme","serial":%q}`, k.serial), seen}})
+			}
+			var activatedAt *string
+			if k.activated {
+				activatedAt = &k.revokedAt // any time will do; the migration only looks at whether it is set
+			}
+			seeds = append(seeds, seed{`INSERT INTO device_credentials (device_id, tenant_id, serial, hardware_uuid, public_key,
+				key_digest, status, created_at, activated_at, revoked_at) VALUES ($1, 'acme', $2, 'HW-RET', '\x00',
+				decode(md5($4), 'hex'), 'revoked', $3, $5, $3)`, []any{k.id, k.serial, k.revokedAt, k.id, activatedAt}})
+			if k.entryAt != "" {
+				seeds = append(seeds, seed{`INSERT INTO audit_log (tenant_id, id, at, actor, action, target, detail)
+					VALUES ('acme', $1, $2, 'token:3f2a9c1b', 'revoke_enrollment', $3, '{}')`,
+					[]any{fmt.Sprintf("c3d4e5f6-a7b8-4c9d-8e0f-1a2b3c4d5e%02x", i), k.entryAt, k.id}})
+			}
+		}
 	}
 	for _, q := range seeds {
 		if _, err := pool.Exec(ctx, q.sql, q.args...); err != nil {
