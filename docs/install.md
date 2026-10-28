@@ -1128,6 +1128,23 @@ cosign verify ghcr.io/altiward/altiward-api:<version> \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
+If the release includes `provenance.intoto.jsonl`, download it beside the file you
+want to check. It contains signed SLSA build provenance tying that file's checksum to
+the source commit and release workflow. With the [GitHub CLI](https://cli.github.com/),
+verify a server deployment bundle (replace `X.Y.Z` with the release version):
+
+```sh
+gh attestation verify altiward-server-X.Y.Z.tar.gz \
+  --bundle provenance.intoto.jsonl --repo Altiward/altiward \
+  --cert-identity 'https://github.com/Altiward/altiward/.github/workflows/release-server.yml@refs/tags/server-vX.Y.Z' \
+  --source-ref refs/tags/server-vX.Y.Z --deny-self-hosted-runners
+```
+
+The same command checks an image tarball. To check an agent package, use its filename,
+the agent release's provenance bundle, `release-agent.yml` and `agent-vX.Y.Z`. The command
+verifies the downloaded bundle, including the certificate, signature and transparency
+log proof; it does not need to fetch the attestation from GitHub's attestation store.
+
 ### Changing tokens
 
 Edit the token in `.env` and run `docker compose up -d`.
