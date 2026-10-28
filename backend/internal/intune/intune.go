@@ -27,7 +27,7 @@ const (
 	permission     = "DeviceManagementManagedDevices.Read.All"
 	managedDevices = "/deviceManagement/managedDevices"
 	listSelect     = "id,serialNumber,azureADDeviceId,userPrincipalName,deviceName,lastSyncDateTime,operatingSystem"
-	deviceSelect   = "id,serialNumber,udid,azureADDeviceId,userPrincipalName,deviceName,lastSyncDateTime"
+	deviceSelect   = "id,serialNumber,udid,azureADDeviceId,userPrincipalName,deviceName,lastSyncDateTime,operatingSystem"
 )
 
 // ErrNotFound means Intune has no managed device with that ID.
@@ -47,6 +47,9 @@ type Device struct {
 	PrimaryUPN    string
 	Name          string
 	LastCheckIn   time.Time // UTC; zero when the device has never checked in
+	// OperatingSystem is Intune's name for the platform, "macOS" for a Mac. Macs lists only
+	// those; Device and DevicesBySerial give any platform's.
+	OperatingSystem string
 }
 
 // Client is a read-only Microsoft Graph client for Intune managed devices.
@@ -63,6 +66,10 @@ type Client struct {
 // ValidDeviceID reports whether s, ignoring surrounding spaces, is a GUID without braces.
 // It catches a placeholder such as {{deviceid}} that an MDM left unexpanded.
 func ValidDeviceID(s string) bool { return deviceIDRE.MatchString(strings.TrimSpace(s)) }
+
+// ValidSerial reports whether s is a serial DevicesBySerial accepts: letters and digits, at
+// most 32 of them, with nothing around them.
+func ValidSerial(s string) bool { return serialRE.MatchString(s) }
 
 // Macs lists every managed device whose operating system is macOS.
 func (c *Client) Macs(ctx context.Context) ([]Device, error) {
@@ -96,7 +103,7 @@ func (c *Client) Macs(ctx context.Context) ([]Device, error) {
 	return out, nil
 }
 
-// Device returns one managed device by its Intune ID, including its UDID.
+// Device returns one managed device by its Intune ID, including its UDID, on any platform.
 func (c *Client) Device(ctx context.Context, id string) (Device, error) {
 	id = strings.TrimSpace(id)
 	if !ValidDeviceID(id) {
@@ -118,10 +125,10 @@ func (c *Client) Device(ctx context.Context, id string) (Device, error) {
 	return d.device(), nil
 }
 
-// DevicesBySerial lists the managed devices with that serial number. The serial must be
-// letters and digits, at most 32 of them.
+// DevicesBySerial lists the managed devices with that serial number, on any platform. The
+// serial must be letters and digits, at most 32 of them (ValidSerial).
 func (c *Client) DevicesBySerial(ctx context.Context, serial string) ([]Device, error) {
-	if !serialRE.MatchString(serial) {
+	if !ValidSerial(serial) {
 		return nil, errors.New("intune: not a serial number")
 	}
 	page, err := c.list(ctx, c.listURL("serialNumber eq '"+strings.ReplaceAll(serial, "'", "''")+"'"))
@@ -149,7 +156,7 @@ type graphDevice struct {
 func (g graphDevice) device() Device {
 	d := Device{
 		ID: g.ID, Serial: g.SerialNumber, EntraDeviceID: g.AzureADDeviceID, UDID: g.UDID,
-		PrimaryUPN: g.UPN, Name: g.DeviceName,
+		PrimaryUPN: g.UPN, Name: g.DeviceName, OperatingSystem: g.OperatingSystem,
 	}
 	// Intune writes 0001-01-01T00:00:00Z for "never", which parses to Go's zero time. A
 	// timestamp it doesn't recognise counts as never too, rather than failing the sync.

@@ -19,12 +19,16 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Altiward/altiward/backend/internal/api"
 	"github.com/Altiward/altiward/backend/internal/auth"
 	"github.com/Altiward/altiward/backend/internal/event"
+	"github.com/Altiward/altiward/backend/internal/intune"
+	"github.com/Altiward/altiward/backend/internal/mdm"
+	"github.com/Altiward/altiward/backend/internal/ocsf"
 	"github.com/Altiward/altiward/backend/internal/session"
 	"github.com/Altiward/altiward/backend/internal/store"
 	"github.com/Altiward/altiward/backend/internal/testfixture"
@@ -44,8 +48,8 @@ type agent struct {
 	clock *testClock
 
 	// What the Mac says when it enrols. Left empty, the hardware UUID is "HW-" and the
-	// serial, and the key storage and User-Agent are left out.
-	hardwareUUID, keyStorage, userAgent string
+	// serial, and the key storage, MDM device ID and User-Agent are left out.
+	hardwareUUID, keyStorage, mdmDeviceID, userAgent string
 	// ctx, when set, is the context of the enrol request.
 	ctx context.Context
 }
@@ -81,6 +85,9 @@ func (a *agent) enroll(t *testing.T, serial string) (*httptest.ResponseRecorder,
 	}
 	if a.keyStorage != "" {
 		body["key_storage"] = a.keyStorage
+	}
+	if a.mdmDeviceID != "" {
+		body["mdm_device_id"] = a.mdmDeviceID
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -1013,5 +1020,356 @@ func TestNewHardwareUUIDWaitsEvenWithApprovalOff(t *testing.T) {
 	same := enrollAs(t, &agent{h: h, key: newKey(t), hardwareUUID: "HW-ORIGINAL"}, fixtureSerial)
 	if same.status != "active" {
 		t.Fatalf("same hardware status = %s, want active", same.status)
+	}
+}
+
+// Enrolment checked against Intune (#134).
+
+const (
+	// macIntuneID is fixtureSerial's ID in Intune, and otherIntuneID another Mac's.
+	macIntuneID   = "0a1b2c3d-0000-4000-8000-00000000000a"
+	otherIntuneID = "0a1b2c3d-0000-4000-8000-00000000000b"
+	macEntraID    = "5e6f7a8b-0000-4000-8000-00000000000e"
+	// unknownIntuneID is an ID Intune doesn't have.
+	unknownIntuneID = "ffffffff-0000-4000-8000-000000000001"
+)
+
+// fakeIntune is Intune for the enrolment tests: it manages fixtureSerial as macIntuneID and
+// another Mac as otherIntuneID, and counts the lookups.
+type fakeIntune struct {
+	mu          sync.Mutex
+	err         error
+	calls       int
+	serialCalls int
+}
+
+var intuneMacs = []intune.Device{
+	{ID: macIntuneID, Serial: fixtureSerial, EntraDeviceID: macEntraID, OperatingSystem: "macOS"},
+	{ID: otherIntuneID, Serial: "C02OTHERMAC1", OperatingSystem: "macOS"},
+}
+
+func (f *fakeIntune) Macs(context.Context) ([]intune.Device, error) { return intuneMacs, nil }
+
+func (f *fakeIntune) Device(_ context.Context, id string) (intune.Device, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.err != nil {
+		return intune.Device{}, f.err
+	}
+	for _, d := range intuneMacs {
+		if strings.EqualFold(d.ID, strings.TrimSpace(id)) {
+			return d, nil
+		}
+	}
+	return intune.Device{}, intune.ErrNotFound
+}
+
+func (f *fakeIntune) DevicesBySerial(_ context.Context, serial string) ([]intune.Device, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.serialCalls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := []intune.Device{}
+	for _, d := range intuneMacs {
+		if d.Serial == serial {
+			out = append(out, d)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeIntune) lookups() (calls, serialCalls int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls, f.serialCalls
+}
+
+func (f *fakeIntune) fail(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = err
+}
+
+// newServerWithIntuneMacs is newServerWithQueue with Intune connected for acme, as the
+// server wires it: asking src, which can look a serial up.
+func newServerWithIntuneMacs(t *testing.T) (http.Handler, *store.Memory, *fakeIntune) {
+	t.Helper()
+	st := store.NewMemory([]string{"splunk"})
+	tokens, err := auth.Parse("acme="+agentToken, "acme="+consoleToken+",other="+otherConsole)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := serverNow(t)
+	clock := func() time.Time { return now }
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	src := &fakeIntune{}
+	checker := &mdm.Checker{Store: st, Source: src, TenantID: "acme", Log: log, Now: clock,
+		LookupTimeout: 10 * time.Second, SerialFilter: true}
+	return api.New(st, tokens, log, clock, api.WithMDM(checker)), st, src
+}
+
+// syncIntune copies intuneMacs into the store, as a sync does.
+func syncIntune(t *testing.T, st store.Store) {
+	t.Helper()
+	if err := (&mdm.Sync{Store: st, Source: &fakeIntune{}, TenantID: "acme",
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: func() time.Time { return serverNow(t) }}).Once(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func putSettings(t *testing.T, h http.Handler, settings map[string]any) {
+	t.Helper()
+	if rec, _ := do(t, h, "PUT", "/v1/settings", consoleToken, settings); rec.Code != http.StatusOK {
+		t.Fatalf("settings: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// enrollWithID enrols a new key for serial, sending mdmDeviceID, and returns its status.
+func enrollWithID(t *testing.T, h http.Handler, serial, mdmDeviceID string) *agent {
+	t.Helper()
+	return enrollAs(t, &agent{h: h, key: newKey(t), mdmDeviceID: mdmDeviceID}, serial)
+}
+
+// lastEnrollment is the newest agent.enrollment event queued for export.
+func lastEnrollment(t *testing.T, st store.Store) event.Event {
+	t.Helper()
+	got := queuedEnrollments(t, st)
+	if len(got) == 0 {
+		t.Fatal("no agent.enrollment event")
+	}
+	return got[len(got)-1]
+}
+
+func TestEnrollWithAMismatchWaits(t *testing.T) {
+	h, st, _ := newServerWithIntuneMacs(t)
+	// A Mac's first key, which today's rules make active, sent with another Mac's ID.
+	a := enrollWithID(t, h, fixtureSerial, otherIntuneID)
+	if a.status != "pending" {
+		t.Fatalf("status = %s, want pending", a.status)
+	}
+	e := lastEnrollment(t, st)
+	if e.Detail["state"] != "pending" || e.Detail["mdm_check"] != "mismatch" {
+		t.Fatalf("event detail = %v", e.Detail)
+	}
+	r := ocsf.Map(store.StoredEvent{Event: e}, "acme")[0]
+	if r["severity"] != "High" || r["is_alert"] != true || !strings.Contains(r["message"].(string), "with another Mac's or another device's Intune device ID") {
+		t.Fatalf("OCSF severity %v, alert %v, message %q", r["severity"], r["is_alert"], r["message"])
+	}
+	// Approving it is still the admin's call.
+	if rec, _ := do(t, h, "POST", "/v1/enrollments/"+a.deviceID+"/approve", consoleToken, nil); rec.Code != http.StatusOK {
+		t.Fatalf("approve: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// A match never makes a key active that today's rules hold.
+func TestEnrollWithAMatchKeepsTodaysRules(t *testing.T) {
+	h, st, _ := newServerWithIntuneMacs(t)
+	first := enrollWithID(t, h, fixtureSerial, macIntuneID)
+	if first.status != "active" || lastEnrollment(t, st).Detail["mdm_check"] != "match" {
+		t.Fatalf("first key = %s, %v", first.status, lastEnrollment(t, st).Detail)
+	}
+	// Approval is on by default, and a match doesn't skip it.
+	if again := enrollWithID(t, h, fixtureSerial, macIntuneID); again.status != "pending" {
+		t.Fatalf("re-enrolment with approval on = %s, want pending", again.status)
+	}
+	// With it off, the same hardware replaces the key, as it would without Intune.
+	putSettings(t, h, map[string]any{"reenrollment_requires_approval": false})
+	if again := enrollWithID(t, h, fixtureSerial, macIntuneID); again.status != "active" {
+		t.Fatalf("re-enrolment with approval off = %s, want active", again.status)
+	}
+	// Another hardware UUID still waits, whatever Intune says.
+	other := enrollAs(t, &agent{h: h, key: newKey(t), mdmDeviceID: macIntuneID, hardwareUUID: "HW-OTHER"}, fixtureSerial)
+	if other.status != "pending" {
+		t.Fatalf("other hardware = %s, want pending", other.status)
+	}
+}
+
+// TestEnrollWithAWrongDeviceIDKeepsTodaysRules (Review Focus 1): a profile with the wrong
+// MDMDeviceID never holds an enrolment by default. Unknown, invalid and unavailable all
+// follow today's rules.
+func TestEnrollWithAWrongDeviceIDKeepsTodaysRules(t *testing.T) {
+	for _, tc := range []struct {
+		name, id, want string
+		intuneDown     bool
+	}{
+		{"an ID Intune doesn't know", unknownIntuneID, "unknown_id", false},
+		{"an unexpanded placeholder", "{{deviceid}}", "invalid_id", false},
+		{"the Mac's Entra device ID", macEntraID, "invalid_id", false},
+		{"Intune unavailable", macIntuneID, "unavailable", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, st, src := newServerWithIntuneMacs(t)
+			syncIntune(t, st)
+			if tc.intuneDown {
+				src.fail(errors.New("intune: HTTP 503 ServiceUnavailable"))
+			}
+			if first := enrollWithID(t, h, fixtureSerial, tc.id); first.status != "active" {
+				t.Fatalf("first key = %s, want active", first.status)
+			}
+			if got := lastEnrollment(t, st).Detail["mdm_check"]; got != tc.want {
+				t.Fatalf("mdm_check = %v, want %s", got, tc.want)
+			}
+			putSettings(t, h, map[string]any{"reenrollment_requires_approval": false})
+			if again := enrollWithID(t, h, fixtureSerial, tc.id); again.status != "active" {
+				t.Fatalf("re-enrolment with approval off = %s, want active", again.status)
+			}
+			r := ocsf.Map(store.StoredEvent{Event: lastEnrollment(t, st)}, "acme")[0]
+			if r["severity"] != "High" || lastEnrollment(t, st).Detail["state"] != "replaced" {
+				t.Fatalf("a replaced key is High as before: %v", r["severity"])
+			}
+		})
+	}
+}
+
+// With require_intune_match on, every outcome but a match waits, and a match follows
+// today's rules.
+func TestEnrollRequireIntuneMatchHoldsEverythingElse(t *testing.T) {
+	for _, tc := range []struct {
+		name, id, want, status string
+		intuneDown             bool
+	}{
+		{"not sent", "", "not_sent", "pending", false},
+		{"invalid", "{{deviceid}}", "invalid_id", "pending", false},
+		{"unknown", unknownIntuneID, "unknown_id", "pending", false},
+		{"unavailable", macIntuneID, "unavailable", "pending", true},
+		{"mismatch", otherIntuneID, "mismatch", "pending", false},
+		{"match", macIntuneID, "match", "active", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, st, src := newServerWithIntuneMacs(t)
+			putSettings(t, h, map[string]any{"require_intune_match": true})
+			if tc.intuneDown {
+				src.fail(errors.New("intune: HTTP 503 ServiceUnavailable"))
+			}
+			a := enrollWithID(t, h, fixtureSerial, tc.id)
+			e := lastEnrollment(t, st)
+			if a.status != tc.status || e.Detail["mdm_check"] != tc.want {
+				t.Fatalf("status %s, mdm_check %v; want %s, %s", a.status, e.Detail["mdm_check"], tc.status, tc.want)
+			}
+			if tc.status == "pending" {
+				r := ocsf.Map(store.StoredEvent{Event: e}, "acme")[0]
+				if want := map[bool]string{true: "High", false: "Medium"}[tc.want == "mismatch"]; r["severity"] != want {
+					t.Fatalf("severity = %v, want %s", r["severity"], want)
+				}
+			}
+		})
+	}
+}
+
+// TestEnrollRetryMakesNoLookup (Review Focus 2): the same key again is a retry, which asks
+// Intune nothing.
+func TestEnrollRetryMakesNoLookup(t *testing.T) {
+	h, st, src := newServerWithIntuneMacs(t)
+	syncIntune(t, st)
+	a := enrollWithID(t, h, "C02NOTININTUNE", macIntuneID)
+	calls, serialCalls := src.lookups()
+	if calls != 1 || serialCalls != 1 {
+		t.Fatalf("lookups = %d by ID, %d by serial; want one each", calls, serialCalls)
+	}
+	for range 3 {
+		rec, out := a.enroll(t, "C02NOTININTUNE")
+		if rec.Code != http.StatusOK || out["device_id"] != a.deviceID {
+			t.Fatalf("retry: %d %s", rec.Code, rec.Body)
+		}
+	}
+	if c, s := src.lookups(); c != calls || s != serialCalls {
+		t.Fatalf("lookups after retries = %d, %d; want %d, %d", c, s, calls, serialCalls)
+	}
+}
+
+// The event says whether Intune knows the Mac's serial, from the copy or, for a Mac not in
+// it yet, a lookup.
+func TestEnrollFlagsASerialIntuneDoesNotKnow(t *testing.T) {
+	h, st, src := newServerWithIntuneMacs(t)
+	// Before the first sync, nothing is said.
+	enrollWithID(t, h, "C02NOTININTUNE", "")
+	if _, ok := lastEnrollment(t, st).Detail["mdm_serial_known"]; ok {
+		t.Fatalf("before a sync: %v", lastEnrollment(t, st).Detail)
+	}
+	syncIntune(t, st)
+	enrollWithID(t, h, "C02NOTININTUNE2", "")
+	if e := lastEnrollment(t, st); e.Detail["mdm_serial_known"] != false || e.Detail["mdm_check"] != "not_sent" {
+		t.Fatalf("a serial Intune doesn't know: %v", e.Detail)
+	}
+	enrollWithID(t, h, fixtureSerial, "")
+	if e := lastEnrollment(t, st); e.Detail["mdm_serial_known"] != true {
+		t.Fatalf("a serial in the copy: %v", e.Detail)
+	}
+	// A failed lookup says nothing.
+	src.fail(errors.New("intune: HTTP 503 ServiceUnavailable"))
+	enrollWithID(t, h, "C02NOTININTUNE3", "")
+	if _, ok := lastEnrollment(t, st).Detail["mdm_serial_known"]; ok {
+		t.Fatalf("after a failed lookup: %v", lastEnrollment(t, st).Detail)
+	}
+}
+
+func TestEnrollWithoutIntuneIsUnchanged(t *testing.T) {
+	h, st := newServerWithQueue(t)
+	a := enrollWithID(t, h, fixtureSerial, macIntuneID)
+	if a.status != "active" {
+		t.Fatalf("status = %s", a.status)
+	}
+	e := lastEnrollment(t, st)
+	for _, field := range []string{"mdm_check", "mdm_serial_known"} {
+		if _, ok := e.Detail[field]; ok {
+			t.Fatalf("event has %s without Intune: %v", field, e.Detail)
+		}
+	}
+	_, out := do(t, h, "GET", "/v1/enrollments", consoleToken, nil)
+	if _, ok := out["enrollments"].([]any)[0].(map[string]any)["mdm_check"]; ok {
+		t.Fatalf("enrolment has mdm_check without Intune: %v", out)
+	}
+	// Require a match does nothing without Intune to ask.
+	putSettings(t, h, map[string]any{"require_intune_match": true, "reenrollment_requires_approval": false})
+	if again := enrollWithID(t, h, fixtureSerial, macIntuneID); again.status != "active" {
+		t.Fatalf("re-enrolment = %s, want active", again.status)
+	}
+}
+
+func TestEnrollRefusesALongMDMDeviceID(t *testing.T) {
+	h, _, _ := newServerWithIntuneMacs(t)
+	rec, out := (&agent{h: h, key: newKey(t), mdmDeviceID: strings.Repeat("a", event.MaxNameLength+1)}).enroll(t, fixtureSerial)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(fmt.Sprint(out["error"]), "mdm_device_id") {
+		t.Fatalf("a long ID: %d %s", rec.Code, rec.Body)
+	}
+	if rec, _ := (&agent{h: h, key: newKey(t), mdmDeviceID: strings.Repeat("a", event.MaxNameLength)}).enroll(t, fixtureSerial); rec.Code != http.StatusCreated {
+		t.Fatalf("255 bytes: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// The device ID the Mac sent is stored, but never shown or sent anywhere: only the outcome.
+func TestEnrollmentsNeverShowTheDeviceID(t *testing.T) {
+	h, st, _ := newServerWithIntuneMacs(t)
+	enrollWithID(t, h, fixtureSerial, macIntuneID)
+	enrollWithID(t, h, "C02OTHERMAC1", strings.ToUpper(otherIntuneID))
+	rec, _ := do(t, h, "GET", "/v1/enrollments", consoleToken, nil)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"mdm_check":"match"`) {
+		t.Fatalf("enrollments: %d %s", rec.Code, rec.Body)
+	}
+	bodies := rec.Body.String()
+	rec, _ = do(t, h, "GET", "/v1/mdm", consoleToken, nil)
+	bodies += rec.Body.String()
+	for _, e := range queuedEnrollments(t, st) {
+		raw, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bodies += string(raw)
+		for _, r := range ocsf.Map(store.StoredEvent{Event: e}, "acme") {
+			raw, err := json.Marshal(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bodies += string(raw)
+		}
+	}
+	lower := strings.ToLower(bodies)
+	for _, secret := range []string{"mdm_device_id", macIntuneID, otherIntuneID} {
+		if strings.Contains(lower, secret) {
+			t.Errorf("%q is shown:\n%s", secret, bodies)
+		}
 	}
 }

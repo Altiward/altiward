@@ -251,6 +251,8 @@ table.list { width: 100%; border-collapse: collapse; }
 .tag.denied { color: var(--denied); }
 .tag.attention { color: var(--elevated-ink); }
 .tag.ended { color: var(--muted); }
+/* A tag whose words are a sentence: it wraps instead of running out of its box. */
+.tag.wrap { white-space: normal; }
 .badge {
   display: inline-flex; align-items: center; gap: var(--space-2); padding: 2px var(--space-2);
   border-radius: var(--radius-sm); border: 2px solid transparent;
@@ -395,6 +397,12 @@ dialog.sheet .buttons { display: flex; justify-content: flex-end; gap: var(--spa
 .siem-guide summary { cursor: pointer; font-size: 13px; line-height: 18px; }
 .siem-optional { padding-left: var(--space-4); }
 .siem-optional code { overflow-wrap: anywhere; }
+
+/* Fleet: Macs Intune manages that never reported to Altiward */
+.never-reported { margin: var(--space-3) var(--space-6) 0; font-size: 13px; line-height: 18px; }
+.never-reported summary { cursor: pointer; }
+.never-reported p { margin: var(--space-2) 0; }
+.never-reported .box { max-height: 240px; overflow-y: auto; }
 
 /* Overview */
 .overview { padding: var(--space-4) var(--space-6) var(--space-8); max-width: 1200px; }

@@ -1,10 +1,11 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import type { Device } from "../api";
 import { ApiContext, MeContext } from "../context";
-import { fakeApi, signedIn } from "../test/fixtures";
+import { dateTime } from "../format";
+import { fakeApi, mdmDevice, mdmStatus, signedIn } from "../test/fixtures";
 import { FleetView } from "./Fleet";
 
 const mac: Device = {
@@ -427,5 +428,76 @@ describe("Fleet", () => {
       await userEvent.click(await screen.findByText("C02ZM1BBMD6T"));
       expect(api.retention).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("Fleet and Intune", () => {
+  const connected = (devices = [mdmDevice({ serial: "c02zm1bbmd6t" })], status = mdmStatus()) => ({
+    devices: vi.fn(async () => [mac]),
+    mdmStatus: vi.fn(async () => status), mdmDevices: vi.fn(async () => devices),
+  });
+  const renderFleet = (api: ReturnType<typeof fakeApi>) =>
+    render(<ApiContext.Provider value={api}><MemoryRouter><FleetView /></MemoryRouter></ApiContext.Provider>);
+
+  it("shows Intune's primary user and last check-in in the inspector", async () => {
+    renderFleet(fakeApi(connected([mdmDevice({
+      serial: "c02zm1bbmd6t", primary_upn: "anna.smith@example.com", last_check_in: "2026-10-17T08:30:00Z",
+    })])));
+    await userEvent.click(await screen.findByText("C02ZM1BBMD6T"));
+    const inspector = screen.getByRole("complementary", { name: "Mac details" });
+    const section = await within(inspector).findByRole("group", { name: "Intune" });
+    // Closed, with the primary user beside the title.
+    expect(section).not.toHaveAttribute("open");
+    expect(section.querySelector(".section-summary")).toHaveTextContent("anna.smith@example.com");
+    await userEvent.click(within(section).getByText("Intune"));
+    expect(within(inspector).getByText("Primary user (Intune)")).toBeVisible();
+    expect(within(inspector).getByText("anna.smith@example.com")).toBeVisible();
+    expect(within(inspector).getByText("Last Intune check-in")).toBeInTheDocument();
+    expect(within(inspector).getByText(dateTime("2026-10-17T08:30:00Z"))).toBeInTheDocument();
+  });
+
+  it("says when Intune has no record of the Mac", async () => {
+    renderFleet(fakeApi(connected([])));
+    await userEvent.click(await screen.findByText("C02ZM1BBMD6T"));
+    // Open by itself: a Mac Intune doesn't know is worth seeing.
+    expect(await screen.findByText("Not in Intune")).toBeVisible();
+    expect(screen.queryByText("Primary user (Intune)")).toBeNull();
+  });
+
+  it("shows no Intune rows with Intune off", async () => {
+    renderFleet(fakeApi({ devices: vi.fn(async () => [mac]) }));
+    await userEvent.click(await screen.findByText("C02ZM1BBMD6T"));
+    await waitFor(() => expect(screen.getByRole("complementary", { name: "Mac details" })).toBeInTheDocument());
+    expect(screen.queryByText("Primary user (Intune)")).toBeNull();
+    expect(screen.queryByText("Not in Intune")).toBeNull();
+  });
+
+  it("lists the Macs in Intune that never reported to Altiward", async () => {
+    renderFleet(fakeApi(connected([
+      mdmDevice({ serial: "C02ZM1BBMD6T" }),
+      mdmDevice({ serial: "C02NEVERSEEN", name: "Front desk iMac", primary_upn: "reception@example.com", last_check_in: undefined }),
+    ])));
+    const panel = await screen.findByRole("group", { name: "In Intune, never reported to Altiward" });
+    expect(panel).toHaveTextContent("C02NEVERSEEN");
+    expect(panel).toHaveTextContent("Front desk iMac");
+    expect(panel).toHaveTextContent("reception@example.com");
+    expect(panel).not.toHaveTextContent("C02ZM1BBMD6T");
+  });
+
+  it("hides that panel when every Mac in Intune has reported, and when Intune is off", async () => {
+    const { unmount } = render(<ApiContext.Provider value={fakeApi(connected())}><MemoryRouter><FleetView /></MemoryRouter></ApiContext.Provider>);
+    await screen.findByText("C02ZM1BBMD6T");
+    await waitFor(() => expect(screen.queryByText("In Intune, never reported to Altiward")).toBeNull());
+    unmount();
+    const off = fakeApi({
+      devices: vi.fn(async () => [mac]),
+      // A copy left behind while the connection is off isn't shown.
+      mdmDevices: vi.fn(async () => [mdmDevice({ serial: "C02NEVERSEEN" })]),
+    });
+    renderFleet(off);
+    await screen.findByText("C02ZM1BBMD6T");
+    await waitFor(() => expect(off.mdmStatus).toHaveBeenCalled());
+    expect(screen.queryByText("In Intune, never reported to Altiward")).toBeNull();
+    expect(screen.queryByText("C02NEVERSEEN")).toBeNull();
   });
 });

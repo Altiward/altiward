@@ -368,6 +368,16 @@ func silent(e store.StoredEvent, tenantID string) Record {
 	return r
 }
 
+// intuneReasons says, in an enrolment's message, what Intune said about the device ID the
+// Mac sent, for each mdm_check but a mismatch.
+var intuneReasons = map[string]string{
+	"match":       "the Intune device ID sent matches the serial",
+	"not_sent":    "no Intune device ID sent",
+	"invalid_id":  "the Intune device ID isn't valid",
+	"unknown_id":  "Intune doesn't know the device ID",
+	"unavailable": "Intune couldn't be asked",
+}
+
 // enrollment maps an agent.enrollment event, raised by the server when a Mac registers a
 // key. It is an API Activity record like the console's approval and revoke of an
 // enrolment, so a SIEM sees the whole lifecycle in one class: the resource is the
@@ -381,10 +391,28 @@ func enrollment(e store.StoredEvent, tenantID string) Record {
 	switch state {
 	case event.EnrollmentStatePending:
 		severity, alert = SeverityMedium, true
-		msg = fmt.Sprintf("%s enrolled again with a new key, waiting for approval", e.Device.Serial)
+		// Without a previous key this is a Mac's first key, held by approval for new Macs or
+		// an Intune check, or a retired Mac's new key, which always waits: say neither.
+		if detailString(e.Detail, "previous_device_id") == "" {
+			msg = fmt.Sprintf("%s enrolled a new key, waiting for approval", e.Device.Serial)
+		} else {
+			msg = fmt.Sprintf("%s enrolled again with a new key, waiting for approval", e.Device.Serial)
+		}
 	case event.EnrollmentStateReplaced:
 		severity, alert = SeverityHigh, true
 		msg = fmt.Sprintf("%s enrolled again; the new key replaced the previous one without approval", e.Device.Serial)
+	}
+	// What Intune said about the device ID the Mac sent. Another Mac's or another device's
+	// ID is High, whatever the state; the other outcomes keep the state's severity and say why.
+	switch check := detailString(e.Detail, "mdm_check"); {
+	case check == "mismatch":
+		severity, alert = SeverityHigh, true
+		msg = fmt.Sprintf("%s enrolled a new key with another Mac's or another device's Intune device ID", e.Device.Serial)
+		if state == event.EnrollmentStatePending {
+			msg += ", waiting for approval"
+		}
+	case intuneReasons[check] != "":
+		msg += " (" + intuneReasons[check] + ")"
 	}
 	activityID, activity, operation := 1, "Create", "enroll"
 	statusID, status := 1, "Success"

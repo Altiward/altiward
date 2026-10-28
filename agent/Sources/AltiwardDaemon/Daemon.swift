@@ -24,8 +24,8 @@ final class Daemon: Sendable {
         tracker = ElevationTracker(store: store, environment: .live(config: configuration))
         if let url = configuration.serverURL, let token = configuration.enrollmentToken {
             authenticator = DeviceAuthenticator(
-                store: store, serverURL: url, enrollmentToken: token, device: { DeviceIdentity.current() }, role: role,
-                log: { log.error("\($0, privacy: .public)") })
+                store: store, serverURL: url, enrollmentToken: token, mdmDeviceID: configuration.mdmDeviceID,
+                device: { DeviceIdentity.current() }, role: role, log: { log.error("\($0, privacy: .public)") })
         } else {
             authenticator = nil
         }

@@ -175,7 +175,12 @@ public enum OutOfBandEnforcement: String, Sendable, Equatable {
 public struct AgentConfiguration: Sendable, Equatable {
     public var serverURL: URL?
     public var enrollmentToken: String?
+    /// The MDM's own ID for this Mac (`MDMDeviceID`; Intune fills in `{{deviceid}}`), sent when
+    /// the Mac enrols so the server can check it against the MDM's list. Nil when unset or blank.
+    public var mdmDeviceID: String?
     public var dataDirectory: URL
+    /// Seconds between admin-group readings, 30 to 3600: a Mac never goes more than an hour
+    /// without one.
     public var heartbeatInterval: TimeInterval
     public var flushInterval: TimeInterval
     /// Accounts expected to hold standing admin rights (IT, break-glass); never reported out-of-band.
@@ -200,6 +205,7 @@ public struct AgentConfiguration: Sendable, Equatable {
     public init(
         serverURL: URL? = nil,
         enrollmentToken: String? = nil,
+        mdmDeviceID: String? = nil,
         dataDirectory: URL = defaultDataDirectory,
         heartbeatInterval: TimeInterval = 300,
         flushInterval: TimeInterval = 60,
@@ -214,6 +220,7 @@ public struct AgentConfiguration: Sendable, Equatable {
     ) {
         self.serverURL = serverURL
         self.enrollmentToken = enrollmentToken
+        self.mdmDeviceID = mdmDeviceID
         self.dataDirectory = dataDirectory
         self.heartbeatInterval = heartbeatInterval
         self.flushInterval = flushInterval
@@ -233,6 +240,7 @@ public struct AgentConfiguration: Sendable, Equatable {
         let differs: [(String, Bool)] = [
             ("ServerURL", serverURL != other.serverURL),
             ("EnrollmentToken", enrollmentToken != other.enrollmentToken),
+            ("MDMDeviceID", mdmDeviceID != other.mdmDeviceID),
             ("ALTIWARD_DATA_DIR", dataDirectory != other.dataDirectory),
             ("HeartbeatInterval", heartbeatInterval != other.heartbeatInterval),
             ("FlushInterval", flushInterval != other.flushInterval),
@@ -255,13 +263,15 @@ public struct AgentConfiguration: Sendable, Equatable {
         var c = AgentConfiguration()
         c.serverURL = (environment["ALTIWARD_SERVER_URL"] ?? p.string("ServerURL")).flatMap(URL.init(string:))
         c.enrollmentToken = environment["ALTIWARD_TOKEN"] ?? p.string("EnrollmentToken")
+        c.mdmDeviceID = p.string("MDMDeviceID")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
         if let dir = environment["ALTIWARD_DATA_DIR"] {
             // Say it is a folder: without that the URL gains a trailing slash once the folder exists,
             // and the daemon would read its own new data directory as a changed setting.
             c.dataDirectory = URL(fileURLWithPath: dir, isDirectory: true)
         }
         if let s = environment["ALTIWARD_HEARTBEAT_SECONDS"].flatMap(TimeInterval.init) ?? p.int("HeartbeatInterval").map(TimeInterval.init) {
-            c.heartbeatInterval = max(30, s)
+            c.heartbeatInterval = min(3600, max(30, s))
         }
         if let s = p.int("FlushInterval") {
             c.flushInterval = max(10, TimeInterval(s))

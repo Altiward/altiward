@@ -328,6 +328,8 @@ public actor DeviceAuthenticator {
     private let store: AgentStore
     private let serverURL: URL
     private let enrollmentToken: String
+    /// The MDM's ID for this Mac, sent when enrolling and never when rotating.
+    private let mdmDeviceID: String?
     private let device: @Sendable () -> DeviceInfo
     private let transport: any HTTPTransport
     private let keys: any DeviceKeys
@@ -365,7 +367,8 @@ public actor DeviceAuthenticator {
     public private(set) var lastSignedSuccess: (deviceID: String, at: Date)?
 
     public init(
-        store: AgentStore, serverURL: URL, enrollmentToken: String, device: @escaping @Sendable () -> DeviceInfo,
+        store: AgentStore, serverURL: URL, enrollmentToken: String, mdmDeviceID: String? = nil,
+        device: @escaping @Sendable () -> DeviceInfo,
         transport: any HTTPTransport = URLSessionTransport(), keys: any DeviceKeys = SystemDeviceKeys(),
         role: Role = .daemon, now: @escaping @Sendable () -> Date = { Date() },
         log: @escaping @Sendable (String) -> Void = { _ in }
@@ -373,6 +376,7 @@ public actor DeviceAuthenticator {
         self.store = store
         self.serverURL = serverURL
         self.enrollmentToken = enrollmentToken
+        self.mdmDeviceID = mdmDeviceID
         self.device = device
         self.transport = transport
         self.keys = keys
@@ -1056,10 +1060,12 @@ public actor DeviceAuthenticator {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(enrollmentToken)", forHTTPHeaderField: "Authorization")
         request.setValue("altiward-agent/\(AgentVersion.current)", forHTTPHeaderField: "User-Agent")
-        request.httpBody = try JSONEncoder().encode([
+        var body = [
             "serial": info.serial, "hardware_uuid": info.hardwareUUID,
             "public_key": publicKey.base64EncodedString(), "key_storage": c.storage.rawValue,
-        ])
+        ]
+        if let mdmDeviceID { body["mdm_device_id"] = mdmDeviceID }
+        request.httpBody = try JSONEncoder().encode(body)
         let (data, response) = try await transport.send(request)
         if response.statusCode == 429 {
             let until = now().addingTimeInterval(retryDelay(response.value(forHTTPHeaderField: "Retry-After")))

@@ -12,10 +12,12 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/Altiward/altiward/backend/internal/auth"
 	"github.com/Altiward/altiward/backend/internal/event"
+	"github.com/Altiward/altiward/backend/internal/mdm"
 	"github.com/Altiward/altiward/backend/internal/store"
 )
 
@@ -167,16 +169,23 @@ type enrollRequest struct {
 	HardwareUUID string `json:"hardware_uuid"`
 	PublicKey    string `json:"public_key"`  // base64 SubjectPublicKeyInfo DER
 	KeyStorage   string `json:"key_storage"` // "secure_enclave" or "software"; absent before agent 0.2.0
+	// MDMDeviceID is the MDM's ID for the Mac, from the profile's MDMDeviceID; absent when
+	// the profile doesn't set it. It is never logged, shown or sent anywhere.
+	MDMDeviceID string `json:"mdm_device_id"`
 }
 
 func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	var req enrollRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "body must be {serial, hardware_uuid, public_key}: "+err.Error())
+		writeError(w, http.StatusBadRequest, "body must be {serial, hardware_uuid, public_key}, with key_storage and mdm_device_id optional: "+err.Error())
 		return
 	}
 	if req.Serial == "" || req.HardwareUUID == "" || len(req.Serial) > event.MaxNameLength || len(req.HardwareUUID) > event.MaxNameLength {
 		writeError(w, http.StatusBadRequest, "serial and hardware_uuid are required (at most 255 bytes)")
+		return
+	}
+	if len(req.MDMDeviceID) > event.MaxNameLength {
+		writeError(w, http.StatusBadRequest, "mdm_device_id must be at most 255 bytes")
 		return
 	}
 	spki, err := base64.StdEncoding.DecodeString(req.PublicKey)
@@ -192,11 +201,31 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal
 		s.serverError(w, "device id", err)
 		return
 	}
-	now := s.now()
-	res, err := s.store.Enroll(r.Context(), store.DeviceCredential{
+	cred := store.DeviceCredential{
 		DeviceID: id, TenantID: p.TenantID, Serial: req.Serial, HardwareUUID: req.HardwareUUID,
-		PublicKey: spki, KeyStorage: store.ParseKeyStorage(req.KeyStorage), Token: p.Actor, CreatedAt: now,
-	}, s.enrollLimits)
+		PublicKey: spki, KeyStorage: store.ParseKeyStorage(req.KeyStorage), Token: p.Actor,
+	}
+	// With Intune connected, a new key is checked against it before the store decides
+	// whether it waits for approval. The same key again is a retry, which asks nothing: the
+	// enrolment token must not be able to spend Intune's budget by repeating itself.
+	checker := s.mdmFor(p)
+	if checker != nil {
+		_, err := s.store.CredentialByKey(r.Context(), p.TenantID, spki)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			cred.MDMDeviceID = strings.TrimSpace(req.MDMDeviceID)
+			cred.MDMCheck = checker.Check(r.Context(), p.TenantID, req.MDMDeviceID, req.Serial, req.HardwareUUID)
+		case err != nil:
+			s.log.Error("enroll: credential lookup", "tenant", p.TenantID, "serial", req.Serial, "err", err)
+			writeError(w, http.StatusServiceUnavailable, "could not enroll; retry later")
+			return
+		default:
+			checker = nil
+		}
+	}
+	now := s.now()
+	cred.CreatedAt = now
+	res, err := s.store.Enroll(r.Context(), cred, s.enrollLimits)
 	if errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "this key is enrolled elsewhere; generate a new one")
 		return
@@ -223,14 +252,28 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request, p auth.Principal
 		// The credential is stored either way; a Mac that can't be reported still enrols. The
 		// agent's retry gets the stored credential and raises nothing, so the event is stored
 		// even if the client has given up.
-		e := enrollmentEvent(p.TenantID, res, r.UserAgent(), now)
+		e := enrollmentEvent(p.TenantID, res, r.UserAgent(), now, serialKnown(r.Context(), checker, c))
 		if err := s.storeRaised(r, p.TenantID, e, now); err != nil {
 			s.log.Error("enrollment event not recorded", "tenant", p.TenantID, "serial", c.Serial, "device_id", c.DeviceID, "err", err)
 		}
 		s.log.Info("device enrolled", "tenant", p.TenantID, "serial", c.Serial, "device_id", c.DeviceID,
-			"state", e.Detail["state"], "key_storage", c.KeyStorage)
+			"state", e.Detail["state"], "key_storage", c.KeyStorage, "mdm_check", c.MDMCheck)
 	}
 	writeJSON(w, status, map[string]string{"device_id": c.DeviceID, "status": string(c.Status)})
+}
+
+// serialKnown says whether Intune knows the serial of c, a key that has just enrolled, for
+// its event: nil when Intune isn't connected or can't say. A match needs no lookup: Intune
+// gave the device under that serial.
+func serialKnown(ctx context.Context, checker *mdm.Checker, c store.DeviceCredential) *bool {
+	if checker == nil {
+		return nil
+	}
+	if c.MDMCheck == store.MDMMatch {
+		known := true
+		return &known
+	}
+	return checker.SerialKnown(ctx, c.TenantID, c.Serial)
 }
 
 func (s *Server) listEnrollments(w http.ResponseWriter, r *http.Request, p auth.Principal) {

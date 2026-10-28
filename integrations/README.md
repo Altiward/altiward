@@ -27,7 +27,10 @@ and console token sign-ins (one each hour a token is used), as OCSF Authenticati
 (`class_uid` 3002), and the other actions as API Activity (`class_uid` 6003).
 `agent.enrollment`, which the server raises when a Mac enrols a key, is API Activity as
 well, as activity Create. Its severity says which state it is: Informational for
-`enrolled`, Medium (an alert) for `pending` and High (an alert) for `replaced`. Key
+`enrolled`, Medium (an alert) for `pending` and High (an alert) for `replaced`. With Intune
+connected, a key enrolled with another Mac's or another device's Intune device ID
+(`mdm_check` `mismatch`) is High (an alert) whatever its state, and the other outcomes keep
+the state's severity and add what Intune said to the message. Key
 rotation is API Activity too, with `api.operation` `rotate` and the Mac as the actor:
 `rotated` is Update and Informational, and `rotated_key_used` (a key that rotation had
 already replaced signed a request) is "Stale key used", status Failure, High and an

@@ -32,12 +32,14 @@ export function agentClient(server, enrollToken) {
   }
 
   /** Enrolls a fake Mac with a new key: { serial, deviceID, status, privateKey }.
-   *  `keyStorage` is where the Mac says its key is kept; null leaves it out. */
-  async function enroll(serial, { keyStorage = "secure_enclave" } = {}) {
+   *  `keyStorage` is where the Mac says its key is kept; null leaves it out. `mdmDeviceID` is
+   *  the MDM's ID for the Mac, as Intune's `{{deviceid}}` gives it; null leaves it out. */
+  async function enroll(serial, { keyStorage = "secure_enclave", mdmDeviceID = null } = {}) {
     const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
     const spki = publicKey.export({ type: "spki", format: "der" }).toString("base64");
     const body = { serial, hardware_uuid: hardwareUUID(serial), public_key: spki };
     if (keyStorage) body.key_storage = keyStorage;
+    if (mdmDeviceID) body.mdm_device_id = mdmDeviceID;
     const r = await request("POST", "/v1/agent/enroll", { bearer: enrollToken, body });
     return { serial, deviceID: r.device_id, status: r.status, privateKey };
   }

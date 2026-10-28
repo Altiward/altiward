@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { ApiContext, MeContext } from "../context";
-import { fakeApi, githubFetch, release, signedIn } from "../test/fixtures";
+import { fakeApi, githubFetch, mdmStatus, release, signedIn } from "../test/fixtures";
 import { checkReleases, showsPrereleases } from "../updates";
 import type { ConsoleSignIn, HistoryPolicy } from "../api";
 import { dateOnly, dateTime } from "../format";
@@ -25,8 +25,8 @@ describe("Settings tabs", () => {
     const tabs = screen.getByRole("navigation", { name: "Settings sections" });
     const links = within(tabs).getAllByRole("link");
     expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
-      ["General", "/settings"], ["SIEM export", "/settings/siem"], ["Sign-ins", "/settings/sign-ins"],
-      ["Updates", "/settings/updates"],
+      ["General", "/settings"], ["SIEM export", "/settings/siem"], ["MDM", "/settings/mdm"],
+      ["Sign-ins", "/settings/sign-ins"], ["Updates", "/settings/updates"],
     ]);
     expect(within(tabs).getByRole("link", { name: "SIEM export" })).toHaveAttribute("aria-current", "page");
     expect(within(tabs).getByRole("link", { name: "General" })).not.toHaveAttribute("aria-current");
@@ -34,12 +34,12 @@ describe("Settings tabs", () => {
     expect(screen.queryByRole("heading", { name: "Enrollment" })).not.toBeInTheDocument();
   });
 
-  it("shows operators and viewers General and SIEM export only, and sends them back from the others", async () => {
+  it("shows operators and viewers General, SIEM export and MDM only, and sends them back from the others", async () => {
     render(<ApiContext.Provider value={fakeApi()}><MeContext.Provider value={signedIn("viewer")}>
       {settingsAt("/settings/updates")}
     </MeContext.Provider></ApiContext.Provider>);
     const tabs = screen.getByRole("navigation", { name: "Settings sections" });
-    expect(within(tabs).getAllByRole("link").map((l) => l.textContent)).toEqual(["General", "SIEM export"]);
+    expect(within(tabs).getAllByRole("link").map((l) => l.textContent)).toEqual(["General", "SIEM export", "MDM"]);
     expect(await screen.findByRole("heading", { name: "Enrollment" })).toBeInTheDocument();
     expect(within(tabs).getByRole("link", { name: "General" })).toHaveAttribute("aria-current", "page");
   });
@@ -641,5 +641,154 @@ describe("Settings updates", () => {
     await waitFor(() => expect(api.settings).toHaveBeenCalled());
     expect(screen.queryByRole("group", { name: "Updates" })).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("Settings MDM", () => {
+  const connected = (over: Parameters<typeof mdmStatus>[0] = {}, settings: Record<string, unknown> = {}) => ({
+    mdmStatus: vi.fn(async () => mdmStatus(over)),
+    settings: vi.fn(async () => ({
+      reenrollment_requires_approval: true, new_mac_requires_approval: false, silent_after_hours: 0, silent_alerts_off: false,
+      require_intune_match: false, ...settings,
+    })),
+    putSettings: vi.fn(async (s) => s),
+  });
+
+  it("says Intune isn't connected, and links the guide for the running server", async () => {
+    renderView(fakeApi(), "/settings/mdm");
+    expect(await screen.findByText("Not connected")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("link", { name: /Connect Intune/ })).toHaveAttribute("href",
+      "https://github.com/Altiward/altiward/blob/server-v0.1.0/docs/install.md#7-connect-intune-optional"));
+    expect(screen.queryByRole("switch", { name: /Require an Intune match/ })).toBeNull();
+  });
+
+  it("shows the devices, the last sync and how many active Macs matched", async () => {
+    renderView(fakeApi(connected({
+      devices: 212, last_success_at: "2026-10-18T11:45:00Z", checks: { match: 40, not_sent: 2, mismatch: 1 },
+    })), "/settings/mdm");
+    expect(await screen.findByText("Synced")).toBeInTheDocument();
+    expect(screen.getByText("212")).toBeInTheDocument();
+    expect(screen.getByText(dateTime("2026-10-18T11:45:00Z"))).toBeInTheDocument();
+    expect(screen.getByText("Of the 43 active Macs checked since Intune was connected, 40 matched Intune.")).toBeInTheDocument();
+    expect(screen.getByText(/1 sent another Mac's or another device's ID/)).toBeInTheDocument();
+    expect(screen.getByText(/2 sent no Intune device ID/)).toBeInTheDocument();
+    expect(screen.queryByText("Not connected")).toBeNull();
+  });
+
+  it("treats an outcome missing from the counts as none", async () => {
+    renderView(fakeApi(connected({ checks: { not_sent: 3 } })), "/settings/mdm");
+    expect(await screen.findByText("Of the 3 active Macs checked since Intune was connected, 0 matched Intune.")).toBeInTheDocument();
+  });
+
+  it("counts the active Macs that enrolled before Intune was connected, which haven't been checked", async () => {
+    renderView(fakeApi(connected({ checks: { match: 1 }, not_checked: 2 })), "/settings/mdm");
+    expect(await screen.findByText("Of the 1 active Mac checked since Intune was connected, 1 matched Intune.")).toBeInTheDocument();
+    expect(screen.getByText(
+      "2 active Macs enrolled before Intune was connected and haven’t been checked: a Mac is checked when it next enrols a key.",
+    )).toBeInTheDocument();
+  });
+
+  it("says so when no active Mac has been checked yet, and none is waiting for its first check", async () => {
+    renderView(fakeApi(connected({ checks: {}, not_checked: 0 })), "/settings/mdm");
+    expect(await screen.findByText("No active Mac has enrolled with Intune connected yet, so none has been checked.")).toBeInTheDocument();
+    expect(screen.queryByText(/enrolled before Intune was connected/)).toBeNull();
+  });
+
+  it("names an outcome this console doesn't know without leaving the sentence empty", async () => {
+    renderView(fakeApi(connected({ checks: { match: 1, quarantined: 2 } as never })), "/settings/mdm");
+    expect(await screen.findByText("Of the 3 active Macs checked since Intune was connected, 1 matched Intune.")).toBeInTheDocument();
+    expect(screen.getByText("Of the rest, 2 had another outcome.")).toBeInTheDocument();
+  });
+
+  it("shows the last error, and that the sync is failing", async () => {
+    renderView(fakeApi(connected({
+      last_success_at: "2026-10-18T09:00:00Z", last_error_at: "2026-10-18T11:00:00Z", last_error: "intune: HTTP 403 Forbidden",
+    })), "/settings/mdm");
+    expect(await screen.findByText("Failing")).toBeInTheDocument();
+    expect(screen.getByText("intune: HTTP 403 Forbidden")).toBeInTheDocument();
+  });
+
+  it("says when the first sync hasn't finished", async () => {
+    renderView(fakeApi(connected({ last_success_at: undefined, devices: 0 })), "/settings/mdm");
+    expect(await screen.findByText("Waiting for the first sync")).toBeInTheDocument();
+  });
+
+  it("lets an admin turn on Require an Intune match with no confirmation when every Mac matched", async () => {
+    const over = connected({ checks: { match: 5 } });
+    renderView(fakeApi(over), "/settings/mdm");
+    const toggle = await screen.findByRole("switch", { name: /Require an Intune match/ });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    expect(toggle).not.toBeChecked();
+    await userEvent.click(toggle);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(over.putSettings).toHaveBeenCalledWith({
+      reenrollment_requires_approval: true, new_mac_requires_approval: false, silent_after_hours: 0, silent_alerts_off: false,
+      require_intune_match: true,
+    });
+  });
+
+  it("confirms first while some active Macs haven't matched, naming how many", async () => {
+    const over = connected({ checks: { match: 40, not_sent: 2, unavailable: 1 } });
+    renderView(fakeApi(over), "/settings/mdm");
+    const toggle = await screen.findByRole("switch", { name: /Require an Intune match/ });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    await userEvent.click(toggle);
+    expect(over.putSettings).not.toHaveBeenCalled();
+    const sheet = screen.getByRole("dialog");
+    expect(sheet).toHaveTextContent("Of the 43 active Macs checked since Intune was connected, 3 didn’t match Intune.");
+    expect(sheet).not.toHaveTextContent("enrolled before Intune was connected");
+    await userEvent.click(within(sheet).getByRole("button", { name: "Require a match" }));
+    await waitFor(() => expect(over.putSettings).toHaveBeenCalledWith(expect.objectContaining({ require_intune_match: true })));
+  });
+
+  it("confirms first while some active Macs haven't been checked, though every Mac checked matched", async () => {
+    const over = connected({ checks: { match: 5 }, not_checked: 1 });
+    renderView(fakeApi(over), "/settings/mdm");
+    const toggle = await screen.findByRole("switch", { name: /Require an Intune match/ });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    await userEvent.click(toggle);
+    expect(over.putSettings).not.toHaveBeenCalled();
+    const sheet = screen.getByRole("dialog");
+    expect(sheet).toHaveTextContent("1 active Mac enrolled before Intune was connected and hasn’t been checked.");
+    expect(sheet).not.toHaveTextContent("didn’t match");
+  });
+
+  it("saves nothing when the confirmation is cancelled", async () => {
+    const over = connected({ checks: { match: 1, mismatch: 1 } });
+    renderView(fakeApi(over), "/settings/mdm");
+    const toggle = await screen.findByRole("switch", { name: /Require an Intune match/ });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    await userEvent.click(toggle);
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(over.putSettings).not.toHaveBeenCalled();
+  });
+
+  it("turns it off without asking", async () => {
+    const over = connected({ checks: { match: 1, mismatch: 1 } }, { require_intune_match: true });
+    renderView(fakeApi(over), "/settings/mdm");
+    const toggle = await screen.findByRole("switch", { name: /Require an Intune match/ });
+    await waitFor(() => expect(toggle).toBeChecked());
+    await userEvent.click(toggle);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(over.putSettings).toHaveBeenCalledWith(expect.objectContaining({ require_intune_match: false }));
+  });
+
+  it("leaves the toggle to admins", async () => {
+    render(<ApiContext.Provider value={fakeApi(connected({ checks: { match: 1 } }))}><MeContext.Provider value={signedIn("operator")}>
+      {settingsAt("/settings/mdm")}
+    </MeContext.Provider></ApiContext.Provider>);
+    const toggle = await screen.findByRole("switch", { name: /Require an Intune match/ });
+    expect(toggle).toBeDisabled();
+    expect(screen.getByText(/Changing settings needs the admin role/)).toBeInTheDocument();
+  });
+
+  it("keeps the stored history period out of the save", async () => {
+    const over = connected({ checks: { match: 1 } }, { history_days: 400 });
+    renderView(fakeApi(over), "/settings/mdm");
+    const toggle = await screen.findByRole("switch", { name: /Require an Intune match/ });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    await userEvent.click(toggle);
+    expect(over.putSettings.mock.calls[0][0]).not.toHaveProperty("history_days");
   });
 });
