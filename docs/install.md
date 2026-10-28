@@ -216,34 +216,37 @@ Create these in your MDM and scope them to a pilot group first.
    only MDM may set Altiward's settings. On a Mac not enrolled in MDM the agent takes them
    from the preferences and reports `settings_managed` failed, so use that only for testing.
    The agent keeps the last settings it read in its database, and uses them while the
-   profiles can't be read. With none kept yet, it waits for the profiles to be readable
+   profiles can't be read, provided they name the server and enrolment token the Mac
+   enrolled with. With none it can use, it waits for the profiles to be readable
    before it sends anything or accepts the hook. After a profile change it applies the new
    settings once two readings agree, within a minute or so. The `ALTIWARD_*` environment
    overrides are for development only: the installed agent ignores them.
 
    **What `settings_managed` checks.** Anyone with admin rights can write the files in
    `/Library/Managed Preferences`, and macOS then reports the written value as set by MDM.
-   So on every heartbeat, and a few seconds after any file there changes, the agent compares
-   them with MDM's payloads for `com.altiward.agent` and `corp.sap.privileges`, both ways:
-   every key a payload sets must be in the file with the same value, and every key in the
-   file must be one a payload sets. It compares the device's files, and the copies in the
-   folders of people signed in at the login window (`/Library/Managed Preferences/<user>`,
-   with its `complete.plist`) from two minutes after they sign in. Other people's folders
-   keep the settings of their last sign-in, so they aren't compared until they sign in
-   again. A value changed, a key removed or a key added fails the check, naming the domain
-   and key (never the value). If more keys fail later, it is reported again. Just after MDM
-   changes one of these profiles, differences are held for up to 5 minutes while macOS
-   rewrites the files. The check also fails while the profiles can't be read (saying which
-   stored settings it compared with instead, and from when), and still reports `ServerURL`,
-   `PermanentAdmins`, `ExpiryEnforcement`, `ExpiryGraceMinutes`, `OutOfBandEnforcement`,
-   `OutOfBandGraceMinutes`, `UserPrincipalNames`, `PlatformSSOIdentity` or
-   `HookCodeRequirement` set in `/Library/Preferences`.
+   So the agent compares those files, and what macOS serves from them, with MDM's payloads
+   for `com.altiward.agent` and `corp.sap.privileges`, both ways: every key a payload sets
+   must be there with the same value, and every key in a file must be one a payload sets.
+   It compares on every heartbeat, and whenever a file there changes: at once against the
+   payloads it last read, then again a few seconds later with the profiles read afresh, so
+   a value changed and put back in between is still reported. It compares the device's
+   files, and the copies in the folders of people signed in at the login window
+   (`/Library/Managed Preferences/<user>`, with its `complete.plist`) from two minutes
+   after they sign in. Other people's folders keep the settings of their last sign-in, so
+   they aren't compared until they sign in again. A value changed, a key removed or a key
+   added fails the check, naming the domain and key (never the value). If other keys fail
+   later, it is reported again, at most every 10 minutes. When the agent sees MDM change one
+   of these profiles, a file that still holds the previous profile's value is left alone
+   for up to 5 minutes while macOS rewrites it. The check also fails while the profiles
+   can't be read (saying which stored settings it compared with instead, and from when),
+   and still reports `ServerURL`, `PermanentAdmins`, `ExpiryEnforcement`,
+   `ExpiryGraceMinutes`, `OutOfBandEnforcement`, `OutOfBandGraceMinutes`,
+   `UserPrincipalNames`, `PlatformSSOIdentity` or `HookCodeRequirement` set in
+   `/Library/Preferences`.
 
-   The settings kept on the Mac are a fallback, not proof: someone with root on the Mac who
-   both breaks the `profiles` tool and replaces the agent's database could give the agent
-   other settings, including another server. The agent then stops checking in to yours, so
-   keep **Alert when a Mac stops checking in** on, with **Raise it after** as short as your
-   Macs allow (**Settings › General**).
+   Keep **Alert when a Mac stops checking in** on, with **Raise it after** as short as your
+   Macs allow (**Settings › General**): a Mac whose agent stops reporting to your server,
+   for any reason, then shows.
 
    **Where a UPN comes from.** The agent keeps its own record of each Mac account's
    Platform SSO link, and events take the UPN from that record, never straight from the

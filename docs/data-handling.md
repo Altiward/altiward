@@ -385,7 +385,8 @@ Enclave) and its public key, the server's clock offset it last learnt, revoke re
 (removed 30 days after they are reported), and the settings MDM's profiles last gave for
 `com.altiward.agent` and `corp.sap.privileges` (the agent's settings, enrolment token
 included, and Privileges' settings), replaced at each reading, so the agent keeps working
-from them while the Mac's `profiles` tool can't be read. While the agent is replacing the Mac's key and
+from them while the Mac's `profiles` tool can't be read, with a SHA-256 digest of the
+enrolment token the Mac enrolled with, to check them against. While the agent is replacing the Mac's key and
 doesn't yet know the server's answer, it also holds the replacement key (or its handle), a
 copy of the key it replaces, and the last answer that kept it waiting (such as an HTTP
 status and the start of the reply, for `altiward-agent status`), removed as soon as the
