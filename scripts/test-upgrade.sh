@@ -58,7 +58,41 @@ release() {
 }
 
 env_version() { sed -n 's/^ALTIWARD_VERSION=//p' "$SITE/.env"; }
-upgrade() { "$SITE/upgrade.sh" --yes --skip-signature "$@"; }
+# As an admin runs it, with a stand-in cosign (below) first on PATH, so a cosign installed
+# here doesn't check the test releases' empty signatures. upgrade.sh checks the signature
+# whenever cosign can, even with --skip-signature.
+upgrade() { PATH="$T/cosign:$PATH" "$SITE/upgrade.sh" --yes --skip-signature "$@"; }
+
+# The stand-in cosign reports FAKE_COSIGN_VERSION, 3.1.4 unless set, and accepts a
+# signature only when asked as that version must be asked. Cosign 2.4 reads the release's
+# Sigstore bundle only with --new-bundle-format, which later 2.x accept, and cosign 3
+# deprecates the flag, so it's refused there as a later cosign may. FAKE_COSIGN_REJECT
+# makes it reject anyway.
+mkdir -p "$T/cosign"
+cat >"$T/cosign/cosign" <<'EOF'
+#!/bin/bash
+FAKE_COSIGN_VERSION="${FAKE_COSIGN_VERSION:-3.1.4}"
+if [ "$1" = version ]; then printf 'GitVersion:    v%s\n' "$FAKE_COSIGN_VERSION"; exit 0; fi
+[ "$1" = verify-blob ] || { echo "Error: unexpected cosign $1" >&2; exit 2; }
+args=" $* "
+case "$args" in
+  *" --certificate-identity https://github.com/Altiward/altiward/.github/workflows/release-server.yml@refs/tags/server-v"*) ;;
+  *) echo "Error: not asked for the release workflow's identity" >&2; exit 1 ;;
+esac
+[[ "$args" == *" --certificate-oidc-issuer https://token.actions.githubusercontent.com "* ]] \
+  || { echo "Error: not asked for GitHub's issuer" >&2; exit 1; }
+[[ "$args" == *" --bundle "* ]] || { echo "Error: no bundle" >&2; exit 1; }
+if [[ "$FAKE_COSIGN_VERSION" == 2.* ]]; then
+  [[ "$args" == *" --new-bundle-format "* ]] \
+    || { echo "Error: bundle does not contain cert for verification, please provide public key" >&2; exit 1; }
+elif [[ "$args" == *" --new-bundle-format "* ]]; then
+  echo "Error: unknown flag: --new-bundle-format" >&2; exit 1
+fi
+[ -z "${FAKE_COSIGN_REJECT:-}" ] \
+  || { echo "Error: none of the expected identities matched what was in the certificate" >&2; exit 1; }
+echo "Verified OK"
+EOF
+chmod +x "$T/cosign/cosign"
 
 # Version ordering: each pair is lower, then higher.
 for pair in "0.3.0-rc.1 0.3.0" "0.3.0-rc.1 0.3.0-rc.2" "0.3.0-rc.2 0.3.0-rc.10" "0.9.9 0.10.0" \
@@ -138,8 +172,24 @@ if ! command -v cosign >/dev/null; then
   if "$SITE/upgrade.sh" --yes "$T/rel-0.0.3" >"$T/out" 2>&1; then fail "went ahead without a signature check"; fi
   grep -q "cosign isn't installed" "$T/out" || fail "didn't explain the missing cosign"
 fi
+if PATH="$T/cosign:$PATH" FAKE_COSIGN_VERSION=2.2.4 "$SITE/upgrade.sh" --yes 0.0.3 >"$T/out" 2>&1; then
+  fail "went ahead with a cosign too old to check the signature"
+fi
+grep -q "cosign 2.2.4 is too old to check this release's signature: install cosign 2.4 or later" "$T/out" \
+  || { cat "$T/out"; fail "didn't say cosign 2.2.4 is too old"; }
+! grep -q "don't install it" "$T/out" || fail "called a release unsigned because cosign is too old"
+[ ! -e "$SITE/releases" ] || fail "downloaded a release it can't check"
+for v in 2.4.1 3.1.4; do
+  if FAKE_COSIGN_VERSION=$v FAKE_COSIGN_REJECT=1 upgrade "$T/rel-0.0.3" >"$T/out" 2>&1; then
+    fail "a release cosign $v rejected was installed"
+  fi
+  grep -q "cosign $v says: Error: none of the expected identities matched" "$T/out" \
+    || { cat "$T/out"; fail "didn't pass on cosign $v's error"; }
+  grep -q "SHA256SUMS isn't signed by Altiward's release workflow for 0.0.3: don't install it" "$T/out" \
+    || { cat "$T/out"; fail "cosign $v's rejection wasn't reported as unsigned"; }
+done
 [ "$(env_version)" = 0.0.2 ] || fail "a refused upgrade changed .env"
-ok "a corrupted release, and one whose signature can't be checked, are refused"
+ok "a corrupted release, one whose signature can't be checked, and one cosign rejects, are refused"
 
 # 0.0.4 is published without its image, so the download stops partway.
 mkdir "$WWW/server-v0.0.4"
@@ -156,12 +206,14 @@ ln -sfn "$T/rel-0.0.3" "$WWW/server-v0.0.3"
 [ "$(env_version)" = 0.0.2 ] || fail "a failed download changed .env"
 ok "a download with a file missing, and one that doesn't match its checksums, are refused"
 
-upgrade 0.0.3-rc.1 >"$T/out" 2>&1 || { cat "$T/out"; fail "upgrade to 0.0.3-rc.1 by version failed"; }
+FAKE_COSIGN_VERSION=2.4.1 upgrade 0.0.3-rc.1 >"$T/out" 2>&1 \
+  || { cat "$T/out"; fail "upgrade to 0.0.3-rc.1 by version, checked with cosign 2.4.1, failed"; }
 [ "$(env_version)" = 0.0.3-rc.1 ] || fail ".env says $(env_version), not 0.0.3-rc.1"
+grep -q "signed by Altiward's release workflow for 0.0.3-rc.1" "$T/out" || fail "cosign 2.4.1 didn't check the signature"
 grep -q "Downloading 0.0.3-rc.1" "$T/out" || fail "didn't download 0.0.3-rc.1"
 [ -f "$SITE/releases/0.0.3-rc.1/altiward-server-0.0.3-rc.1.tar.gz" ] || fail "the download isn't in releases/0.0.3-rc.1"
 grep -q "is a release candidate" "$T/out" || fail "didn't say 0.0.3-rc.1 is a release candidate"
-ok "upgraded to the release candidate 0.0.3-rc.1, downloaded by version"
+ok "upgraded to the release candidate 0.0.3-rc.1, downloaded by version and checked with cosign 2.4.1"
 
 # A file both the admin and the release changed stops the upgrade with a .new copy,
 # after the new release's upgrade.sh has taken over with the files already downloaded.
@@ -169,6 +221,8 @@ echo "# my compose change" >>"$SITE/compose.yaml"
 status=0
 upgrade 0.0.3 >"$T/out" 2>&1 || status=$?
 [ "$status" = 3 ] || { cat "$T/out"; fail "a conflicting compose.yaml should stop with 3, got $status"; }
+[ "$(grep -c "signed by Altiward's release workflow for 0.0.3$" "$T/out")" = 2 ] \
+  || { cat "$T/out"; fail "cosign 3 didn't check the signature, before and after the handover"; }
 grep -q "Updated upgrade.sh from 0.0.3" "$T/out" || fail "upgrade.sh didn't hand over to 0.0.3's"
 [ "$(grep -c "^Downloading 0.0.3 " "$T/out")" = 1 ] || { cat "$T/out"; fail "0.0.3 wasn't downloaded exactly once"; }
 grep -q "upgrade.sh from 0.0.3" "$SITE/upgrade.sh" || fail "upgrade.sh wasn't replaced"
@@ -178,7 +232,10 @@ grep -q -- "--merged .*/releases/0.0.3$" "$T/out" || { cat "$T/out"; fail "didn'
 [ "$(env_version)" = 0.0.3-rc.1 ] || fail "a stopped upgrade changed .env"
 ok "a compose.yaml changed on both sides stops the upgrade with compose.yaml.new"
 
-upgrade --merged "$SITE/releases/0.0.3" >"$T/out" 2>&1 || { cat "$T/out"; fail "the --merged upgrade failed"; }
+FAKE_COSIGN_VERSION=2.2.4 upgrade --merged "$SITE/releases/0.0.3" >"$T/out" 2>&1 \
+  || { cat "$T/out"; fail "the --merged upgrade failed"; }
+grep -q "cosign 2.2.4 is too old to check this release's signature: install cosign 2.4 or later. Only the checksums were checked" "$T/out" \
+  || { cat "$T/out"; fail "--skip-signature with a cosign too old didn't say what it skipped"; }
 [ "$(env_version)" = 0.0.3 ] || fail ".env says $(env_version), not 0.0.3"
 grep -q "my compose change" "$SITE/compose.yaml" || fail "the admin's compose.yaml was replaced"
 [ ! -e "$SITE/compose.yaml.new" ] || fail "compose.yaml.new was left behind"
