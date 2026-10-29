@@ -1234,7 +1234,7 @@ runs that release's script.
 | Option | Use |
 | --- | --- |
 | `--yes` | Don't ask, for automation |
-| `--skip-signature` | Carry on without cosign; the checksums are still checked. Better: check the signature on another machine first |
+| `--skip-signature` | Carry on without cosign, or with a cosign older than 2.4, which can't check the signature; the checksums are still checked. Better: check the signature on another machine first |
 | `--skip-backup` | You use your own Postgres and back it up yourself. Without it, the script stops if the bundled Postgres isn't running |
 | `--merged` | You've merged the files the script left as `.new` (below) |
 
@@ -1286,7 +1286,8 @@ that alert briefly on Macs that get the new profile before the new package.
 
 Each release comes with `SHA256SUMS`, signed by the release workflow in the
 `Altiward/altiward` repository on GitHub. `upgrade.sh`
-checks both for you, using cosign if it's installed. To check by hand, or before a first
+checks both for you, using cosign if it's installed: it needs cosign 2.4 or later, and
+stops if the one installed is older. To check by hand, or before a first
 install, check the files match it. `--ignore-missing` skips files listed that you didn't
 download, such as the image for the other platform:
 
@@ -1295,8 +1296,8 @@ sha256sum -c --ignore-missing SHA256SUMS     # on macOS: shasum -a 256 -c --igno
 ```
 
 To check the list itself came from that workflow, use
-[cosign](https://docs.sigstore.dev/cosign/system_config/installation/) with the
-`SHA256SUMS.sigstore.json` beside it. For a server release:
+[cosign](https://docs.sigstore.dev/cosign/system_config/installation/) 2.4 or later with
+the `SHA256SUMS.sigstore.json` beside it. For a server release:
 
 ```sh
 cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
@@ -1304,11 +1305,20 @@ cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
-For an agent release, use `release-agent\.yml@refs/tags/agent-v` in place of
-`release-server\.yml@refs/tags/server-v`. The agent package is also signed by Apple's
-Developer ID and notarized, which macOS checks when it installs.
+That works as it is with cosign 3. With cosign 2, add `--new-bundle-format`: releases
+are signed in Sigstore's newer bundle format, which cosign 3 reads by default. Cosign 2.4
+needs the flag, and without it fails with `bundle does not contain cert for verification`
+although the release is genuine; later 2.x versions accept it. Versions older than 2.4
+can't read the format, so they can't check a release.
 
-The server image is signed the same way. To check one you pulled:
+For an agent release, the same cosign versions work: use
+`release-agent\.yml@refs/tags/agent-v` in place of `release-server\.yml@refs/tags/server-v`.
+The agent package is also signed by Apple's Developer ID and notarized, which macOS checks
+when it installs.
+
+The server image is signed the same way. To check one you pulled, use cosign 3, or
+cosign 2.6 or a later 2.x with `--new-bundle-format` added (older versions find no
+signature on the image):
 
 ```sh
 cosign verify ghcr.io/altiward/altiward-api:<version> \

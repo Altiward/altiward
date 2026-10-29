@@ -192,7 +192,7 @@ subscription instead, on Azure Container Apps, with no VM to look after:
 
 **1. The server.** Download the server release from
 [GitHub Releases](https://github.com/Altiward/altiward/releases) (tagged `server-v1.2.0`),
-[check its signature](docs/install.md#checking-a-release), then:
+[check its signature](docs/install.md#checking-a-release) with cosign 2.4 or later, then:
 
 ```sh
 docker load -i altiward-api-1.2.0-linux-amd64.tar.gz   # or pull ghcr.io/altiward/altiward-api:1.2.0

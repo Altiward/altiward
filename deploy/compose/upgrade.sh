@@ -13,7 +13,8 @@
 # and SHA256SUMS.sigstore.json.
 #
 #   --yes             don't ask before upgrading
-#   --skip-signature  carry on without cosign; the checksums are still checked
+#   --skip-signature  carry on without cosign, or with one older than 2.4, which can't
+#                     check the signature; the checksums are still checked
 #   --skip-backup     don't back up the database, for when you back up your own Postgres
 #   --merged          you've merged the deployment files left as *.new; carry on
 #
@@ -144,9 +145,27 @@ if [ -n "$current" ]; then
   fi
 fi
 
-# Checked before anything is downloaded.
-if ! command -v cosign >/dev/null && ! $skip_signature; then
-  die "cosign isn't installed, so the signature can't be checked. Install it (docs/install.md, \"Checking a release\"), check the files on another machine, or run again with --skip-signature"
+# Checked before anything is downloaded. The release workflow signs SHA256SUMS in Sigstore's
+# bundle format v0.3. Cosign 3 reads it by default and deprecates --new-bundle-format;
+# cosign 2.4 reads it only with that flag, which later 2.x accept. Older ones can't.
+cosign_ok=false cosign_args=() cosign_version=""
+if command -v cosign >/dev/null; then
+  cosign_version="$(cosign version 2>&1 | sed -n 's/^GitVersion:[[:space:]]*v\{0,1\}//p' | head -n 1 || true)"
+  cosign_problem="cosign $cosign_version is too old to check this release's signature: install cosign 2.4 or later"
+  if [[ "$cosign_version" =~ ^([0-9]+)\.([0-9]+)\. ]]; then
+    if (( 10#${BASH_REMATCH[1]} >= 3 )); then
+      cosign_ok=true
+    elif (( 10#${BASH_REMATCH[1]} == 2 && 10#${BASH_REMATCH[2]} >= 4 )); then
+      cosign_ok=true cosign_args=(--new-bundle-format)
+    fi
+  else
+    cosign_problem="can't tell which version cosign is (\`cosign version\` reports no GitVersion), so it can't check this release's signature: install cosign 2.4 or later"
+  fi
+  if ! $cosign_ok; then
+    $skip_signature || die "$cosign_problem (docs/install.md, \"Checking a release\"), check the files on another machine, or run again with --skip-signature"
+  fi
+elif ! $skip_signature; then
+  die "cosign isn't installed, so the signature can't be checked. Install cosign 2.4 or later (docs/install.md, \"Checking a release\"), check the files on another machine, or run again with --skip-signature"
 fi
 
 ## Download
@@ -179,13 +198,20 @@ for f in "$bundle" "$image_file" RELEASE_NOTES.md; do
   [ -n "$line" ] || die "SHA256SUMS doesn't list $f"
   (cd "$release" && printf '%s\n' "$line" | "${sha[@]}" -c --quiet -) || die "$f doesn't match SHA256SUMS: get the release again"
 done
-if command -v cosign >/dev/null; then
+if $cosign_ok; then
   [ -f "$release/SHA256SUMS.sigstore.json" ] || die "$release has no SHA256SUMS.sigstore.json"
-  cosign verify-blob "$release/SHA256SUMS" --bundle "$release/SHA256SUMS.sigstore.json" \
+  if ! cosign_out="$(cosign verify-blob "$release/SHA256SUMS" --bundle "$release/SHA256SUMS.sigstore.json" \
+    ${cosign_args[@]+"${cosign_args[@]}"} \
     --certificate-identity "$SIGNER_WORKFLOW@refs/tags/server-v$version" \
-    --certificate-oidc-issuer "$SIGNER_ISSUER" >/dev/null 2>&1 \
-    || die "SHA256SUMS isn't signed by Altiward's release workflow for $version: don't install it, and report it at https://github.com/Altiward/altiward/security"
+    --certificate-oidc-issuer "$SIGNER_ISSUER" 2>&1)"; then
+    why="$(printf '%s\n' "$cosign_out" | grep -m 1 '^Error:' || true)"
+    [ -n "$why" ] || why="$(printf '%s\n' "$cosign_out" | sed '/^[[:space:]]*$/d' | tail -n 1)"
+    warn "cosign $cosign_version says: ${why:-nothing}"
+    die "SHA256SUMS isn't signed by Altiward's release workflow for $version: don't install it, and report it at https://github.com/Altiward/altiward/security"
+  fi
   say "  checksums match, signed by Altiward's release workflow for $version"
+elif command -v cosign >/dev/null; then
+  warn "$cosign_problem. Only the checksums were checked, not who made them"
 else
   warn "cosign isn't installed, so only the checksums were checked, not who made them"
 fi
