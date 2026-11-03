@@ -246,7 +246,7 @@ Apache License
    limitations under the License.
 ```
 
-### github.com/go-jose/go-jose/v4 v4.1.6
+### github.com/go-jose/go-jose/v4 v4.1.7
 
 ```
 Apache License
@@ -506,7 +506,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### github.com/jackc/pgx/v5 v5.11.0
+### github.com/jackc/pgx/v5 v5.12.0
 
 ```
 Copyright (c) 2013-2021 Jack Christensen
@@ -533,7 +533,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### github.com/jackc/puddle/v2 v2.2.2
+### github.com/jackc/puddle/v2 v2.2.3
 
 ```
 Copyright (c) 2018 Jack Christensen
