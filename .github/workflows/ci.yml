@@ -8,7 +8,40 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels its older run. Every push to main runs in full.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  changes:
+    name: What the change touches
+    runs-on: ubuntu-latest
+    outputs:
+      agent: ${{ steps.files.outputs.agent }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2 # a pull request's merge commit and the base it merges into
+          persist-credentials: false
+      - name: Files the Mac agent job reads
+        id: files
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo "agent=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only HEAD^1 HEAD)
+          # The agent, the schema files its tests read, the MDM files its package carries,
+          # LICENSE and NOTICE, and how CI builds it.
+          if grep -qE '^(agent/|docs/schema/|deploy/mdm/|LICENSE$|NOTICE$|Makefile$|\.github/workflows/ci\.yml$)' <<<"$changed"; then
+            echo "agent=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "agent=false" >> "$GITHUB_OUTPUT"
+          fi
+
   backend:
     name: Backend and integrations (Go)
     runs-on: ubuntu-latest
@@ -79,6 +112,10 @@ jobs:
 
   agent:
     name: Mac agent (Swift)
+    needs: changes
+    # Skipped (which the ruleset counts as passing) only when the change provably leaves the
+    # agent alone. If the changes job fails, the agent is built and tested anyway.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.agent == 'true') }}
     runs-on: macos-latest
     timeout-minutes: 30
     env:
