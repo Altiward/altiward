@@ -5,10 +5,16 @@ features and fixes. CI runs on main and on pull requests; the main ruleset requi
 Go, Swift, console and server-image jobs, plus DCO. CI also runs fuzzing, deployment and
 licence checks. Its workflow is [ci.yml](../.github/workflows/ci.yml).
 
+The Swift job runs on every push to main, but on a pull request only when the change
+touches `agent/`, `docs/schema/`, `deploy/mdm/`, `LICENSE`, `NOTICE`, the `Makefile` or
+`ci.yml`; otherwise it is skipped, which the ruleset counts as passing. A new push to a
+pull request cancels that pull request's older run.
+
 ## Coverage evidence
 
 CI measures existing tests and retains `coverage-go`, `coverage-console` and
-`coverage-agent` artifacts for 14 days. Keep the run URL and source commit when using a
+`coverage-agent` artifacts for 14 days (`coverage-agent` on main, and on pull requests
+that run the Swift job). Keep the run URL and source commit when using a
 report as badge evidence. Successful tests alone do not establish a coverage percentage.
 
 - Go: `backend.out` and `integrations.out` are statement coverage profiles. The backend
