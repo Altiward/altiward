@@ -129,7 +129,14 @@ function goModules(cwd = ".", target = "./backend/cmd/altiward-api", tags = "", 
   for (const line of listed.split("\n")) {
     const [path, version, dir] = line.split(" ");
     // Altiward's own modules (the server and integrations/) are first-party, not third-party.
-    if (path && version && path !== "github.com/Altiward/altiward" && !path.startsWith("github.com/Altiward/altiward/")) modules.set(path, { name: path, version, ...licenseOf(dir) });
+    if (path && version && path !== "github.com/Altiward/altiward" && !path.startsWith("github.com/Altiward/altiward/")) {
+      const backport = path === "github.com/go-jose/go-jose/v3" && existsSync(join(dir, "README.altiward.md"));
+      modules.set(path, { name: path, version: version + (backport ? " (Altiward security backport)" : ""), ...licenseOf(dir) });
+      // go-jose's json/ package is a fork of Go's encoding/json and keeps its BSD licence.
+      if (path.startsWith("github.com/go-jose/go-jose/") && existsSync(join(dir, "json", "LICENSE"))) {
+        modules.set(`${path}/json`, { name: `${path}/json`, version: "", ...licenseOf(join(dir, "json")) });
+      }
+    }
   }
   // Homebrew keeps the licence one level above GOROOT; the official distribution in it.
   const root = go("env", "GOROOT").trim();

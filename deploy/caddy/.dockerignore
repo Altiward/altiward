@@ -4,3 +4,5 @@
 !go.sum
 !main.go
 !THIRD_PARTY_NOTICES.md
+!third_party/
+!third_party/go-jose/**

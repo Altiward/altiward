@@ -7,6 +7,25 @@ path = "**"
 SPDX-FileCopyrightText = "2026 Phil Chatham"
 SPDX-License-Identifier = "Apache-2.0"
 
+# The temporary Go JOSE backport retains upstream ownership and licence notices.
+[[annotations]]
+path = "deploy/caddy/third_party/go-jose/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["Square Inc. and go-jose contributors", "2016 Zbigniew Mandziejewicz"]
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "deploy/caddy/third_party/go-jose/json/**"
+precedence = "override"
+SPDX-FileCopyrightText = "The Go Authors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = ["deploy/caddy/third_party/go-jose/README.altiward.md", "deploy/caddy/third_party/go-jose/security_json_test.go"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Phil Chatham"
+SPDX-License-Identifier = "Apache-2.0"
+
 # The notices quote third-party copyright lines, which are not the files' own.
 [[annotations]]
 path = ["NOTICE", "THIRD_PARTY_NOTICES.md", "deploy/caddy/THIRD_PARTY_NOTICES.md"]

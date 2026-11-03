@@ -1,7 +1,8 @@
 # The deployment proxy
 
 Compose and Azure use the same digest-pinned Caddy image from `image.txt`. It is Caddy
-2.11.7, rebuilt with Go 1.27.3, `golang.org/x/net` 0.62.0 and go-jose v4.1.6. The upstream image still
+2.11.7, rebuilt with Go 1.27.3, `golang.org/x/net` 0.62.0, go-jose v4.1.6 and a
+tested security backport for the separate go-jose v3 dependency. The upstream image still
 contains older vulnerable dependencies, so copying its tag alone does not fix them.
 This image includes the standard Caddy modules and the upstream image's
 `nomysql,nopgx,nobadger` tags. Its runtime contains the binary, trusted CA certificates
@@ -11,6 +12,7 @@ Build and verify it locally from the repository root:
 
 ```sh
 make notices
+scripts/test-caddy-jose.sh
 scripts/build-caddy.sh /tmp/altiward-caddy
 for arch in amd64 arm64; do
   go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -mode=binary "/tmp/altiward-caddy/caddy-$arch"
@@ -23,11 +25,15 @@ CADDY_IMAGE=altiward-caddy:build scripts/test-azure-proxy.sh altiward-api:ci
 with the reason for each, so dependency scanners such as OpenSSF Scorecard skip them.
 Remove an entry when its module is upgraded past the fix.
 
-The PKI modules also compile go-jose v3.0.5 through `go.step.sm/crypto`. Upstream has no
-v3 fix for [GHSA-mgcc-cww5-fp2q](https://github.com/go-jose/go-jose/security/advisories/GHSA-mgcc-cww5-fp2q).
-That dependency is not excluded from scanning: upgrading v4 does not establish that v3
-is fixed or unused. Run module investigations with `GOWORK=off` from this directory,
-so a local development workspace cannot substitute the server's dependency graph.
+The PKI modules compile go-jose v3 through `go.step.sm/crypto`. Since upstream has no
+patched v3 release, `go.mod` replaces v3.0.5 with the source backport in
+[`third_party/go-jose`](third_party/go-jose/README.altiward.md). It carries the upstream
+fixes for GHSA-mgcc-cww5-fp2q, GHSA-4w3g-jfj2-cw2q and GHSA-vvm8-gf78-28g4, with
+provenance, upstream tests and additional JSON boundary tests. CI and releases verify
+that Caddy resolves the replacement and run its complete suite, with the race detector
+except for one slow upstream test that starts no goroutines.
+Run module investigations with `GOWORK=off` from this directory, so a local development
+workspace cannot substitute the server's dependency graph.
 
 The build supports amd64 and arm64 without running the target binaries under emulation.
 Pinned builder, Dockerfile frontend, compiler and certificate images, module checksums,
