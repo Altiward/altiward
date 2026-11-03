@@ -1041,7 +1041,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### react-router 8.5.0
+### react-router 8.5.1
 
 ```
 MIT License
