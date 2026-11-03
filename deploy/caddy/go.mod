@@ -4,6 +4,9 @@ go 1.27.0
 
 toolchain go1.27.3
 
+// Temporary security backports until the PKI dependencies migrate to go-jose v4.
+replace github.com/go-jose/go-jose/v3 => ./third_party/go-jose
+
 require github.com/caddyserver/caddy/v2 v2.11.7
 
 require (

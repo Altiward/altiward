@@ -5,6 +5,7 @@ FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:d200d2dd76b03a99b5265
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local
 WORKDIR /src
 COPY go.mod go.sum ./
+COPY third_party/go-jose ./third_party/go-jose
 RUN go mod download
 COPY main.go ./
 ARG TARGETARCH

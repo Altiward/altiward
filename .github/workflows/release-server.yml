@@ -70,6 +70,7 @@ jobs:
       # Build and scan the exact pinned archive before publishing any proxy content.
       - name: Build, verify, scan and publish the patched Caddy image
         run: |
+          scripts/test-caddy-jose.sh
           scripts/build-caddy.sh "$RUNNER_TEMP/caddy"
           for arch in amd64 arm64; do
             go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -mode=binary "$RUNNER_TEMP/caddy/caddy-$arch"

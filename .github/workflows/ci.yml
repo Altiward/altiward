@@ -76,6 +76,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/coverage"
           go test -race -count=1 -coverprofile="$RUNNER_TEMP/coverage/backend.out" ./...
           cd integrations && go test -race -count=1 -coverprofile="$RUNNER_TEMP/coverage/integrations.out" ./...
+      # Here rather than in the server image job, which takes longer and runs alongside.
+      - name: The Caddy proxy uses its Go JOSE v3 security backport, and its tests pass
+        run: scripts/test-caddy-jose.sh
       - name: Coverage summary
         run: |
           for component in backend integrations; do
